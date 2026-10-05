@@ -96,7 +96,7 @@ def person_list(request):
     if status:
         qs = qs.filter(engagements__status=status).distinct()
 
-    paginator = Paginator(qs, 20)
+    paginator = Paginator(qs, 25)
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 

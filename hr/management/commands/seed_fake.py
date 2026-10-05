@@ -1,28 +1,27 @@
-"""Seeds fake HR data for the Municipality of San Pascual.
+"""Seeds fake HR data for the Municipality of San Pascual scaled to ~420 personnel.
 
 Strictly fake data only (DECISIONS D1).
-Generates ~150 people across all engagement types:
-- Elected (Mayor, Vice Mayor, SB Councilors)
-- Plantilla (with salary grade, step, item number)
-- Casual
-- Job Order (daily rate)
-- Contract of Service (COS)
-- Contractual
-- Project-based (linked to Projects)
-- People with historical career progression (JO -> Casual -> Plantilla)
-- Leave credits and requests for plantilla/casual staff
-- Sample document records with physical filing locations
+Scales the fake dataset to match the real municipal workforce composition (Survey Oct 2026):
+- 12 Elected (Mayor, Vice Mayor, 8 SB Members, ABC President, SK Federation President)
+- 94 Permanent Plantilla (22 Office Heads + 12 Career-progressed + 60 permanent staff)
+- 28 Casual
+- 286 JO / COS / Project-based (~68% of municipal workforce)
+Total = 420 personnel across all 25 offices.
+Includes career progression history (JO -> Casual -> Plantilla), leave credit ledgers,
+physical 201-file document tracking, and time-bound executive delegation.
 """
 
 import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 from hr.models import (
+    Delegate,
     Document,
     Engagement,
     LeaveCredit,
@@ -33,6 +32,8 @@ from hr.models import (
     Project,
 )
 
+User = get_user_model()
+
 FILIPINO_LAST_NAMES = [
     "Dela Cruz", "Santos", "Reyes", "Garcia", "Mendoza", "Torres", "Bautista",
     "Flores", "Villanueva", "Ramos", "Castro", "Rivera", "Aquino", "Morales",
@@ -41,6 +42,10 @@ FILIPINO_LAST_NAMES = [
     "Dimaculangan", "Custodio", "Alcantara", "Valenzuela", "Corpus", "Miranda",
     "Macaraeg", "Pascual", "Cabrera", "Manalo", "Ilagan", "Marasigan", "Atienza",
     "Katigbak", "Malabanan", "Evangelista", "Vergara", "Castillo", "De Castro",
+    "Bustamante", "Cervantes", "Salcedo", "Gutierrez", "Santiago", "Bernardo",
+    "Agoncillo", "Ricarte", "Malvar", "Laurel", "Mabini", "Arellano", "Guerrero",
+    "Alvarado", "Ocampo", "Concepcion", "Crisostomo", "Panganiban", "San Jose",
+    "De Leon", "Pangilinan", "Dimayuga", "Macatangay", "Buendia", "Magallanes",
 ]
 
 FILIPINO_MALE_FIRST_NAMES = [
@@ -48,6 +53,9 @@ FILIPINO_MALE_FIRST_NAMES = [
     "Danilo", "Eduardo", "Reynaldo", "Noel", "Ferdinand", "Angelo", "Christian",
     "Jerome", "Rolando", "Renato", "Arnold", "Arnel", "Efren", "Rommel",
     "Vicente", "Gabriel", "Rafael", "Emmanuel", "Lito", "Nestor", "Cesar",
+    "Manuel", "Antonio", "Jaime", "Rogelio", "Ernesto", "Arturo", "Alfredo",
+    "Benjamin", "Domingo", "Salvador", "Ruben", "Leonardo", "Gregorio", "Mario",
+    "Wilfredo", "Rene", "Alexander", "Felipe", "Teodoro", "Enrique", "Rodolfo",
 ]
 
 FILIPINO_FEMALE_FIRST_NAMES = [
@@ -55,6 +63,9 @@ FILIPINO_FEMALE_FIRST_NAMES = [
     "Carmela", "Lourdes", "Corazon", "Imelda", "Divina", "Rosario", "Teresa",
     "Marites", "Jocelyn", "Bernadette", "Clarissa", "Aileen", "Arlene", "Leah",
     "Rhea", "Camille", "Patricia", "Kristine", "Janice", "Melody", "Sheryl",
+    "Leonor", "Esperanza", "Milagros", "Consuelo", "Carmencita", "Norma",
+    "Leticia", "Aurora", "Flordeliza", "Vilma", "Nenita", "Rowena", "Glenda",
+    "Gwendolyn", "Racquel", "Charmaine", "Liezl", "Lorena", "Hazel", "Abigail",
 ]
 
 PROJECTS_DATA = [
@@ -66,7 +77,6 @@ PROJECTS_DATA = [
     ("Rural Health Unit Birthing Facility Upgrade", "Office of the Municipal Health Officer"),
 ]
 
-# Standard 2026 Philippine Local Government Plantilla Rates benchmark (approximate LGU Salary Schedule)
 SALARY_SCHEDULE_STEP_1 = {
     1: Decimal("13530.00"), 2: Decimal("14290.00"), 3: Decimal("15080.00"),
     4: Decimal("15910.00"), 5: Decimal("16790.00"), 6: Decimal("17720.00"),
@@ -81,7 +91,7 @@ SALARY_SCHEDULE_STEP_1 = {
 
 
 class Command(BaseCommand):
-    help = "Seeds fake people, engagements, projects, leave records, and documents."
+    help = "Seeds fake people scaled to ~420 municipal workforce (Survey Oct 2026)."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -99,6 +109,7 @@ class Command(BaseCommand):
         if options["clear"]:
             self.stdout.write("Clearing existing HR records...")
             with transaction.atomic():
+                Delegate.objects.all().delete()
                 LeaveCredit.objects.all().delete()
                 LeaveRequest.objects.all().delete()
                 Document.objects.all().delete()
@@ -109,7 +120,7 @@ class Command(BaseCommand):
 
         random.seed(42)  # Deterministic seed for reproducible testing
 
-        self.stdout.write("Seeding fake HR data...")
+        self.stdout.write("Seeding ~420 fake municipal personnel...")
         with transaction.atomic():
             self._seed_data()
 
@@ -179,7 +190,7 @@ class Command(BaseCommand):
                 birthdate=bdate,
                 mobile=f"09{random.randint(10, 99)}{random.randint(1000000, 9999999)}",
                 email=f"{first_name.split()[0].lower()}.{last_name.lower().replace(' ', '')}@sanpascual.gov.ph",
-                address=f"Brgy. {random.choice(['Poblacion', 'Ilalim', 'Ibabao', 'San Mateo', 'Gelerang Kawayan', 'Resplandor', 'Kaingin'])}, San Pascual",
+                address=f"Brgy. {random.choice(['Poblacion', 'Ilalim', 'Ibabao', 'San Mateo', 'Gelerang Kawayan', 'Resplandor', 'Kaingin', 'Bayanan', 'Palsahingin', 'Laurel'])}, San Pascual",
                 tin=tin,
                 gsis_no=gsis,
                 philhealth_no=philhealth,
@@ -189,11 +200,11 @@ class Command(BaseCommand):
             return p
 
         # ---------------------------------------------------------------------
-        # 2. Elected Officials (10 people)
+        # 2. Elected Officials (Exactly 12 people)
         # ---------------------------------------------------------------------
         # Mayor
         mayor_office = Office.objects.get(name="Office of the Municipal Mayor")
-        mayor_person = make_fake_person(preferred_sex=Person.Sex.MALE, birth_year_range=(1960, 1978))
+        mayor_person = make_fake_person(preferred_sex=Person.Sex.FEMALE, birth_year_range=(1965, 1978))
         Engagement.objects.create(
             person=mayor_person,
             office=mayor_office,
@@ -201,14 +212,15 @@ class Command(BaseCommand):
             position_title="Municipal Mayor",
             rate=Decimal("150000.00"),
             rate_basis=Engagement.RateBasis.MONTHLY,
-            start_date=date(2022, 6, 30),
-            end_date=date(2025, 6, 30),
+            start_date=date(2025, 6, 30),
+            end_date=date(2028, 6, 30),
             status=Engagement.Status.ACTIVE,
+            leave_eligible=False,
         )
 
         # Vice Mayor
         vm_office = Office.objects.get(name="Office of the Vice Mayor")
-        vm_person = make_fake_person(birth_year_range=(1965, 1980))
+        vm_person = make_fake_person(preferred_sex=Person.Sex.MALE, birth_year_range=(1965, 1980))
         Engagement.objects.create(
             person=vm_person,
             office=vm_office,
@@ -216,15 +228,16 @@ class Command(BaseCommand):
             position_title="Municipal Vice Mayor",
             rate=Decimal("120000.00"),
             rate_basis=Engagement.RateBasis.MONTHLY,
-            start_date=date(2022, 6, 30),
-            end_date=date(2025, 6, 30),
+            start_date=date(2025, 6, 30),
+            end_date=date(2028, 6, 30),
             status=Engagement.Status.ACTIVE,
+            leave_eligible=False,
         )
 
-        # 8 Sangguniang Bayan Members
+        # 8 Sangguniang Bayan Members + 2 Ex-Officio (ABC & SK)
         sb_office = Office.objects.get(name="Office of the Sangguniang Bayan")
         for i in range(1, 9):
-            councilor = make_fake_person(birth_year_range=(1965, 1985))
+            councilor = make_fake_person(birth_year_range=(1968, 1988))
             Engagement.objects.create(
                 person=councilor,
                 office=sb_office,
@@ -232,13 +245,44 @@ class Command(BaseCommand):
                 position_title=f"Sangguniang Bayan Member ({i})",
                 rate=Decimal("95000.00"),
                 rate_basis=Engagement.RateBasis.MONTHLY,
-                start_date=date(2022, 6, 30),
-                end_date=date(2025, 6, 30),
+                start_date=date(2025, 6, 30),
+                end_date=date(2028, 6, 30),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=False,
             )
 
+        # ABC President (Liga ng mga Barangay President, Ex-Officio SB Member)
+        abc_person = make_fake_person(birth_year_range=(1965, 1982))
+        Engagement.objects.create(
+            person=abc_person,
+            office=sb_office,
+            type=Engagement.Type.ELECTED,
+            position_title="LnB President (Ex-Officio SB Member)",
+            rate=Decimal("95000.00"),
+            rate_basis=Engagement.RateBasis.MONTHLY,
+            start_date=date(2023, 11, 30),
+            end_date=date(2026, 11, 30),
+            status=Engagement.Status.ACTIVE,
+            leave_eligible=False,
+        )
+
+        # SK Federation President (Ex-Officio SB Member)
+        sk_person = make_fake_person(birth_year_range=(1998, 2003))
+        Engagement.objects.create(
+            person=sk_person,
+            office=sb_office,
+            type=Engagement.Type.ELECTED,
+            position_title="SK Federation President (Ex-Officio SB Member)",
+            rate=Decimal("95000.00"),
+            rate_basis=Engagement.RateBasis.MONTHLY,
+            start_date=date(2023, 11, 30),
+            end_date=date(2026, 11, 30),
+            status=Engagement.Status.ACTIVE,
+            leave_eligible=False,
+        )
+
         # ---------------------------------------------------------------------
-        # 3. Department Heads (Plantilla, SG 24 - 26) for 22 other offices
+        # 3. Department Heads (Plantilla, 22 positions)
         # ---------------------------------------------------------------------
         head_titles = {
             "Office of the Secretary to the Sangguniang Bayan": ("Secretary to the Sangguniang Bayan", 24),
@@ -283,10 +327,11 @@ class Command(BaseCommand):
                 item_number=item_no,
                 start_date=date(2019, 7, 1),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=True,
             )
 
         # ---------------------------------------------------------------------
-        # 4. People with Career History Progression (12 people: JO -> Casual -> Plantilla)
+        # 4. Career History Progression (12 people: JO -> Casual -> Plantilla)
         # ---------------------------------------------------------------------
         career_offices = [
             "Office of the Municipal Human Resources and Management Officer (HRMO)",
@@ -311,7 +356,8 @@ class Command(BaseCommand):
                 start_date=date(2021, 2, 1),
                 end_date=date(2022, 6, 30),
                 status=Engagement.Status.ENDED,
-                notes="Completed JO contract period.",
+                leave_eligible=False,
+                notes="Completed initial JO contract period.",
             )
 
             # 2nd: Promoted to Casual in 2022
@@ -325,6 +371,7 @@ class Command(BaseCommand):
                 start_date=date(2022, 7, 1),
                 end_date=date(2023, 12, 31),
                 status=Engagement.Status.ENDED,
+                leave_eligible=True,
                 notes="Recommended for regular plantilla appointment.",
             )
 
@@ -343,34 +390,38 @@ class Command(BaseCommand):
                 item_number=item_no,
                 start_date=date(2024, 1, 1),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=True,
                 notes="Regular permanent plantilla appointment.",
             )
 
         # ---------------------------------------------------------------------
-        # 5. Core Staff across offices (~110 more people to reach ~150 total)
+        # 5. Additional Plantilla Staff (60 people, total Plantilla = 22 + 12 + 60 = 94)
         # ---------------------------------------------------------------------
-        # Plantilla staff (35 people)
         plantilla_positions = [
             ("Administrative Officer V", 18),
             ("Administrative Officer II", 11),
             ("Administrative Assistant I", 7),
             ("Administrative Aide VI", 6),
             ("Revenue Collection Clerk II", 7),
-            ("Planning Officer I", 11),
+            ("Planning Officer II", 15),
             ("Engineer II", 16),
+            ("Engineer I", 12),
             ("Medical Technologist I", 11),
             ("Nurse I", 15),
             ("Midwife II", 8),
             ("Agricultural Technologist", 10),
             ("Social Welfare Officer I", 11),
+            ("Environmental Management Specialist I", 11),
+            ("Sanitation Inspector I", 6),
+            ("Draftsman II", 8),
         ]
-        for p_idx in range(35):
-            person = make_fake_person(birth_year_range=(1980, 1999))
+        for p_idx in range(60):
+            person = make_fake_person(birth_year_range=(1978, 1999))
             off = random.choice(offices)
             title, sg = random.choice(plantilla_positions)
-            step = random.choice([1, 2, 3])
-            rate = SALARY_SCHEDULE_STEP_1.get(sg, Decimal("22000.00")) + (step - 1) * Decimal("800.00")
-            item_no = f"SP-{off.acronym or 'OFF'}-{p_idx+10:03d}"
+            step = random.choice([1, 2, 3, 4])
+            rate = SALARY_SCHEDULE_STEP_1.get(sg, Decimal("22000.00")) + (step - 1) * Decimal("750.00")
+            item_no = f"SP-{off.acronym or 'OFF'}-P{p_idx+10:03d}"
             Engagement.objects.create(
                 person=person,
                 office=off,
@@ -381,19 +432,22 @@ class Command(BaseCommand):
                 salary_grade=sg,
                 step=step,
                 item_number=item_no,
-                start_date=date(2021, random.randint(1, 12), 1),
+                start_date=date(2020 + (p_idx % 5), random.randint(1, 12), 1),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=True,
             )
 
-        # Casual staff (25 people)
+        # ---------------------------------------------------------------------
+        # 6. Casual Staff (Exactly 28 people)
+        # ---------------------------------------------------------------------
         casual_titles = [
             "Utility Worker I (Casual)",
             "Driver II (Casual)",
             "Administrative Aide I (Casual)",
-            "Security Guard (Casual)",
+            "Security Guard I (Casual)",
             "Maintenance Worker (Casual)",
         ]
-        for _ in range(25):
+        for c_idx in range(28):
             person = make_fake_person(birth_year_range=(1982, 2001))
             off = random.choice(offices)
             Engagement.objects.create(
@@ -406,9 +460,12 @@ class Command(BaseCommand):
                 start_date=date(2024, 1, 1),
                 end_date=date(2026, 12, 31),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=True,
             )
 
-        # Job Order staff (25 people)
+        # ---------------------------------------------------------------------
+        # 7. Job Order Staff (242 people, daily rates)
+        # ---------------------------------------------------------------------
         jo_titles = [
             "Traffic Aide (JO)",
             "Street Sweeper / Environmental Aide (JO)",
@@ -416,53 +473,72 @@ class Command(BaseCommand):
             "Disaster Response Responder (JO)",
             "Health Center Assistant (JO)",
             "Market Aide (JO)",
+            "Heavy Equipment Assistant (JO)",
+            "Day Care Worker Assistant (JO)",
+            "Parks and Plaza Maintenance Aide (JO)",
         ]
-        for _ in range(25):
-            person = make_fake_person(birth_year_range=(1988, 2003))
+        for j_idx in range(242):
+            person = make_fake_person(birth_year_range=(1985, 2004))
             off = random.choice(offices)
+            # Stagger start dates to test tenure calculation in reports (<1 yr, 1-3 yrs, 3-5 yrs)
+            years_ago = (j_idx % 6)
+            s_date = date(2026 - years_ago, random.randint(1, 12), random.randint(1, 28))
+            if s_date > date(2026, 10, 1):
+                s_date = date(2026, 1, 15)
             Engagement.objects.create(
                 person=person,
                 office=off,
                 type=Engagement.Type.JOB_ORDER,
                 position_title=random.choice(jo_titles),
-                rate=Decimal(random.choice(["450.00", "480.00", "520.00", "550.00"])),
+                rate=Decimal(random.choice(["450.00", "480.00", "500.00", "530.00", "560.00"])),
                 rate_basis=Engagement.RateBasis.DAILY,
-                start_date=date(2026, 1, 5),
-                end_date=date(2026, 6, 30),
+                start_date=s_date,
+                end_date=date(2026, 12, 31),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=False,
             )
 
-        # Contract of Service (COS) (12 people)
+        # ---------------------------------------------------------------------
+        # 8. Contract of Service (COS) (30 people)
+        # ---------------------------------------------------------------------
         cos_titles = [
             "IT System Developer / Database Consultant",
             "Legal Consultant",
             "Civil Engineer Consultant",
             "Environmental Management Specialist",
             "Disaster Risk Planning Specialist",
+            "Local Economic Development Specialist",
+            "Health Policy Consultant",
         ]
-        for _ in range(12):
+        for cs_idx in range(30):
             person = make_fake_person(birth_year_range=(1980, 1997))
             off = random.choice(offices)
+            # A couple of COS contracts have negotiated leave eligibility (survey finding)
+            is_leave_ok = (cs_idx < 2)
             Engagement.objects.create(
                 person=person,
                 office=off,
                 type=Engagement.Type.CONTRACT_OF_SERVICE,
                 position_title=random.choice(cos_titles),
-                rate=Decimal(random.choice(["32000.00", "38000.00", "45000.00"])),
+                rate=Decimal(random.choice(["32000.00", "38000.00", "45000.00", "52000.00"])),
                 rate_basis=Engagement.RateBasis.MONTHLY,
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 12, 31),
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=is_leave_ok,
             )
 
-        # Project-Based staff (10 people linked to Projects)
+        # ---------------------------------------------------------------------
+        # 9. Project-Based Staff (14 people linked to Projects)
+        # ---------------------------------------------------------------------
         pb_titles = [
             "Project Field Engineer",
             "Construction Safety Officer",
             "GIS Field Surveyor",
             "Project Community Facilitator",
+            "Project Materials Inspector",
         ]
-        for pb_idx in range(10):
+        for pb_idx in range(14):
             person = make_fake_person(birth_year_range=(1985, 1998))
             project = projects[pb_idx % len(projects)]
             Engagement.objects.create(
@@ -470,26 +546,27 @@ class Command(BaseCommand):
                 office=project.office,
                 type=Engagement.Type.PROJECT_BASED,
                 position_title=random.choice(pb_titles),
-                rate=Decimal(random.choice(["28000.00", "34000.00", "40000.00"])),
+                rate=Decimal(random.choice(["28000.00", "34000.00", "42000.00"])),
                 rate_basis=Engagement.RateBasis.MONTHLY,
                 project=project,
                 start_date=project.start_date,
                 end_date=project.end_date,
                 status=Engagement.Status.ACTIVE,
+                leave_eligible=False,
             )
 
         # ---------------------------------------------------------------------
-        # 6. Sample Documents (PDS, Appointment, Service Record)
+        # 10. Documents Tracking (Wet-signed original on file, optional scan)
         # ---------------------------------------------------------------------
-        people_sample = list(Person.objects.all()[:30])
+        people_sample = list(Person.objects.all()[:60])
         cabinets = ["Cabinet 1", "Cabinet 2", "Cabinet 3", "Cabinet 4", "Cabinet 5"]
-        drawers = ["Drawer 1", "Drawer 2", "Drawer 3"]
+        drawers = ["Drawer 1", "Drawer 2", "Drawer 3", "Drawer 4"]
         for p in people_sample:
-            # 201-file document record
             Document.objects.create(
                 person=p,
                 doc_type=Document.Type.PDS,
                 status=Document.Status.FILED,
+                original_on_file=True,
                 physical_location=f"{random.choice(cabinets)}, {random.choice(drawers)}, File-{p.employee_no}",
                 notes="Personal Data Sheet (CS Form No. 212, Revised 2017)",
             )
@@ -499,19 +576,18 @@ class Command(BaseCommand):
                     engagement=eng,
                     doc_type=Document.Type.APPOINTMENT,
                     status=Document.Status.APPROVED,
+                    original_on_file=True,
                     physical_location=f"{random.choice(cabinets)}, {random.choice(drawers)}, File-{p.employee_no}",
-                    notes="Approved appointment paper / contract of engagement.",
+                    notes="Approved appointment paper / wet-signed contract.",
                 )
 
         # ---------------------------------------------------------------------
-        # 7. Leave Credits & Sample Leave Requests
+        # 11. Leave Credits & Leave Requests
         # ---------------------------------------------------------------------
-        # Only Plantilla and Casual earn leave credits (DECISIONS L3)
         eligible_people = [p for p in Person.objects.all() if p.earns_leave_credits()]
-        for p in eligible_people[:40]:
-            # Seed initial leave balances
-            vl_days = Decimal(str(random.randint(10, 25)))
-            sl_days = Decimal(str(random.randint(8, 20)))
+        for p in eligible_people[:80]:
+            vl_days = Decimal(str(random.randint(12, 30)))
+            sl_days = Decimal(str(random.randint(10, 25)))
             LeaveCredit.objects.create(
                 person=p,
                 leave_type=LeaveType.VACATION,
@@ -527,19 +603,17 @@ class Command(BaseCommand):
                 note="Beginning balance FY 2026",
             )
 
-        # Create a few leave requests
-        for p in eligible_people[:15]:
+        for p in eligible_people[:25]:
             req = LeaveRequest.objects.create(
                 person=p,
                 leave_type=random.choice([LeaveType.VACATION, LeaveType.SICK]),
-                start_date=date(2026, 3, 10),
-                end_date=date(2026, 3, 12),
+                start_date=date(2026, 4, 10),
+                end_date=date(2026, 4, 12),
                 days=Decimal("3.0"),
-                reason="Personal matters / family gathering.",
+                reason="Personal / family matter.",
                 status=LeaveRequest.Status.APPROVED,
-                decided_at=timezone.make_aware(datetime(2026, 3, 8, 9, 30)),
+                decided_at=timezone.make_aware(datetime(2026, 4, 8, 9, 30)),
             )
-            # Deduct from ledger upon approval (DECISIONS L2)
             LeaveCredit.objects.create(
                 person=p,
                 leave_type=req.leave_type,
@@ -549,13 +623,12 @@ class Command(BaseCommand):
                 leave_request=req,
             )
 
-        # A couple of pending requests
-        for p in eligible_people[15:22]:
+        for p in eligible_people[25:35]:
             LeaveRequest.objects.create(
                 person=p,
                 leave_type=LeaveType.VACATION,
-                start_date=date(2026, 4, 15),
-                end_date=date(2026, 4, 17),
+                start_date=date(2026, 11, 12),
+                end_date=date(2026, 11, 14),
                 days=Decimal("3.0"),
                 reason="Scheduled family vacation.",
                 status=LeaveRequest.Status.PENDING,

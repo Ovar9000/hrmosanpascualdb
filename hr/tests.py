@@ -228,10 +228,19 @@ class SeedFakeCommandTestCase(TestCase):
     def test_seed_fake_command(self):
         call_command("seed_fake", "--clear")
 
-        # Around 150 people created
+        # Scaled headcount: 420 people matching survey composition
         people_count = Person.objects.count()
-        self.assertGreaterEqual(people_count, 140)
-        self.assertLessEqual(people_count, 160)
+        self.assertEqual(people_count, 420)
+
+        # Active engagement breakdown matches survey findings
+        active_eng = Engagement.objects.filter(status=Engagement.Status.ACTIVE)
+        self.assertEqual(active_eng.filter(type=Engagement.Type.PLANTILLA).count(), 94)
+        self.assertEqual(active_eng.filter(type=Engagement.Type.CASUAL).count(), 28)
+        self.assertEqual(active_eng.filter(type=Engagement.Type.ELECTED).count(), 12)
+        jo_cos_count = active_eng.filter(
+            type__in=[Engagement.Type.JOB_ORDER, Engagement.Type.CONTRACT_OF_SERVICE, Engagement.Type.PROJECT_BASED]
+        ).count()
+        self.assertGreaterEqual(jo_cos_count, 280)
 
         # All fake ID numbers start with "00"
         for p in Person.objects.all():
@@ -240,28 +249,16 @@ class SeedFakeCommandTestCase(TestCase):
             if p.gsis_no:
                 self.assertTrue(p.gsis_no.startswith("00"), f"GSIS {p.gsis_no} does not start with 00")
 
-        # All engagement types exist
-        types_in_db = set(Engagement.objects.values_list("type", flat=True))
-        for exp_type in [
-            Engagement.Type.ELECTED,
-            Engagement.Type.PLANTILLA,
-            Engagement.Type.CASUAL,
-            Engagement.Type.JOB_ORDER,
-            Engagement.Type.CONTRACT_OF_SERVICE,
-            Engagement.Type.PROJECT_BASED,
-        ]:
-            self.assertIn(exp_type, types_in_db)
-
         # Career progression check: some people have multiple engagements (JO -> Casual -> Plantilla)
         people_with_multi_engagements = Person.objects.filter(engagements__status=Engagement.Status.ENDED).distinct()
         self.assertGreaterEqual(people_with_multi_engagements.count(), 10)
 
         # Projects and Documents exist
         self.assertEqual(Project.objects.count(), 6)
-        self.assertGreaterEqual(Document.objects.count(), 30)
+        self.assertGreaterEqual(Document.objects.count(), 60)
 
         # Leave requests exist
-        self.assertGreaterEqual(LeaveRequest.objects.count(), 10)
+        self.assertGreaterEqual(LeaveRequest.objects.count(), 20)
 
 
 class ViewsTestCase(TestCase):
@@ -308,6 +305,7 @@ class ViewsTestCase(TestCase):
         resp = self.client.get("/people/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Personnel Directory")
+        self.assertEqual(len(resp.context["page_obj"]), 25)
 
         person = Person.objects.first()
         resp_det = self.client.get(f"/people/{person.pk}/")
