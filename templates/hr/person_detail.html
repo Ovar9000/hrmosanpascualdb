@@ -14,7 +14,12 @@
         <h1 class="h3 mb-1">{{ person.full_name }}</h1>
         <div class="text-muted font-monospace">Employee No: {{ person.employee_no }}</div>
       </div>
-      <div>
+      <div class="d-flex align-items-center gap-2">
+        {% if can_manage_records %}
+          <a href="{% url 'person_edit' person.pk %}" class="btn btn-sm btn-outline-primary">
+            Edit Details
+          </a>
+        {% endif %}
         {% with curr=engagements.first %}
           {% if curr and curr.status == 'active' %}
             <span class="badge bg-success fs-6">Active Employee</span>

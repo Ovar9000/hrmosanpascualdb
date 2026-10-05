@@ -1,13 +1,18 @@
 import csv
 import json
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from .audit import log_audit_event
+from .forms import PersonForm
 from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
 from .permissions import (
+    can_manage_hr_records,
     can_view_document_content,
     can_view_ids,
     can_view_pay,
@@ -17,6 +22,7 @@ from .permissions import (
     is_hrmo,
     is_sysadmin,
 )
+from .sequences import get_next_employee_no
 
 
 
@@ -148,6 +154,7 @@ def person_list(request):
             "offices": offices,
             "engagement_types": Engagement.Type.choices,
             "engagement_statuses": Engagement.Status.choices,
+            "can_manage_records": can_manage_hr_records(request.user),
         },
     )
 
@@ -208,6 +215,94 @@ def person_detail(request, pk):
             "can_view_id_numbers": can_view_id_numbers,
             "can_view_doc_content": can_view_doc_content,
             "leave_balances": leave_balances,
+            "can_manage_records": can_manage_hr_records(request.user),
+        },
+    )
+
+
+@login_required
+def person_create(request):
+    """Data entry view for creating a new Person record (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to create personnel records.")
+
+    if request.method == "POST":
+        form = PersonForm(request.POST, user=request.user)
+        if form.is_valid():
+            with transaction.atomic():
+                emp_no = get_next_employee_no()
+                person = form.save(commit=False)
+                person.employee_no = emp_no
+                person.version = 1
+                person.save()
+
+            messages.success(
+                request,
+                f"Personnel record for {person.full_name} ({person.employee_no}) successfully created."
+            )
+            return redirect("person_detail", pk=person.pk)
+    else:
+        form = PersonForm(user=request.user)
+
+    return render(
+        request,
+        "hr/person_form.html",
+        {
+            "form": form,
+            "is_edit": False,
+        },
+    )
+
+
+@login_required
+def person_edit(request, pk):
+    """Edit view for an existing Person record with lost-update protection (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to edit personnel records.")
+
+    person = get_object_or_404(Person, pk=pk)
+
+    if request.method == "POST":
+        form = PersonForm(request.POST, instance=person, user=request.user)
+        if form.is_valid():
+            with transaction.atomic():
+                locked_person = Person.objects.select_for_update().get(pk=pk)
+                submitted_version = form.cleaned_data.get("version")
+                if locked_person.version != submitted_version:
+                    form.add_error(
+                        None,
+                        "This record was modified by another user while you were editing it. "
+                        "Please refresh the page and review the changes before saving."
+                    )
+                    return render(
+                        request,
+                        "hr/person_form.html",
+                        {
+                            "form": form,
+                            "person": person,
+                            "is_edit": True,
+                        },
+                    )
+
+                saved_person = form.save(commit=False)
+                saved_person.version = locked_person.version + 1
+                saved_person.save()
+
+            messages.success(
+                request,
+                f"Personal details for {saved_person.full_name} ({saved_person.employee_no}) successfully updated."
+            )
+            return redirect("person_detail", pk=saved_person.pk)
+    else:
+        form = PersonForm(instance=person, user=request.user)
+
+    return render(
+        request,
+        "hr/person_form.html",
+        {
+            "form": form,
+            "person": person,
+            "is_edit": True,
         },
     )
 

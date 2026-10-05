@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}{% if is_edit %}Edit {{ person.full_name }}{% else %}Add New Person{% endif %} · HR Records{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  {% if is_edit %}
+    <a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to Person Details</a>
+  {% else %}
+    <a href="{% url 'person_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Personnel Directory</a>
+  {% endif %}
+</div>
+
+<!-- Prototype Warning Banner -->
+<div class="alert alert-warning border-warning shadow-sm mb-4" role="alert">
+  <div class="d-flex align-items-center">
+    <div>
+      <h6 class="alert-heading mb-1 fw-bold">PROTOTYPE - FAKE DATA ONLY</h6>
+      <p class="mb-0 small">
+        Never enter real personal data or official government identification numbers. All ID numbers must start with <code>00</code>.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3">
+    <h1 class="h4 mb-0">
+      {% if is_edit %}
+        Edit Personnel Record: {{ person.full_name }}
+        <span class="text-muted fw-normal fs-6">({{ person.employee_no }})</span>
+      {% else %}
+        Add New Personnel Record
+      {% endif %}
+    </h1>
+  </div>
+
+  <div class="card-body p-4">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger shadow-sm mb-4">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.version }}
+
+      <!-- Section: Personal Information -->
+      <h5 class="border-bottom pb-2 mb-3 text-secondary">1. Personal Information</h5>
+      <div class="row g-3 mb-4">
+        <div class="col-12 col-md-4">
+          <label for="{{ form.last_name.id_for_label }}" class="form-label fw-semibold">Last Name <span class="text-danger">*</span></label>
+          {{ form.last_name }}
+          {% if form.last_name.errors %}
+            <div class="invalid-feedback d-block">{{ form.last_name.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-md-4">
+          <label for="{{ form.first_name.id_for_label }}" class="form-label fw-semibold">First Name <span class="text-danger">*</span></label>
+          {{ form.first_name }}
+          {% if form.first_name.errors %}
+            <div class="invalid-feedback d-block">{{ form.first_name.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-md-3">
+          <label for="{{ form.middle_name.id_for_label }}" class="form-label fw-semibold">Middle Name</label>
+          {{ form.middle_name }}
+          {% if form.middle_name.errors %}
+            <div class="invalid-feedback d-block">{{ form.middle_name.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-md-1">
+          <label for="{{ form.suffix.id_for_label }}" class="form-label fw-semibold">Suffix</label>
+          {{ form.suffix }}
+          {% if form.suffix.errors %}
+            <div class="invalid-feedback d-block">{{ form.suffix.errors|first }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label for="{{ form.birthdate.id_for_label }}" class="form-label fw-semibold">Birthdate <span class="text-danger">*</span></label>
+          {{ form.birthdate }}
+          <div class="form-text">Must be between 18 and 90 years old.</div>
+          {% if form.birthdate.errors %}
+            <div class="invalid-feedback d-block">{{ form.birthdate.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-md-6">
+          <label for="{{ form.sex.id_for_label }}" class="form-label fw-semibold">Sex</label>
+          {{ form.sex }}
+          {% if form.sex.errors %}
+            <div class="invalid-feedback d-block">{{ form.sex.errors|first }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Section: Contact Details -->
+      <h5 class="border-bottom pb-2 mb-3 text-secondary">2. Contact Details</h5>
+      <div class="row g-3 mb-4">
+        <div class="col-12 col-md-6">
+          <label for="{{ form.mobile.id_for_label }}" class="form-label fw-semibold">Mobile Number</label>
+          {{ form.mobile }}
+          {% if form.mobile.errors %}
+            <div class="invalid-feedback d-block">{{ form.mobile.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-md-6">
+          <label for="{{ form.email.id_for_label }}" class="form-label fw-semibold">Email Address</label>
+          {{ form.email }}
+          {% if form.email.errors %}
+            <div class="invalid-feedback d-block">{{ form.email.errors|first }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12">
+          <label for="{{ form.address.id_for_label }}" class="form-label fw-semibold">Residential / Home Address</label>
+          {{ form.address }}
+          {% if form.address.errors %}
+            <div class="invalid-feedback d-block">{{ form.address.errors|first }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Section: Government IDs (Gated: only rendered if field-level permission granted) -->
+      {% if form.tin or form.gsis_no or form.philhealth_no or form.pagibig_no or form.sss_no %}
+        <h5 class="border-bottom pb-2 mb-3 text-secondary">3. Government Identification Numbers (Fake Data Only)</h5>
+        <div class="row g-3 mb-4">
+          {% if form.tin %}
+            <div class="col-12 col-md-4">
+              <label for="{{ form.tin.id_for_label }}" class="form-label fw-semibold">TIN</label>
+              {{ form.tin }}
+              {% if form.tin.errors %}<div class="invalid-feedback d-block">{{ form.tin.errors|first }}</div>{% endif %}
+            </div>
+          {% endif %}
+          {% if form.gsis_no %}
+            <div class="col-12 col-md-4">
+              <label for="{{ form.gsis_no.id_for_label }}" class="form-label fw-semibold">GSIS BP No.</label>
+              {{ form.gsis_no }}
+              {% if form.gsis_no.errors %}<div class="invalid-feedback d-block">{{ form.gsis_no.errors|first }}</div>{% endif %}
+            </div>
+          {% endif %}
+          {% if form.philhealth_no %}
+            <div class="col-12 col-md-4">
+              <label for="{{ form.philhealth_no.id_for_label }}" class="form-label fw-semibold">PhilHealth No.</label>
+              {{ form.philhealth_no }}
+              {% if form.philhealth_no.errors %}<div class="invalid-feedback d-block">{{ form.philhealth_no.errors|first }}</div>{% endif %}
+            </div>
+          {% endif %}
+          {% if form.pagibig_no %}
+            <div class="col-12 col-md-6">
+              <label for="{{ form.pagibig_no.id_for_label }}" class="form-label fw-semibold">Pag-IBIG MID No.</label>
+              {{ form.pagibig_no }}
+              {% if form.pagibig_no.errors %}<div class="invalid-feedback d-block">{{ form.pagibig_no.errors|first }}</div>{% endif %}
+            </div>
+          {% endif %}
+          {% if form.sss_no %}
+            <div class="col-12 col-md-6">
+              <label for="{{ form.sss_no.id_for_label }}" class="form-label fw-semibold">SSS No.</label>
+              {{ form.sss_no }}
+              {% if form.sss_no.errors %}<div class="invalid-feedback d-block">{{ form.sss_no.errors|first }}</div>{% endif %}
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      <div class="d-flex justify-content-end gap-2 pt-3 border-top">
+        {% if is_edit %}
+          <a href="{% url 'person_detail' person.pk %}" class="btn btn-outline-secondary">Cancel</a>
+        {% else %}
+          <a href="{% url 'person_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        {% endif %}
+        <button type="submit" class="btn btn-primary px-4">
+          {% if is_edit %}Save Changes{% else %}Create Person{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

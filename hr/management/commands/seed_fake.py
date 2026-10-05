@@ -126,6 +126,10 @@ class Command(BaseCommand):
             with transaction.atomic():
                 self._seed_data()
 
+            from hr.sequences import sync_employee_sequence
+            seq_val = sync_employee_sequence()
+            self.stdout.write(f"Synchronized EmployeeSequence to {seq_val}.")
+
             self.stdout.write(
                 self.style.SUCCESS(
                     f"Done! Database now has {Person.objects.count()} people, "

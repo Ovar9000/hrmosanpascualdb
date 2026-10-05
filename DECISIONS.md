@@ -124,6 +124,19 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 ---
 
+## HRMO Data Entry & Record Management (Step 6)
+
+| # | Decision | Survey? |
+|---|---|---|
+| S1 | **Race-safe employee number sequence:** Sequential employee numbers (`SP-00001` format) are generated atomically inside the creation transaction using an `EmployeeSequence` database row locked with `select_for_update()`. The sequence is excluded from audit signals to prevent unnecessary lock contention and audit noise. It re-syncs automatically to the highest existing number upon database seeding or `seed_fake --clear`. | No |
+| S2 | **Lost-update protection via integer versioning:** Concurrent editing is prevented using an integer `version` field on `Person`. When saving edits, the row is locked with `select_for_update()` inside an atomic transaction. If the database `version` does not match the submitted `version`, the edit is rejected with a user-friendly conflict notice instead of silently overwriting concurrent changes. | No |
+| S3 | **Record correction and non-deletion policy:** Erroneous records are corrected by editing. Historical appointments and statuses are retired by ending/deactivating engagements. Hard deletion is completely absent from user screens and reserved for emergency superuser administration in the Django admin. | No |
+| S4 | **Data Privacy Officer (DPO) Questions regarding Correction, Erasure, and Retention:**<br>1. *Right to rectification (RA 10173):* What documentation or administrative approval is required before correcting historical personnel or service details, and does CSC or COA require a formal rectification certificate?<br>2. *Right to erasure vs. mandatory government archiving:* CSC and COA regulations mandate perpetual preservation of 201 files and service records. Under what exceptional conditions (e.g. invalid test entries or legally expunged records) may an emergency superuser purge a record?<br>3. *Retention schedule:* How long should active operational audit logs remain online in PostgreSQL before being archived to external encrypted cold storage? | Yes |
+| S5 | **Duplicate person matching and limits:** Duplicate check compares `(last_name, first_name, middle_name, suffix, birthdate)` case-insensitively.<br>*Documented limitation:* Automated checks cannot detect duplicates when an employee changes surname upon marriage, when middle names are omitted or misspelled on legacy documents, or when two distinct individuals share identical names and birthdates. Such cases require manual verification by HRMO staff. | No |
+| S6 | **Candidate CSC Form 212 (PDS) fields to review with HRMO:**<br>- Civil Service Eligibility (Career Service Professional/Sub-Professional, RA 1080 Board/Bar, Barangay Official Eligibility)<br>- Blood type, height (m), weight (kg)<br>- GSIS BP Number vs. Common Reference Number (CRN) vs. Policy Number<br>- Educational Background (Elementary, Secondary, Vocational, College, Graduate Studies)<br>- Emergency Contact Person, Relationship, and Mobile Number<br>- Civil Status (Single, Married, Widowed, Separated, Other)<br>- Citizenship (Filipino by birth / naturalization / dual citizenship)<br>- Residential Address vs. Permanent Address distinction | Yes |
+
+---
+
 ## Disaster recovery & backup plan
 
 | # | Decision | Survey? |
@@ -144,9 +157,13 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 - **Step 4A:** Model adjustments (`leave_eligible`, `original_on_file`, `Delegate`, indexes, admin isolation), migrations, tests. *(Done)*
 - **Step 4B:** Scaled fake seed data (~420 people matching 94/28/12/280+ municipal composition), 25/page pagination. *(Done)*
 - **Step 4C:** Role and permission system (`setup_roles` command, query/field gates, negative security tests). *(Done)*
-- **Step 5:** Append-only audit log (DB trigger, view & export logging, auditor search screen). *(Current)*
-
-- **Step 5b:** Reports & analytics (demographics, tenure bands, contract expirations, CSC lists, payroll inputs).
-- **Step 6:** Configurable leave approval workflow (steps, delegation, scan attachment, ledger deduction).
-- **Step 7:** Excel import/export (configurable columns, row-by-row error report).
-- **Step 8:** Mobile employee self-service (my profile, leave filing, one-time passwords).
+- **Step 5:** Append-only audit log (DB trigger, view & export logging, auditor search screen). *(Done)*
+- **Step 6:** HRMO data entry screens:
+  - 6A: People (create, edit, race-safe sequence, lost-update, duplicate & age validation). *(Current)*
+  - 6B: Engagements (create, edit, end, renew, overlap warning).
+  - 6C: Documents (upload verification, signature check, metadata edit).
+  - 6D: Demo user management command, DPO wrap-up.
+- **Step 7:** Reports & analytics (demographics, tenure bands, contract expirations, CSC lists, payroll inputs).
+- **Step 8:** Configurable leave approval workflow (steps, delegation, scan attachment, ledger deduction).
+- **Step 9:** Excel import/export (configurable columns, row-by-row error report).
+- **Step 10:** Mobile employee self-service (my profile, leave filing, one-time passwords).

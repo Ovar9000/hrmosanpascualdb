@@ -77,6 +77,10 @@ class Person(models.Model):
     pagibig_no = models.CharField("Pag-IBIG MID no.", max_length=20, blank=True)
     sss_no = models.CharField("SSS no.", max_length=20, blank=True)
 
+    # Concurrency control & audit timestamp (DECISIONS S2)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ["last_name", "first_name"]
         verbose_name_plural = "people"
@@ -90,11 +94,11 @@ class Person(models.Model):
             ("manage_hr_records", "Can manage personnel records"),
         ]
         constraints = [
-            # DECISIONS X2: same last name + first name + birthdate = same person.
+            # DECISIONS S5: duplicate person considers last name, first name, middle name, suffix, and birthdate.
             models.UniqueConstraint(
-                Lower("last_name"), Lower("first_name"), "birthdate",
+                Lower("last_name"), Lower("first_name"), Lower("middle_name"), Lower("suffix"), "birthdate",
                 name="person_unique_name_birthdate",
-                violation_error_message="A person with this name and birthdate already exists.",
+                violation_error_message="A person with this name, middle name, suffix, and birthdate already exists.",
             ),
         ] + [
             models.CheckConstraint(
@@ -120,6 +124,19 @@ class Person(models.Model):
             status=Engagement.Status.ACTIVE,
             leave_eligible=True,
         ).exists()
+
+
+class EmployeeSequence(models.Model):
+    """Monotonically increasing sequence generator for race-safe employee numbers (DECISIONS S1)."""
+
+    name = models.CharField(max_length=50, unique=True)
+    last_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "hr_employeesequence"
+
+    def __str__(self):
+        return f"{self.name}: {self.last_number}"
 
 
 # --- Projects ----------------------------------------------------------------

@@ -8,10 +8,12 @@ from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
+from hr.forms import PersonForm
 from hr.models import (
     AuditLog,
     Delegate,
     Document,
+    EmployeeSequence,
     Engagement,
     LeaveCredit,
     LeaveRequest,
@@ -21,6 +23,7 @@ from hr.models import (
     Project,
     UserProfile,
 )
+from hr.sequences import get_next_employee_no, sync_employee_sequence
 from hr.permissions import (
     PROTECTED_ROLES,
     ROLE_AUDITOR,
@@ -1048,6 +1051,284 @@ class Step5AuditLogTestCase(TestCase):
                                 f"Forbidden call '{call_name}' in {py_file.name} line {node.lineno}: "
                                 "Domain operations must use model save() or delete() to guarantee audit trail."
                             )
+
+
+class Step6APersonEntryTestCase(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        call_command("seed_offices")
+        call_command("setup_roles")
+
+        self.hrmo_user = User.objects.create_user("hrmo_editor", "hrmo@test.com", "pass123")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+        self.sysadmin = User.objects.create_user("sys_admin", "sys@test.com", "pass123", is_staff=True)
+        self.sysadmin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+
+        self.office_head = User.objects.create_user("head_user", "head@test.com", "pass123")
+        self.office_head.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+
+        self.auditor = User.objects.create_user("audit_user", "audit@test.com", "pass123")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+
+        self.executive = User.objects.create_user("exec_user", "exec@test.com", "pass123")
+        self.executive.groups.add(Group.objects.get(name=ROLE_EXECUTIVE))
+
+        self.employee = User.objects.create_user("reg_emp", "emp@test.com", "pass123")
+
+        self.existing_person = Person.objects.create(
+            employee_no="SP-00001",
+            last_name="Del Rosario",
+            first_name="Carmen",
+            middle_name="Santos",
+            suffix="",
+            sex=Person.Sex.FEMALE,
+            birthdate=date(1990, 5, 20),
+            tin="000-111-222-000",
+            version=1,
+        )
+
+    def test_non_hrmo_roles_cannot_access_person_create_or_edit(self):
+        non_hrmo_users = [
+            self.sysadmin,
+            self.office_head,
+            self.auditor,
+            self.executive,
+            self.employee,
+        ]
+
+        for user in non_hrmo_users:
+            self.client.force_login(user)
+
+            # GET create URL -> 403 Forbidden
+            resp_create_get = self.client.get("/people/new/")
+            self.assertEqual(
+                resp_create_get.status_code,
+                403,
+                f"Role {user.username} must get 403 on GET /people/new/",
+            )
+
+            # POST create URL -> 403 Forbidden
+            resp_create_post = self.client.post("/people/new/", {"last_name": "Test"})
+            self.assertEqual(
+                resp_create_post.status_code,
+                403,
+                f"Role {user.username} must get 403 on POST /people/new/",
+            )
+
+            # GET edit URL -> 403 Forbidden
+            resp_edit_get = self.client.get(f"/people/{self.existing_person.pk}/edit/")
+            self.assertEqual(
+                resp_edit_get.status_code,
+                403,
+                f"Role {user.username} must get 403 on GET /people/{self.existing_person.pk}/edit/",
+            )
+
+            # POST edit URL -> 403 Forbidden
+            resp_edit_post = self.client.post(
+                f"/people/{self.existing_person.pk}/edit/", {"last_name": "Hacked"}
+            )
+            self.assertEqual(
+                resp_edit_post.status_code,
+                403,
+                f"Role {user.username} must get 403 on POST /people/{self.existing_person.pk}/edit/",
+            )
+
+    def test_hrmo_can_create_person_with_race_safe_employee_no_and_audit_log(self):
+        self.client.force_login(self.hrmo_user)
+
+        # GET form
+        resp_get = self.client.get("/people/new/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertContains(resp_get, "PROTOTYPE - FAKE DATA ONLY")
+        self.assertContains(resp_get, "Add New Personnel Record")
+
+        # POST form
+        payload = {
+            "last_name": "  Luna  ",
+            "first_name": " Antonio ",
+            "middle_name": " Novicio ",
+            "suffix": "",
+            "sex": "M",
+            "birthdate": "1988-10-29",
+            "mobile": " 0917-888-9999 ",
+            "email": "antonio.luna@sanpascual.gov.ph",
+            "address": "San Pascual, Batangas",
+            "tin": "000-999-888-000",
+            "gsis_no": "0012345678",
+            "philhealth_no": "00-123456789-0",
+            "pagibig_no": "0012-3456-7890",
+            "sss_no": "00-1234567-8",
+        }
+        resp_post = self.client.post("/people/new/", payload)
+        self.assertEqual(resp_post.status_code, 302)
+
+        new_person = Person.objects.get(last_name="Luna")
+        self.assertEqual(new_person.first_name, "Antonio")
+        self.assertEqual(new_person.middle_name, "Novicio")
+        self.assertEqual(new_person.mobile, "0917-888-9999")
+        self.assertTrue(new_person.employee_no.startswith("SP-"))
+        self.assertEqual(new_person.version, 1)
+
+        # Audit log verifies CREATE event with sensitive IDs redacted
+        audit_entry = AuditLog.objects.filter(
+            model_name="Person", object_id=str(new_person.pk), action=AuditLog.Action.CREATE
+        ).first()
+        self.assertIsNotNone(audit_entry)
+        self.assertIn("tin", audit_entry.changes)
+        self.assertEqual(audit_entry.changes["tin"], "[REDACTED]")
+        self.assertNotIn("000-999-888-000", str(audit_entry.changes))
+
+    def test_hrmo_can_edit_person_with_version_increment(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Edit person
+        payload = {
+            "last_name": "Del Rosario",
+            "first_name": "Carmen",
+            "middle_name": "Santos",
+            "suffix": "",
+            "sex": "F",
+            "birthdate": "1990-05-20",
+            "mobile": "0918-111-2222",
+            "email": "carmen.delrosario@sanpascual.gov.ph",
+            "address": "Poblacion, San Pascual",
+            "tin": "000-111-222-000",
+            "gsis_no": "0011223344",
+            "philhealth_no": "00-223344556-0",
+            "pagibig_no": "0011-2233-4455",
+            "sss_no": "00-9988776-5",
+            "version": self.existing_person.version,
+        }
+        resp = self.client.post(f"/people/{self.existing_person.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        self.existing_person.refresh_from_db()
+        self.assertEqual(self.existing_person.mobile, "0918-111-2222")
+        self.assertEqual(self.existing_person.version, 2)
+
+    def test_lost_update_protection_rejects_stale_submission(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Stale submission: submitted version is 1, but DB version is already 2
+        self.existing_person.version = 2
+        self.existing_person.save()
+
+        payload = {
+            "last_name": "Del Rosario",
+            "first_name": "Carmen",
+            "middle_name": "Santos",
+            "suffix": "",
+            "sex": "F",
+            "birthdate": "1990-05-20",
+            "mobile": "0918-999-9999",
+            "version": 1,  # Stale version!
+        }
+        resp = self.client.post(f"/people/{self.existing_person.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+
+        # Database record was NOT modified
+        self.existing_person.refresh_from_db()
+        self.assertNotEqual(self.existing_person.mobile, "0918-999-9999")
+        self.assertEqual(self.existing_person.version, 2)
+
+    def test_duplicate_person_validation_considers_middle_name_and_suffix(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Attempt to create duplicate of existing_person
+        payload = {
+            "last_name": "del rosario",
+            "first_name": "CARMEN",
+            "middle_name": "santos",
+            "suffix": "",
+            "sex": "F",
+            "birthdate": "1990-05-20",
+        }
+        resp = self.client.post("/people/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "already exists")
+        self.assertContains(resp, self.existing_person.employee_no)
+
+        # Distinct middle name succeeds
+        payload["middle_name"] = "Garcia"
+        resp_distinct = self.client.post("/people/new/", payload)
+        self.assertEqual(resp_distinct.status_code, 302)
+
+    def test_birthdate_age_validation(self):
+        self.client.force_login(self.hrmo_user)
+
+        # 1. Future birthdate
+        resp_future = self.client.post("/people/new/", {
+            "last_name": "Future",
+            "first_name": "Baby",
+            "birthdate": "2030-01-01",
+        })
+        self.assertContains(resp_future, "Birthdate cannot be in the future")
+
+        # 2. Too young (< 18)
+        resp_young = self.client.post("/people/new/", {
+            "last_name": "Young",
+            "first_name": "Child",
+            "birthdate": "2015-01-01",
+        })
+        self.assertContains(resp_young, "at least 18 years old")
+
+        # 3. Too old (> 90)
+        resp_old = self.client.post("/people/new/", {
+            "last_name": "Elder",
+            "first_name": "Senior",
+            "birthdate": "1920-01-01",
+        })
+        self.assertContains(resp_old, "cannot exceed 90 years")
+
+    def test_prototype_fake_id_rule(self):
+        from django.test import override_settings
+
+        self.client.force_login(self.hrmo_user)
+
+        # With PROTOTYPE_FAKE_DATA_ONLY=True, non-00 ID is rejected
+        with override_settings(PROTOTYPE_FAKE_DATA_ONLY=True):
+            resp = self.client.post("/people/new/", {
+                "last_name": "RealID",
+                "first_name": "Tester",
+                "birthdate": "1990-01-01",
+                "tin": "123-456-789-000",  # Invalid (doesn't start with 00)
+            })
+            self.assertContains(resp, "must start with 00")
+
+    def test_field_level_gating_removes_id_fields_without_view_ids(self):
+        # User without view_ids has ID fields completely absent from PersonForm
+        form = PersonForm(user=self.employee)
+        for f in ["tin", "gsis_no", "philhealth_no", "pagibig_no", "sss_no"]:
+            self.assertNotIn(f, form.fields)
+
+        # User with view_ids (HRMO) has ID fields present
+        hrmo_form = PersonForm(user=self.hrmo_user)
+        for f in ["tin", "gsis_no", "philhealth_no", "pagibig_no", "sss_no"]:
+            self.assertIn(f, hrmo_form.fields)
+
+    def test_employee_sequence_generation_and_resync(self):
+        from hr.sequences import get_next_employee_no, sync_employee_sequence
+
+        # Sequential generation
+        no1 = get_next_employee_no()
+        no2 = get_next_employee_no()
+        self.assertTrue(no1.startswith("SP-"))
+        self.assertTrue(no2.startswith("SP-"))
+        num1 = int(no1.split("-")[1])
+        num2 = int(no2.split("-")[1])
+        self.assertEqual(num2, num1 + 1)
+
+        # Create person using no2 to verify sync_employee_sequence finds it
+        Person.objects.create(
+            employee_no=no2,
+            last_name="Sequence",
+            first_name="Test",
+            birthdate=date(1995, 1, 1),
+        )
+        synced = sync_employee_sequence()
+        self.assertGreaterEqual(synced, num2)
 
 
 
