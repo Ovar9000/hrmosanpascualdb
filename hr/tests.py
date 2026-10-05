@@ -2601,3 +2601,55 @@ class AuditVerificationStatusTestCase(TestCase):
         with self.assertRaises(CommandError):
             call_command("verify_audit_chain", stdout=StringIO(), stderr=StringIO())
         self.assertFalse(self._status().is_valid)
+
+
+class DocumentMissingVersionTestCase(TestCase):
+    """B6: a missing version on document edit/replace is a conflict, like Person and Engagement."""
+
+    def setUp(self):
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="doc_version_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.person = Person.objects.create(
+            employee_no="SP-00077", last_name="Version", first_name="Check", birthdate=date(1985, 3, 3)
+        )
+        self.doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            physical_location="Cab 1",
+            version=3,
+        )
+        self.client.force_login(self.hrmo_user)
+
+    def test_edit_without_version_is_rejected(self):
+        resp = self.client.post(
+            f"/documents/{self.doc.pk}/edit/",
+            {"doc_type": Document.Type.CLEARANCE, "status": Document.Status.FILED, "physical_location": "Cab 9"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 3)
+        self.assertEqual(self.doc.doc_type, Document.Type.APPOINTMENT)
+        self.assertEqual(self.doc.physical_location, "Cab 1")
+
+    def test_replace_without_version_is_rejected(self):
+        new_file = SimpleUploadedFile("New.pdf", b"%PDF-1.4 replacement", content_type="application/pdf")
+        resp = self.client.post(f"/documents/{self.doc.pk}/replace/", {"file": new_file})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 3)
+        self.assertFalse(self.doc.is_replaced)
+        self.assertIsNone(self.doc.replaced_by)
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_edit_with_current_version_still_saves(self):
+        resp = self.client.post(
+            f"/documents/{self.doc.pk}/edit/",
+            {"doc_type": Document.Type.CLEARANCE, "status": Document.Status.FILED, "physical_location": "Cab 9", "version": 3},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 4)

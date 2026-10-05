@@ -619,7 +619,7 @@ def document_edit(request, pk):
             with transaction.atomic():
                 locked_doc = Document.objects.select_for_update().get(pk=doc.pk)
                 submitted_version = form.cleaned_data.get("version")
-                if submitted_version is not None and locked_doc.version != submitted_version:
+                if locked_doc.version != submitted_version:
                     form.add_error(
                         None,
                         "Conflict: This document record was modified by another user while you were editing it. "
@@ -662,7 +662,7 @@ def document_replace(request, pk):
             with transaction.atomic():
                 locked_old = Document.objects.select_for_update().get(pk=old_doc.pk)
                 submitted_version = form.cleaned_data.get("version")
-                if submitted_version is not None and locked_old.version != submitted_version:
+                if locked_old.version != submitted_version:
                     form.add_error(
                         None,
                         "Conflict: This document record was modified by another user. "
