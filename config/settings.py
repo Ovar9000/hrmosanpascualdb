@@ -57,7 +57,7 @@ TRUSTED_PROXIES = env_list("TRUSTED_PROXIES", "127.0.0.1,::1")
 # Turning this off does NOT allow real IDs: the person_*_fake_only DB constraints remain.
 PROTOTYPE_FAKE_DATA_ONLY = env_bool("PROTOTYPE_FAKE_DATA_ONLY", "1")
 
-# Employee age constraints (DECISIONS A3)
+# Employee age constraints (DECISIONS S10)
 MIN_EMPLOYEE_AGE = int(os.environ.get("MIN_EMPLOYEE_AGE", "18"))
 MAX_EMPLOYEE_AGE = int(os.environ.get("MAX_EMPLOYEE_AGE", "90"))
 
