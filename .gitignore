@@ -1,0 +1,29 @@
+# Secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django
+/staticfiles/
+/private_media/
+*.sqlite3
+
+# Excel/CSV files dropped in the repo by accident (may contain real data)
+*.xlsx
+*.xls
+*.csv
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
