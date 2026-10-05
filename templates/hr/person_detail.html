@@ -61,22 +61,28 @@
         <span class="badge bg-light text-muted border">Prototype Only</span>
       </div>
       <div class="card-body p-3">
-        <dl class="row mb-0 small font-monospace">
-          <dt class="col-sm-5 text-muted font-sans-serif">TIN</dt>
-          <dd class="col-sm-7">{{ person.tin|default:"—" }}</dd>
+        {% if can_view_id_numbers %}
+          <dl class="row mb-0 small font-monospace">
+            <dt class="col-sm-5 text-muted font-sans-serif">TIN</dt>
+            <dd class="col-sm-7">{{ person.tin|default:"—" }}</dd>
 
-          <dt class="col-sm-5 text-muted font-sans-serif">GSIS BP No.</dt>
-          <dd class="col-sm-7">{{ person.gsis_no|default:"—" }}</dd>
+            <dt class="col-sm-5 text-muted font-sans-serif">GSIS BP No.</dt>
+            <dd class="col-sm-7">{{ person.gsis_no|default:"—" }}</dd>
 
-          <dt class="col-sm-5 text-muted font-sans-serif">PhilHealth</dt>
-          <dd class="col-sm-7">{{ person.philhealth_no|default:"—" }}</dd>
+            <dt class="col-sm-5 text-muted font-sans-serif">PhilHealth</dt>
+            <dd class="col-sm-7">{{ person.philhealth_no|default:"—" }}</dd>
 
-          <dt class="col-sm-5 text-muted font-sans-serif">Pag-IBIG MID</dt>
-          <dd class="col-sm-7">{{ person.pagibig_no|default:"—" }}</dd>
+            <dt class="col-sm-5 text-muted font-sans-serif">Pag-IBIG MID</dt>
+            <dd class="col-sm-7">{{ person.pagibig_no|default:"—" }}</dd>
 
-          <dt class="col-sm-5 text-muted font-sans-serif">SSS No.</dt>
-          <dd class="col-sm-7">{{ person.sss_no|default:"—" }}</dd>
-        </dl>
+            <dt class="col-sm-5 text-muted font-sans-serif">SSS No.</dt>
+            <dd class="col-sm-7">{{ person.sss_no|default:"—" }}</dd>
+          </dl>
+        {% else %}
+          <div class="text-muted small py-2">
+            🔒 Government ID numbers are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+          </div>
+        {% endif %}
       </div>
     </div>
 
@@ -184,15 +190,20 @@
 
 <!-- Attached Documents / 201-Files -->
 <div class="card shadow-sm border-0 mb-3">
-  <div class="card-header bg-white fw-bold py-2">Attached Documents & 201-File Filing</div>
+  <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
+    <span>Attached Documents & 201-File Filing</span>
+    <span class="small text-muted">{{ documents|length }} record(s)</span>
+  </div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 small">
       <thead class="table-light">
         <tr>
           <th>Document Type</th>
           <th>Status</th>
+          <th>Original on File</th>
           <th>Physical Archive Location</th>
           <th>Date Filed</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -200,6 +211,13 @@
           <tr>
             <td class="fw-bold">{{ doc.get_doc_type_display }}</td>
             <td><span class="badge bg-secondary">{{ doc.get_status_display }}</span></td>
+            <td>
+              {% if doc.original_on_file %}
+                <span class="badge bg-success">Yes</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">Copy only</span>
+              {% endif %}
+            </td>
             <td>
               {% if doc.physical_location %}
                 <span class="badge bg-light text-dark border">📁 {{ doc.physical_location }}</span>
@@ -209,14 +227,28 @@
               {% if doc.notes %}<div class="text-muted small mt-1">{{ doc.notes }}</div>{% endif %}
             </td>
             <td class="text-muted">{{ doc.uploaded_at|date:"M d, Y" }}</td>
+            <td>
+              {% if can_view_doc_content and doc.file %}
+                <a href="{% url 'document_download' doc.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" target="_blank">View / Download</a>
+              {% elif not can_view_doc_content %}
+                <span class="text-muted small">🔒 Restricted</span>
+              {% else %}
+                <span class="text-muted small">No scan uploaded</span>
+              {% endif %}
+            </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="4" class="text-center py-3 text-muted">No documents filed yet.</td>
+            <td colspan="6" class="text-center py-3 text-muted">No documents filed yet.</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  {% if not can_view_doc_content %}
+    <div class="card-footer bg-light small text-muted">
+      🔒 Document digital files are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
+    </div>
+  {% endif %}
 </div>
 {% endblock %}

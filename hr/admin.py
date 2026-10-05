@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin, UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import Group, User
+from django.core.exceptions import PermissionDenied
 from .models import (
     Delegate,
     Document,
@@ -10,6 +13,90 @@ from .models import (
     Project,
     UserProfile,
 )
+from .permissions import PROTECTED_ROLES
+
+
+class CustomUserAdmin(BaseUserAdmin):
+    """Custom User admin preventing privilege escalation by System Admin (DECISIONS R2/R5).
+
+    - Non-superusers cannot view, edit, or delete emergency superusers or users in protected roles.
+    - Non-superusers cannot assign protected roles (groups) or direct HR permissions.
+    - Non-superusers cannot escalate privileges via is_superuser.
+    """
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser:
+            # Hide superusers and members of protected roles from non-superusers
+            qs = qs.filter(is_superuser=False).exclude(groups__name__in=PROTECTED_ROLES)
+        return qs
+
+    def has_change_permission(self, request, obj=None):
+        if not super().has_change_permission(request, obj):
+            return False
+        if obj and not request.user.is_superuser:
+            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
+                return False
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        if not super().has_delete_permission(request, obj):
+            return False
+        if obj and not request.user.is_superuser:
+            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
+                return False
+        return True
+
+    def formfield_for_manytomany(self, db_field, request, **kwargs):
+        if not request.user.is_superuser:
+            if db_field.name == "groups":
+                kwargs["queryset"] = Group.objects.exclude(name__in=PROTECTED_ROLES)
+            elif db_field.name == "user_permissions":
+                # Non-superusers cannot grant direct HR app permissions
+                kwargs["queryset"] = db_field.remote_field.model.objects.exclude(content_type__app_label="hr")
+        return super().formfield_for_manytomany(db_field, request, **kwargs)
+
+    def save_model(self, request, obj, form, change):
+        if not request.user.is_superuser:
+            # Force is_superuser to False
+            obj.is_superuser = False
+        super().save_model(request, obj, form, change)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if not request.user.is_superuser:
+            # Guard against forged POST requests attempting to grant protected roles
+            protected_assigned = form.instance.groups.filter(name__in=PROTECTED_ROLES)
+            if protected_assigned.exists():
+                form.instance.groups.remove(*protected_assigned)
+                raise PermissionDenied("Only emergency superusers can assign protected roles.")
+
+
+class CustomGroupAdmin(BaseGroupAdmin):
+    """Custom Group admin ensuring only superusers can modify groups or group permissions."""
+
+    def has_add_permission(self, request):
+        return bool(request.user and request.user.is_superuser)
+
+    def has_change_permission(self, request, obj=None):
+        return bool(request.user and request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(request.user and request.user.is_superuser)
+
+
+try:
+    admin.site.unregister(User)
+except admin.sites.NotRegistered:
+    pass
+
+try:
+    admin.site.unregister(Group)
+except admin.sites.NotRegistered:
+    pass
+
+admin.site.register(User, CustomUserAdmin)
+admin.site.register(Group, CustomGroupAdmin)
 
 
 class SuperuserOnlyAdmin(admin.ModelAdmin):
