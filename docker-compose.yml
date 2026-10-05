@@ -1,0 +1,69 @@
+# Local development stack.
+#   db     - PostgreSQL. Port is NOT published to the host.
+#   manage - one-shot container that runs migrations as the DB owner role, then exits.
+#            Also used for tests and other owner-level commands.
+#   web    - the website, connected as the restricted app role.
+# Values come from .env (copy .env.example). Only the variables each service needs
+# are passed in, so the web container never receives the owner password via env.
+
+x-django-env: &django-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set in .env}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost}
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+  DJANGO_HTTPS: ${DJANGO_HTTPS:-0}
+  DB_HOST: db
+  DB_NAME: ${POSTGRES_DB:?set in .env}
+
+x-django-app: &django-app
+  build: .
+  volumes:
+    - .:/app            # dev only: live code reload. Drop this mount on a real server.
+    - media:/data/media
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+
+  manage:
+    <<: *django-app
+    environment:
+      <<: *django-env
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    command: python manage.py migrate --noinput
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *django-app
+    environment:
+      <<: *django-env
+      DB_USER: ${APP_DB_USER}
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      manage:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  media:

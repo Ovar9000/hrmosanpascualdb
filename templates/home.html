@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1 class="h4">Welcome, {{ user.get_full_name|default:user.get_username }}</h1>
+<p class="text-muted">Scaffold is running. Records screens arrive in the next steps.</p>
+{% endblock %}

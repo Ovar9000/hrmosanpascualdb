@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-8 col-md-5 col-lg-4">
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <h1 class="h5 mb-3">Log in</h1>
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>
+        {% endif %}
+        <form method="post" novalidate>{% csrf_token %}
+          <input type="hidden" name="next" value="{{ next }}">
+          <div class="mb-3">
+            <label class="form-label" for="id_username">Username</label>
+            <input class="form-control form-control-lg" id="id_username" name="username"
+                   value="{{ form.username.value|default:'' }}" autocomplete="username"
+                   autocapitalize="none" required autofocus>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="id_password">Password</label>
+            <input class="form-control form-control-lg" id="id_password" name="password" type="password"
+                   autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary btn-lg w-100" type="submit">Log in</button>
+        </form>
+        <p class="small text-muted mt-3 mb-0">Forgot your password? Ask the HRMO for a new one-time password.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,5 @@
+Django>=5.2,<5.3
+psycopg[binary]>=3.2,<4
+django-axes>=8.3,<9
+openpyxl>=3.1,<4
+Faker>=40,<41

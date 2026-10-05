@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+private_media
+staticfiles
+*.xlsx
+*.xls
+*.csv
