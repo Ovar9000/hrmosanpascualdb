@@ -221,3 +221,44 @@ class DocumentAndLeaveTestCase(TestCase):
             status=Engagement.Status.ACTIVE,
         )
         credit.clean()  # should not raise
+
+
+class SeedFakeCommandTestCase(TestCase):
+    def test_seed_fake_command(self):
+        call_command("seed_fake", "--clear")
+
+        # Around 150 people created
+        people_count = Person.objects.count()
+        self.assertGreaterEqual(people_count, 140)
+        self.assertLessEqual(people_count, 160)
+
+        # All fake ID numbers start with "00"
+        for p in Person.objects.all():
+            if p.tin:
+                self.assertTrue(p.tin.startswith("00"), f"TIN {p.tin} does not start with 00")
+            if p.gsis_no:
+                self.assertTrue(p.gsis_no.startswith("00"), f"GSIS {p.gsis_no} does not start with 00")
+
+        # All engagement types exist
+        types_in_db = set(Engagement.objects.values_list("type", flat=True))
+        for exp_type in [
+            Engagement.Type.ELECTED,
+            Engagement.Type.PLANTILLA,
+            Engagement.Type.CASUAL,
+            Engagement.Type.JOB_ORDER,
+            Engagement.Type.CONTRACT_OF_SERVICE,
+            Engagement.Type.PROJECT_BASED,
+        ]:
+            self.assertIn(exp_type, types_in_db)
+
+        # Career progression check: some people have multiple engagements (JO -> Casual -> Plantilla)
+        people_with_multi_engagements = Person.objects.filter(engagements__status=Engagement.Status.ENDED).distinct()
+        self.assertGreaterEqual(people_with_multi_engagements.count(), 10)
+
+        # Projects and Documents exist
+        self.assertEqual(Project.objects.count(), 6)
+        self.assertGreaterEqual(Document.objects.count(), 30)
+
+        # Leave requests exist
+        self.assertGreaterEqual(LeaveRequest.objects.count(), 10)
+
