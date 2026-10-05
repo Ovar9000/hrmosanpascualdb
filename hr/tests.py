@@ -1,0 +1,223 @@
+from datetime import date
+from decimal import Decimal
+from django.core.exceptions import ValidationError
+from django.core.management import call_command
+from django.db import IntegrityError, transaction
+from django.test import TestCase
+from hr.models import (
+    Document,
+    Engagement,
+    LeaveCredit,
+    LeaveRequest,
+    LeaveType,
+    Office,
+    Person,
+    Project,
+)
+
+
+class OfficeAndSeedOfficesTestCase(TestCase):
+    def test_seed_offices_creates_25_offices_and_is_idempotent(self):
+        call_command("seed_offices")
+        self.assertEqual(Office.objects.count(), 25)
+
+        # Check legislative offices
+        ossb = Office.objects.get(acronym="OSSB")
+        self.assertEqual(ossb.branch, Office.Branch.LEGISLATIVE)
+        self.assertIsNotNone(ossb.parent)
+        self.assertEqual(ossb.parent.name, "Office of the Sangguniang Bayan")
+
+        # Check institution
+        college = Office.objects.get(name="San Pascual Polytechnic College")
+        self.assertEqual(college.type, Office.Type.INSTITUTION)
+
+        # Idempotence: calling again updates without duplicate
+        call_command("seed_offices")
+        self.assertEqual(Office.objects.count(), 25)
+
+
+class PersonModelTestCase(TestCase):
+    def test_fake_id_constraint(self):
+        # Valid fake ID starting with 00
+        p = Person.objects.create(
+            employee_no="SP-00001",
+            last_name="Dela Cruz",
+            first_name="Juan",
+            birthdate=date(1990, 1, 1),
+            tin="000-123-456-000",
+        )
+        self.assertEqual(str(p), "Dela Cruz, Juan")
+
+        # Real/non-zero-prefixed ID should fail DB constraint
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Person.objects.create(
+                    employee_no="SP-00002",
+                    last_name="Santos",
+                    first_name="Maria",
+                    birthdate=date(1992, 5, 10),
+                    tin="123-456-789-000",  # Invalid for prototype
+                )
+
+    def test_duplicate_person_constraint(self):
+        Person.objects.create(
+            employee_no="SP-00001",
+            last_name="Reyes",
+            first_name="Pedro",
+            birthdate=date(1985, 3, 15),
+        )
+        # Duplicate name + birthdate should raise IntegrityError
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Person.objects.create(
+                    employee_no="SP-00002",
+                    last_name="reyes",
+                    first_name="PEDRO",
+                    birthdate=date(1985, 3, 15),
+                )
+
+
+class EngagementModelTestCase(TestCase):
+    def setUp(self):
+        self.office = Office.objects.create(
+            name="HRMO",
+            branch=Office.Branch.EXECUTIVE,
+            type=Office.Type.DEPARTMENT,
+        )
+        self.person = Person.objects.create(
+            employee_no="SP-00010",
+            last_name="Aquino",
+            first_name="Corazon",
+            birthdate=date(1980, 2, 2),
+        )
+
+    def test_plantilla_requires_sg_step_item(self):
+        # Missing salary grade / step / item number on plantilla fails constraint
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Engagement.objects.create(
+                    person=self.person,
+                    office=self.office,
+                    type=Engagement.Type.PLANTILLA,
+                    position_title="Administrative Officer V",
+                    start_date=date(2020, 1, 1),
+                )
+
+        # Valid plantilla engagement succeeds
+        eng = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.PLANTILLA,
+            position_title="Administrative Officer V",
+            salary_grade=18,
+            step=1,
+            item_number="SP-HRMO-001",
+            rate=Decimal("46725.00"),
+            rate_basis=Engagement.RateBasis.MONTHLY,
+            start_date=date(2020, 1, 1),
+        )
+        self.assertIsNotNone(eng.pk)
+
+    def test_non_plantilla_forbids_salary_grade(self):
+        # Job order with salary grade fails constraint
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Engagement.objects.create(
+                    person=self.person,
+                    office=self.office,
+                    type=Engagement.Type.JOB_ORDER,
+                    position_title="Office Clerk",
+                    salary_grade=5,
+                    step=1,
+                    item_number="SP-JO-01",
+                    start_date=date(2022, 1, 1),
+                )
+
+    def test_project_based_requires_project(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Engagement.objects.create(
+                    person=self.person,
+                    office=self.office,
+                    type=Engagement.Type.PROJECT_BASED,
+                    position_title="Site Inspector",
+                    start_date=date(2023, 1, 1),
+                    project=None,
+                )
+
+        project = Project.objects.create(
+            name="Municipal Hall Renovation",
+            office=self.office,
+            start_date=date(2023, 1, 1),
+        )
+        eng = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector",
+            start_date=date(2023, 1, 1),
+            project=project,
+        )
+        self.assertIsNotNone(eng.pk)
+
+
+class DocumentAndLeaveTestCase(TestCase):
+    def setUp(self):
+        self.office = Office.objects.create(
+            name="Office of the Mayor",
+            branch=Office.Branch.EXECUTIVE,
+            type=Office.Type.DEPARTMENT,
+        )
+        self.person = Person.objects.create(
+            employee_no="SP-00020",
+            last_name="Bautista",
+            first_name="Herbert",
+            birthdate=date(1975, 4, 12),
+        )
+
+    def test_document_xor_person_engagement(self):
+        eng = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Staff",
+            start_date=date(2021, 1, 1),
+        )
+        # Cannot attach to both person and engagement
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Document.objects.create(
+                    person=self.person,
+                    engagement=eng,
+                    doc_type=Document.Type.PDS,
+                )
+
+        # Can attach to person alone
+        doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.PDS,
+            physical_location="Cabinet 1, Folder A",
+        )
+        self.assertIsNotNone(doc.pk)
+
+    def test_leave_credit_validation(self):
+        # Person without active plantilla or casual engagement cannot have leave credit
+        credit = LeaveCredit(
+            person=self.person,
+            leave_type=LeaveType.VACATION,
+            days=Decimal("15.0"),
+            as_of=date(2026, 1, 1),
+        )
+        with self.assertRaises(ValidationError):
+            credit.clean()
+
+        # Add casual engagement -> clean() passes
+        Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Utility Worker",
+            start_date=date(2026, 1, 1),
+            status=Engagement.Status.ACTIVE,
+        )
+        credit.clean()  # should not raise
