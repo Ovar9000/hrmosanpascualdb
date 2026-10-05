@@ -2042,6 +2042,9 @@ class AuditHardeningTestCase(TestCase):
     """Test suite for audit hash chain, verification command, request tracing, and last_login suppression."""
 
     def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
         call_command("seed_offices")
         call_command("setup_roles")
         User = get_user_model()
@@ -2176,12 +2179,30 @@ class AuditHardeningTestCase(TestCase):
         self.assertEqual(entry.session_key_hash, expected_hash)
         self.assertNotEqual(entry.session_key_hash, raw_key)
 
-    def test_audit_list_chain_verified_display(self):
+    def test_audit_list_chain_consistent_badge_without_anchor(self):
         self.client.force_login(self.auditor_user)
         resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.context["chain_verified"])
-        self.assertContains(resp, "Chain verified")
+        self.assertFalse(resp.context["anchor_verified"])
+        # Badge must display "Chain consistent" and NOT "tamper-evident"
+        self.assertContains(resp, "Chain consistent")
+        self.assertNotContains(resp, "tamper-evident")
+        # Must include "Re-verify all" link
+        self.assertContains(resp, "Re-verify all")
+        self.assertContains(resp, "reverify=1")
+
+    def test_audit_list_tamper_evident_badge_with_anchor(self):
+        latest = AuditLog.objects.order_by("-id").first()
+        valid_anchor = f"{latest.id}:{latest.row_hash}"
+
+        self.client.force_login(self.auditor_user)
+        resp = self.client.get(f"/audit/?anchor={valid_anchor}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["chain_verified"])
+        self.assertTrue(resp.context["anchor_verified"])
+        # With anchor verified, it displays "tamper-evident"
+        self.assertContains(resp, "Anchor verified")
         self.assertContains(resp, "tamper-evident")
 
     def test_audit_list_unconfirmed_when_chain_broken(self):
@@ -2198,7 +2219,7 @@ class AuditHardeningTestCase(TestCase):
         bad_entry.save()
 
         self.client.force_login(self.auditor_user)
-        resp = self.client.get("/audit/")
+        resp = self.client.get("/audit/?reverify=1")
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.context["chain_verified"])
         self.assertContains(resp, "Chain verification unconfirmed")
@@ -2214,6 +2235,106 @@ class AuditHardeningTestCase(TestCase):
         with transaction.atomic():
             locked = AuditLog.objects.select_for_update().order_by("-id").first()
             self.assertEqual(locked.pk, entry.pk)
+
+    def test_x_request_id_trusted_proxy_and_format_validation(self):
+        # 1. Untrusted remote IP with valid format header: rejected, generates random UUID
+        resp_untrusted = self.client.get(
+            "/people/",
+            REMOTE_ADDR="198.51.100.42",
+            HTTP_X_REQUEST_ID="req-custom-trace-12345",
+        )
+        self.assertNotEqual(resp_untrusted["X-Request-ID"], "req-custom-trace-12345")
+        self.assertEqual(len(resp_untrusted["X-Request-ID"]), 32)  # UUID4 hex
+
+        # 2. Trusted proxy with invalid format header (<8 chars, special chars, >64 chars): rejected
+        resp_invalid_chars = self.client.get(
+            "/people/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REQUEST_ID="invalid;sql--injection",
+        )
+        self.assertNotEqual(resp_invalid_chars["X-Request-ID"], "invalid;sql--injection")
+
+        resp_too_short = self.client.get(
+            "/people/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REQUEST_ID="short",
+        )
+        self.assertNotEqual(resp_too_short["X-Request-ID"], "short")
+
+        # 3. Trusted proxy with valid format header: accepted!
+        resp_valid = self.client.get(
+            "/people/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REQUEST_ID="gateway-trace-valid-0099",
+        )
+        self.assertEqual(resp_valid["X-Request-ID"], "gateway-trace-valid-0099")
+
+    def test_audit_anchor_management_command(self):
+        from io import StringIO
+
+        out_normal = StringIO()
+        call_command("audit_anchor", stdout=out_normal)
+        content = out_normal.getvalue()
+        self.assertIn("Latest Audit Log Anchor:", content)
+        self.assertIn("Audit ID:", content)
+        self.assertIn("Row Hash:", content)
+        self.assertIn("Timestamp:", content)
+        self.assertIn("Anchor:", content)
+
+        out_raw = StringIO()
+        call_command("audit_anchor", "--raw", stdout=out_raw)
+        raw_val = out_raw.getvalue().strip()
+        self.assertIn(":", raw_val)
+        latest = AuditLog.objects.order_by("-id").first()
+        self.assertEqual(raw_val, f"{latest.id}:{latest.row_hash}")
+
+    def test_verify_audit_chain_with_anchor_options(self):
+        from io import StringIO
+
+        latest = AuditLog.objects.order_by("-id").first()
+        valid_anchor = f"{latest.id}:{latest.row_hash}"
+
+        # 1. Valid anchor succeeds and reports tamper-evident
+        out = StringIO()
+        call_command("verify_audit_chain", f"--anchor={valid_anchor}", stdout=out)
+        self.assertIn("Audit hash chain verified", out.getvalue())
+        self.assertIn("tamper-evident", out.getvalue())
+
+        # 2. Missing row anchor fails
+        with self.assertRaises(CommandError) as ctx_missing:
+            call_command("verify_audit_chain", "--anchor=999999:abc1234567890def")
+        self.assertIn("not found in audit log", str(ctx_missing.exception))
+
+        # 3. Mismatched hash anchor fails
+        wrong_anchor = f"{latest.id}:0000000000000000000000000000000000000000000000000000000000000000"
+        with self.assertRaises(CommandError) as ctx_mismatch:
+            call_command("verify_audit_chain", f"--anchor={wrong_anchor}")
+        self.assertIn("Anchor hash mismatch", str(ctx_mismatch.exception))
+
+    def test_incremental_and_cached_verification(self):
+        from hr.audit import CACHE_KEY_AUDIT_CHAIN
+        from django.core.cache import cache
+
+        # Clear cache and run full verification
+        cache.delete(CACHE_KEY_AUDIT_CHAIN)
+        res1 = verify_chain(reverify=True)
+        self.assertTrue(res1.is_valid)
+        cached_data = cache.get(CACHE_KEY_AUDIT_CHAIN)
+        self.assertIsNotNone(cached_data)
+        self.assertEqual(cached_data["last_verified_id"], AuditLog.objects.order_by("-id").first().pk)
+
+        # Append a new record and test incremental verification
+        new_entry = log_audit_event(
+            action=AuditLog.Action.CREATE,
+            model_name="IncrementalTest",
+            object_id="555",
+        )
+        res2 = verify_chain(reverify=False)
+        self.assertTrue(res2.is_valid)
+        self.assertEqual(res2.count, res1.count + 1)
+        cached_updated = cache.get(CACHE_KEY_AUDIT_CHAIN)
+        self.assertEqual(cached_updated["last_verified_id"], new_entry.pk)
+
 
 
 

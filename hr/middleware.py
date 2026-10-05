@@ -5,10 +5,9 @@
 - De-duplicates PERMISSION_DENIED entries (at most one per user + path + minute).
 """
 
-import uuid
 from datetime import timedelta
 from django.utils import timezone
-from .audit import log_audit_event, set_current_request
+from .audit import log_audit_event, resolve_request_id, set_current_request
 from .models import AuditLog
 
 
@@ -19,7 +18,7 @@ class AuditMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        request.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request.request_id = resolve_request_id(request)
         token = set_current_request(request)
         try:
             response = self.get_response(request)

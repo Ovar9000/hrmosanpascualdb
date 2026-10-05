@@ -2,6 +2,7 @@ import csv
 import json
 import os
 from datetime import date, timedelta
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -745,7 +746,15 @@ def audit_list(request):
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
-    chain_verified, verified_count, chain_error, broken_id = verify_chain()
+    reverify = request.GET.get("reverify") == "1"
+    anchor = request.GET.get("anchor") or getattr(settings, "AUDIT_ANCHOR", None)
+
+    res = verify_chain(anchor=anchor, reverify=reverify)
+    chain_verified = res.is_valid
+    verified_count = res.count
+    chain_error = res.error_msg
+    broken_id = res.broken_id
+    anchor_verified = getattr(res, "anchor_verified", False)
 
     return render(
         request,
@@ -762,6 +771,8 @@ def audit_list(request):
             "verified_count": verified_count,
             "chain_error": chain_error,
             "broken_id": broken_id,
+            "anchor_verified": anchor_verified,
+            "anchor": anchor or "",
         },
     )
 
