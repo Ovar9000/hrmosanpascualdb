@@ -42,11 +42,16 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "hr.middleware.AuditMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Must be last: turns locked-out logins into a lockout response.
     "axes.middleware.AxesMiddleware",
 ]
+
+# Trusted reverse proxies for client IP extraction from X-Forwarded-For (DECISIONS U5)
+TRUSTED_PROXIES = os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
+
 
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"

@@ -113,9 +113,13 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 | # | Decision | Survey? |
 |---|---|---|
-| U1 | Logs who, action (create/update/delete/view), target record, old/new values, IP, timestamp, office. Also logs file exports and report downloads. | No |
-| U2 | Append-only at the database level: PostgreSQL trigger blocks `UPDATE`, `DELETE`, and `TRUNCATE`. Separate restricted DB app role. | No |
-| U3 | Dedicated Auditor-only search interface with CSV export. | No |
+| U1 | **Event coverage:** Logs who, action (`CREATE`, `UPDATE`, `DELETE`, `VIEW`, `EXPORT`, `LOGIN`, `LOGOUT`, `FAILED_LOGIN`, `ACCOUNT_LOCKOUT`, `PASSWORD_RESET`, `GROUP_CHANGE`, `PERMISSION_DENIED`), target entity, field diffs, IP address, timestamp, and office snapshot. `VIEW` is strictly logged for person detail, document downloads, and exports (not list directory pages). | No |
+| U2 | **Database-level immutability:** Append-only enforced via PostgreSQL PL/pgSQL trigger (`audit_log_prevent_tampering`) blocking all `UPDATE`, `DELETE`, and `TRUNCATE` operations on `hr_auditlog`. In addition, `hr_app` database role has `UPDATE, DELETE, TRUNCATE` revoked. | No |
+| U3 | **Atomic transaction binding:** Audit entries are committed in the same database transaction as the business operation. If audit logging fails, the entire transaction rolls back and the action fails. | No |
+| U4 | **Data minimization & redaction:** Sensitive fields (`rate`, `tin`, `gsis_no`, `philhealth_no`, `pagibig_no`, `sss_no`, `password`) log field names only. Values and password hashes are **NEVER** stored in the audit changes diff. | No |
+| U5 | **Trusted proxy IP extraction:** Client IP is resolved from `X-Forwarded-For` strictly when `REMOTE_ADDR` matches `TRUSTED_PROXIES`. Direct connections ignore spoofed proxy headers. | No |
+| U6 | **Signal limitations & code prohibitions:**<br>- Django signals do **not** trigger on `QuerySet.update()`, `QuerySet.bulk_create()`, `QuerySet.bulk_update()`, raw SQL `cursor.execute()`, or direct `psql` queries.<br>- **Policy:** HR application code is forbidden from calling `.update()`, `.bulk_create()`, `.bulk_update()`, or raw SQL for mutating domain entities. All domain mutations must use model `.save()` or `.delete()`. An automated AST test verifies this in the test suite.<br>- **Dev DB reset:** Because `TRUNCATE` is blocked by the PostgreSQL trigger, `manage.py flush` will be rejected. Developers must use `docker compose down -v` to reset a local development database.<br>- **Hash chain assessment:** An optional SHA-256 hash chain (`prev_hash`, `row_hash`) is supported on `AuditLog`. **Recommendation:** We do *not* recommend relying on synchronous in-database hash chaining as the primary defense over PostgreSQL engine-level append-only triggers. In a high-concurrency web application, computing a strictly linear hash chain requires serializing database writes (`SELECT FOR UPDATE`), creating heavy lock contention. Database-level triggers combined with periodic external write-once log export (e.g. daily signed CSV archives or off-site syslog streaming) provide stronger immutability without crippling concurrent web write performance. | No |
+
 
 ---
 
@@ -135,10 +139,11 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 - **Step 2:** Data models, initial migrations, `seed_offices` (25 offices), unit tests. *(Done)*
 - **Step 3:** Fake data seed command (151 people across engagement types), tests. *(Done)*
 - **Step 3b:** Demo screens: responsive office directory and personnel list/detail. *(Done)*
-- **Step 4A:** Model adjustments (`leave_eligible`, `original_on_file`, `Delegate`, indexes, admin isolation), migrations, tests. *(Current)*
-- **Step 4B:** Scaled fake seed data (~420 people matching 94/28/12/280+ municipal composition), 25/page pagination.
-- **Step 4C:** Role and permission system (`setup_roles` command, query/field gates, negative security tests).
-- **Step 5:** Append-only audit log (DB trigger, view & export logging, auditor search screen).
+- **Step 4A:** Model adjustments (`leave_eligible`, `original_on_file`, `Delegate`, indexes, admin isolation), migrations, tests. *(Done)*
+- **Step 4B:** Scaled fake seed data (~420 people matching 94/28/12/280+ municipal composition), 25/page pagination. *(Done)*
+- **Step 4C:** Role and permission system (`setup_roles` command, query/field gates, negative security tests). *(Done)*
+- **Step 5:** Append-only audit log (DB trigger, view & export logging, auditor search screen). *(Current)*
+
 - **Step 5b:** Reports & analytics (demographics, tenure bands, contract expirations, CSC lists, payroll inputs).
 - **Step 6:** Configurable leave approval workflow (steps, delegation, scan attachment, ledger deduction).
 - **Step 7:** Excel import/export (configurable columns, row-by-row error report).

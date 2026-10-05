@@ -1,18 +1,23 @@
+import csv
+import json
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Q, Sum
-from django.http import FileResponse, Http404, HttpResponseForbidden
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
-from .models import Document, Engagement, LeaveCredit, LeaveType, Office, Person
+from .audit import log_audit_event
+from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
 from .permissions import (
     can_view_document_content,
     can_view_ids,
     can_view_pay,
     get_visible_offices,
     get_visible_people,
+    is_auditor,
     is_hrmo,
     is_sysadmin,
 )
+
 
 
 @login_required
@@ -183,6 +188,15 @@ def person_detail(request, pk):
     engagements = person.engagements.all().order_by("-start_date")
     documents = person.documents.all().order_by("-uploaded_at")
 
+    # Audit log VIEW event for person detail (DECISIONS U1)
+    log_audit_event(
+        action=AuditLog.Action.VIEW,
+        model_name="Person",
+        object_id=person.pk,
+        object_repr=str(person),
+        request=request,
+    )
+
     return render(
         request,
         "hr/person_detail.html",
@@ -208,4 +222,103 @@ def document_download(request, pk):
     if not doc.file:
         raise Http404("Document scan is not uploaded.")
 
+    # Audit log VIEW event for document download (DECISIONS U1)
+    log_audit_event(
+        action=AuditLog.Action.VIEW,
+        model_name="Document",
+        object_id=doc.pk,
+        object_repr=str(doc),
+        request=request,
+    )
+
     return FileResponse(doc.file.open(), as_attachment=False, filename=doc.file.name.split("/")[-1])
+
+
+@login_required
+def audit_list(request):
+    """Auditor-only searchable audit trail (DECISIONS U1-U6)."""
+    if not (request.user.is_superuser or is_auditor(request.user) or request.user.has_perm("hr.view_audit_log")):
+        return HttpResponseForbidden("You do not have permission to access system audit logs.")
+
+    qs = AuditLog.objects.all().order_by("-timestamp")
+    query = request.GET.get("q", "").strip()
+    action = request.GET.get("action", "").strip()
+    start_date = request.GET.get("start_date", "").strip()
+    end_date = request.GET.get("end_date", "").strip()
+    user_filter = request.GET.get("user", "").strip()
+
+    if query:
+        qs = qs.filter(
+            Q(username__icontains=query)
+            | Q(object_repr__icontains=query)
+            | Q(model_name__icontains=query)
+            | Q(object_id__icontains=query)
+        )
+    if action:
+        qs = qs.filter(action=action)
+    if user_filter:
+        qs = qs.filter(username__icontains=user_filter)
+    if start_date:
+        qs = qs.filter(timestamp__date__gte=start_date)
+    if end_date:
+        qs = qs.filter(timestamp__date__lte=end_date)
+
+    paginator = Paginator(qs, 50)
+    page_number = request.GET.get("page")
+    page_obj = paginator.get_page(page_number)
+
+    return render(
+        request,
+        "hr/audit_list.html",
+        {
+            "page_obj": page_obj,
+            "query": query,
+            "selected_action": action,
+            "selected_user": user_filter,
+            "start_date": start_date,
+            "end_date": end_date,
+            "actions": AuditLog.Action.choices,
+        },
+    )
+
+
+@login_required
+def audit_export_csv(request):
+    """CSV export of audit log records, restricted to Auditor (DECISIONS U3)."""
+    if not (request.user.is_superuser or is_auditor(request.user) or request.user.has_perm("hr.view_audit_log")):
+        return HttpResponseForbidden("You do not have permission to export system audit logs.")
+
+    # Audit log EXPORT event (DECISIONS U1)
+    log_audit_event(
+        action=AuditLog.Action.EXPORT,
+        model_name="AuditLog",
+        object_repr="Audit log CSV export",
+        request=request,
+    )
+
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = 'attachment; filename="sanpascual_audit_log.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow([
+        "Timestamp", "Action", "User ID", "Username", "Office",
+        "Model", "Object ID", "Object Description", "Changes", "IP Address"
+    ])
+
+    qs = AuditLog.objects.all().order_by("-timestamp")[:5000]
+    for row in qs:
+        writer.writerow([
+            row.timestamp.isoformat(),
+            row.action,
+            row.user_id or "",
+            row.username or "",
+            row.office_name or "",
+            row.model_name,
+            row.object_id,
+            row.object_repr,
+            json.dumps(row.changes),
+            row.ip_address or "",
+        ])
+
+    return response
+

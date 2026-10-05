@@ -7,5 +7,9 @@ urlpatterns = [
     path("people/", views.person_list, name="person_list"),
     path("people/<int:pk>/", views.person_detail, name="person_detail"),
     path("documents/<int:pk>/download/", views.document_download, name="document_download"),
+    path("audit/", views.audit_list, name="audit_list"),
+    path("audit/export/csv/", views.audit_export_csv, name="audit_export_csv"),
 ]
+
+
 

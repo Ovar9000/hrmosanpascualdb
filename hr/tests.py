@@ -1,12 +1,15 @@
+import ast
 from datetime import date
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.management import call_command
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
+from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
 from hr.models import (
+    AuditLog,
     Delegate,
     Document,
     Engagement,
@@ -29,6 +32,7 @@ from hr.permissions import (
     is_active_delegate,
     is_executive,
 )
+
 
 
 class OfficeAndSeedOfficesTestCase(TestCase):
@@ -735,6 +739,237 @@ class Step4CSecurityAndRolesTestCase(TestCase):
         # Cannot view other personnel
         resp_other = self.client.get(f"/people/{self.person_b.pk}/")
         self.assertEqual(resp_other.status_code, 404)
+
+
+class Step5AuditLogTestCase(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        call_command("seed_offices")
+        call_command("setup_roles")
+
+        self.superuser = User.objects.create_superuser("superadmin", "super@test.com", "superpass123")
+        self.auditor = User.objects.create_user("auditor_user", "auditor@test.com", "audpass123")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+
+        self.hrmo = User.objects.create_user("hrmo_user", "hrmo@test.com", "hrmopass123")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+        self.office_head = User.objects.create_user("head_user", "head@test.com", "headpass123")
+        self.office_head.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+
+        self.office = Office.objects.get(name="Office of the Municipal Mayor")
+        UserProfile.objects.create(user=self.office_head, office=self.office)
+
+        self.person = Person.objects.create(
+            employee_no="SP-00888",
+            last_name="Mabini",
+            first_name="Apolinario",
+            birthdate=date(1985, 7, 23),
+            tin="000-888-999-000",
+        )
+
+    def test_database_trigger_blocks_update_and_delete(self):
+        # Create an audit log entry
+        entry = log_audit_event(
+            action=AuditLog.Action.CREATE,
+            model_name="Person",
+            object_id=self.person.pk,
+            object_repr=str(self.person),
+            changes={"first_name": {"old": None, "new": "Apolinario"}},
+        )
+        self.assertIsNotNone(entry)
+        self.assertIsNotNone(entry.pk)
+
+        # Attempting DELETE via SQL/ORM must fail at the PostgreSQL trigger level
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                AuditLog.objects.filter(pk=entry.pk).delete()
+
+        # Attempting UPDATE via SQL/ORM must fail at the PostgreSQL trigger level
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                AuditLog.objects.filter(pk=entry.pk).update(object_repr="Tampered description")
+
+    def test_sensitive_fields_redaction_in_changes_diff(self):
+        # 1. Update Person with new fake TIN
+        self.person.tin = "000-777-666-000"
+        self.person.save()
+
+        person_update_log = AuditLog.objects.filter(
+            model_name="Person", object_id=str(self.person.pk), action=AuditLog.Action.UPDATE
+        ).first()
+        self.assertIsNotNone(person_update_log)
+        # tin field name is logged, but its value is redacted
+        self.assertIn("tin", person_update_log.changes)
+        self.assertEqual(person_update_log.changes["tin"], "[REDACTED]")
+        self.assertNotIn("000-777-666-000", str(person_update_log.changes))
+
+        # 2. Create Engagement with pay rate
+        eng = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Legal Researcher",
+            rate=Decimal("28000.00"),
+            rate_basis=Engagement.RateBasis.MONTHLY,
+            start_date=date(2025, 1, 1),
+        )
+        eng_log = AuditLog.objects.filter(
+            model_name="Engagement", object_id=str(eng.pk), action=AuditLog.Action.CREATE
+        ).first()
+        self.assertIsNotNone(eng_log)
+        self.assertIn("rate", eng_log.changes)
+        self.assertEqual(eng_log.changes["rate"], "[REDACTED]")
+        self.assertNotIn("28000.00", str(eng_log.changes))
+
+        # 3. Password reset on User
+        target_user = get_user_model().objects.create_user("pwd_target", "pwd@test.com", "initialpass123")
+        target_user.set_password("newsecretpass456")
+        target_user.save()
+
+        pwd_log = AuditLog.objects.filter(
+            model_name="User", object_id=str(target_user.pk), action=AuditLog.Action.PASSWORD_RESET
+        ).first()
+        self.assertIsNotNone(pwd_log)
+        self.assertIn("password", pwd_log.changes)
+        self.assertEqual(pwd_log.changes["password"], "[REDACTED]")
+        self.assertNotIn("pbkdf2_sha256", str(pwd_log.changes))
+        self.assertNotIn("newsecretpass456", str(pwd_log.changes))
+
+    def test_user_deletion_does_not_affect_audit_log_rows(self):
+        User = get_user_model()
+        temp_user = User.objects.create_user("temp_user", "temp@test.com", "pass123")
+        temp_uid = temp_user.pk
+
+        entry = log_audit_event(
+            action=AuditLog.Action.UPDATE,
+            model_name="Person",
+            object_id=self.person.pk,
+            object_repr=str(self.person),
+            user=temp_user,
+        )
+
+        self.assertEqual(entry.user_id, temp_uid)
+        self.assertEqual(entry.username, "temp_user")
+
+        # Delete user
+        temp_user.delete()
+
+        # AuditLog entry still exists intact
+        reloaded = AuditLog.objects.get(pk=entry.pk)
+        self.assertEqual(reloaded.user_id, temp_uid)
+        self.assertEqual(reloaded.username, "temp_user")
+
+    def test_transaction_binding_failure_rolls_back_action(self):
+        # If audit log creation fails, the outer action transaction must roll back
+        from unittest.mock import patch
+
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                p = Person(
+                    employee_no="SP-00999",
+                    last_name="Silang",
+                    first_name="Gabriela",
+                    birthdate=date(1991, 3, 19),
+                )
+                p.save()
+                with patch("hr.models.AuditLog.objects.create", side_effect=RuntimeError("Audit DB down")):
+                    log_audit_event(
+                        action=AuditLog.Action.UPDATE,
+                        model_name="Person",
+                        object_id=p.pk,
+                        object_repr=str(p),
+                    )
+
+        # Confirm person was rolled back and never persisted
+        self.assertFalse(Person.objects.filter(employee_no="SP-00999").exists())
+
+    def test_trusted_proxy_client_ip_resolution(self):
+        rf = RequestFactory()
+
+        # Untrusted remote address: X-Forwarded-For must be IGNORED
+        req_untrusted = rf.get("/people/", REMOTE_ADDR="198.51.100.42", HTTP_X_FORWARDED_FOR="1.1.1.1")
+        self.assertEqual(get_client_ip(req_untrusted), "198.51.100.42")
+
+        # Trusted remote address: X-Forwarded-For must be extracted
+        req_trusted = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="203.0.113.195, 10.0.0.1")
+        self.assertEqual(get_client_ip(req_trusted), "203.0.113.195")
+
+    def test_selective_view_logging(self):
+        self.client.force_login(self.hrmo)
+
+        # 1. Directory listing (/people/) must NOT log VIEW
+        init_view_count = AuditLog.objects.filter(action=AuditLog.Action.VIEW).count()
+        self.client.get("/people/")
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.VIEW).count(), init_view_count)
+
+        # 2. Offices directory (/offices/) must NOT log VIEW
+        self.client.get("/offices/")
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.VIEW).count(), init_view_count)
+
+        # 3. Person detail (/people/<id>/) MUST log VIEW
+        resp_detail = self.client.get(f"/people/{self.person.pk}/")
+        self.assertEqual(resp_detail.status_code, 200)
+        self.assertEqual(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.VIEW, model_name="Person", object_id=str(self.person.pk)
+            ).count(),
+            1,
+        )
+
+    def test_auditor_interface_access_and_export(self):
+        # Non-auditor (Office Head) gets 403 Forbidden on /audit/
+        self.client.force_login(self.office_head)
+        resp_denied = self.client.get("/audit/")
+        self.assertEqual(resp_denied.status_code, 403)
+
+        # 403 denial was logged as PERMISSION_DENIED
+        denial_log = AuditLog.objects.filter(action=AuditLog.Action.PERMISSION_DENIED).first()
+        self.assertIsNotNone(denial_log)
+        self.assertEqual(denial_log.changes.get("path"), "/audit/")
+
+        # Auditor gets 200 OK
+        self.client.force_login(self.auditor)
+        resp_audit = self.client.get("/audit/")
+        self.assertEqual(resp_audit.status_code, 200)
+        self.assertContains(resp_audit, "System Audit Trail")
+
+        # Auditor exports CSV
+        resp_export = self.client.get("/audit/export/csv/")
+        self.assertEqual(resp_export.status_code, 200)
+        self.assertEqual(resp_export["Content-Type"], "text/csv")
+        self.assertIn("Timestamp,Action,User ID", resp_export.content.decode("utf-8"))
+
+        # EXPORT action was recorded in AuditLog
+        self.assertTrue(
+            AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="AuditLog").exists()
+        )
+
+    def test_codebase_inspection_forbids_unlogged_queryset_mutations(self):
+        # Scans hr/ app views and domain code to ensure no .update(), .bulk_create(), or raw SQL are used
+        from pathlib import Path
+
+        hr_dir = Path(__file__).resolve().parent
+        forbidden_calls = {"bulk_create", "bulk_update", "raw"}
+
+        for py_file in hr_dir.glob("*.py"):
+            if py_file.name in ["tests.py", "audit.py", "signals.py"]:
+                continue
+
+            with open(py_file, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=str(py_file))
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Attribute):
+                        call_name = node.func.attr
+                        # Disallow bulk_create(), bulk_update(), raw() in domain code
+                        if call_name in forbidden_calls:
+                            self.fail(
+                                f"Forbidden call '{call_name}' in {py_file.name} line {node.lineno}: "
+                                "Domain operations must use model save() or delete() to guarantee audit trail."
+                            )
+
 
 
 

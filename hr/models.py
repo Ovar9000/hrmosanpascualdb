@@ -478,3 +478,70 @@ class Delegate(models.Model):
             from django.utils import timezone
             target_date = timezone.localdate()
         return self.valid_from <= target_date <= self.valid_to
+
+
+# --- Audit Log ---------------------------------------------------------------
+
+
+class AuditLog(models.Model):
+    """Append-only audit trail capturing model mutations, security events, and record views.
+
+    Design constraints (DECISIONS U1-U6):
+    - No foreign keys to User or Office: stores plain user_id and snapshots so users can be deleted.
+    - Protected by PostgreSQL database trigger preventing UPDATE, DELETE, and TRUNCATE.
+    - Contains optional SHA-256 hash chaining (prev_hash, row_hash).
+    """
+
+    class Action(models.TextChoices):
+        CREATE = "create", "Create"
+        UPDATE = "update", "Update"
+        DELETE = "delete", "Delete"
+        VIEW = "view", "View"
+        EXPORT = "export", "Export"
+        LOGIN = "login", "Login"
+        LOGOUT = "logout", "Logout"
+        FAILED_LOGIN = "failed_login", "Failed Login"
+        ACCOUNT_LOCKOUT = "lockout", "Account Lockout"
+        PASSWORD_RESET = "password_reset", "Password Reset"
+        GROUP_CHANGE = "group_change", "Group Change"
+        PERMISSION_DENIED = "permission_denied", "Permission Denied (403)"
+
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    action = models.CharField(max_length=30, choices=Action.choices, db_index=True)
+
+    # Plain integer IDs and snapshots without foreign keys (Requirement 2)
+    user_id = models.IntegerField(null=True, blank=True, db_index=True)
+    username = models.CharField(max_length=150, blank=True, db_index=True)
+    office_id = models.IntegerField(null=True, blank=True, db_index=True)
+    office_name = models.CharField(max_length=200, blank=True)
+
+    # Target entity
+    model_name = models.CharField(max_length=100, blank=True, db_index=True)
+    object_id = models.CharField(max_length=100, blank=True, db_index=True)
+    object_repr = models.CharField(max_length=255, blank=True)
+
+    # Changes diff (field names only for sensitive fields, no values or password hashes)
+    changes = models.JSONField(default=dict, blank=True)
+
+    # Network metadata
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    # Optional cryptographic hash chain
+    prev_hash = models.CharField(max_length=64, blank=True)
+    row_hash = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        db_table = "hr_auditlog"
+        ordering = ["-timestamp", "-id"]
+        indexes = [
+            models.Index(fields=["model_name", "object_id"], name="audit_target_idx"),
+            models.Index(fields=["action", "timestamp"], name="audit_act_time_idx"),
+        ]
+        permissions = [
+            ("view_audit_log", "Can view and export system audit logs"),
+        ]
+
+    def __str__(self):
+        user_str = self.username or (f"User #{self.user_id}" if self.user_id else "System")
+        return f"[{self.timestamp:%Y-%m-%d %H:%M:%S}] {user_str} {self.action} {self.model_name}:{self.object_id}"
+

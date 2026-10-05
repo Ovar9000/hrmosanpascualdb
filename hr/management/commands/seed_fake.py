@@ -20,6 +20,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
+from hr.audit import disable_audit
 from hr.models import (
     Delegate,
     Document,
@@ -101,37 +102,39 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        # Ensure offices are seeded
-        if Office.objects.count() < 25:
-            self.stdout.write("Offices not fully seeded. Running seed_offices first...")
-            call_command("seed_offices")
+        with disable_audit():
+            # Ensure offices are seeded
+            if Office.objects.count() < 25:
+                self.stdout.write("Offices not fully seeded. Running seed_offices first...")
+                call_command("seed_offices")
 
-        if options["clear"]:
-            self.stdout.write("Clearing existing HR records...")
+            if options["clear"]:
+                self.stdout.write("Clearing existing HR records...")
+                with transaction.atomic():
+                    Delegate.objects.all().delete()
+                    LeaveCredit.objects.all().delete()
+                    LeaveRequest.objects.all().delete()
+                    Document.objects.all().delete()
+                    Engagement.objects.all().delete()
+                    Project.objects.all().delete()
+                    Person.objects.all().delete()
+                self.stdout.write(self.style.WARNING("Existing HR records deleted."))
+
+            random.seed(42)  # Deterministic seed for reproducible testing
+
+            self.stdout.write("Seeding ~420 fake municipal personnel...")
             with transaction.atomic():
-                Delegate.objects.all().delete()
-                LeaveCredit.objects.all().delete()
-                LeaveRequest.objects.all().delete()
-                Document.objects.all().delete()
-                Engagement.objects.all().delete()
-                Project.objects.all().delete()
-                Person.objects.all().delete()
-            self.stdout.write(self.style.WARNING("Existing HR records deleted."))
+                self._seed_data()
 
-        random.seed(42)  # Deterministic seed for reproducible testing
-
-        self.stdout.write("Seeding ~420 fake municipal personnel...")
-        with transaction.atomic():
-            self._seed_data()
-
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Done! Database now has {Person.objects.count()} people, "
-                f"{Engagement.objects.count()} engagements across {Office.objects.count()} offices, "
-                f"{Project.objects.count()} projects, {Document.objects.count()} documents, "
-                f"and {LeaveRequest.objects.count()} leave requests."
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Done! Database now has {Person.objects.count()} people, "
+                    f"{Engagement.objects.count()} engagements across {Office.objects.count()} offices, "
+                    f"{Project.objects.count()} projects, {Document.objects.count()} documents, "
+                    f"and {LeaveRequest.objects.count()} leave requests."
+                )
             )
-        )
+
 
     def _seed_data(self):
         # 1. Projects

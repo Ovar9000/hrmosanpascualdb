@@ -6,7 +6,8 @@ Idempotent: safe to run repeatedly.
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.management.base import BaseCommand
-from hr.models import Delegate, Document, Engagement, LeaveRequest, Office, Person
+from hr.audit import disable_audit
+from hr.models import AuditLog, Delegate, Document, Engagement, LeaveRequest, Office, Person
 from hr.permissions import (
     ROLE_AUDITOR,
     ROLE_EXECUTIVE,
@@ -21,15 +22,18 @@ class Command(BaseCommand):
     help = "Initializes default roles (Django Groups) and assigns explicit permissions."
 
     def handle(self, *args, **options):
-        self.stdout.write("Configuring system roles and permissions...")
+        with disable_audit():
+            self.stdout.write("Configuring system roles and permissions...")
 
-        # Obtain content types
-        person_ct = ContentType.objects.get_for_model(Person)
-        eng_ct = ContentType.objects.get_for_model(Engagement)
-        doc_ct = ContentType.objects.get_for_model(Document)
-        leave_ct = ContentType.objects.get_for_model(LeaveRequest)
-        delegate_ct = ContentType.objects.get_for_model(Delegate)
-        office_ct = ContentType.objects.get_for_model(Office)
+            # Obtain content types
+            person_ct = ContentType.objects.get_for_model(Person)
+            eng_ct = ContentType.objects.get_for_model(Engagement)
+            doc_ct = ContentType.objects.get_for_model(Document)
+            leave_ct = ContentType.objects.get_for_model(LeaveRequest)
+            delegate_ct = ContentType.objects.get_for_model(Delegate)
+            office_ct = ContentType.objects.get_for_model(Office)
+            audit_ct = ContentType.objects.get_for_model(AuditLog)
+
 
         # 1. System Admin (IT)
         # Manages accounts and groups in /admin/. Has ZERO HR permissions.
@@ -96,14 +100,14 @@ class Command(BaseCommand):
         # Read-only across all offices, including pay, IDs, documents, and audit logs.
         auditor_group, _ = Group.objects.get_or_create(name=ROLE_AUDITOR)
         auditor_perms = Permission.objects.filter(
-            content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct],
+            content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct, audit_ct],
             codename__in=[
                 "view_hr_records", "view_person", "view_pay", "view_engagement",
                 "view_ids", "view_documents", "view_document", "view_office",
-                "view_leaverequest",
+                "view_leaverequest", "view_audit_log",
             ],
         )
         auditor_group.permissions.set(auditor_perms)
 
-
         self.stdout.write(self.style.SUCCESS("System roles configured successfully."))
+

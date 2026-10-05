@@ -3,6 +3,7 @@ from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin, UserAdmin as
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import PermissionDenied
 from .models import (
+    AuditLog,
     Delegate,
     Document,
     Engagement,
@@ -13,6 +14,7 @@ from .models import (
     Project,
     UserProfile,
 )
+
 from .permissions import PROTECTED_ROLES
 
 
@@ -194,3 +196,21 @@ class UserProfileAdmin(SuperuserOnlyAdmin):
 class DelegateAdmin(SuperuserOnlyAdmin):
     list_display = ("principal", "delegate", "valid_from", "valid_to", "notes")
     search_fields = ("principal__username", "delegate__username")
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(SuperuserOnlyAdmin):
+    list_display = ("timestamp", "username", "action", "model_name", "object_id", "object_repr", "ip_address")
+    list_filter = ("action", "model_name")
+    search_fields = ("username", "object_repr", "object_id")
+    readonly_fields = [f.name for f in AuditLog._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+

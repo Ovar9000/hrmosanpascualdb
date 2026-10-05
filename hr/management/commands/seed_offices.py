@@ -4,6 +4,7 @@ Idempotent: safe to run repeatedly.
 """
 
 from django.core.management.base import BaseCommand
+from hr.audit import disable_audit
 from hr.models import Office
 
 OFFICES_DATA = [
@@ -268,38 +269,43 @@ class Command(BaseCommand):
     help = "Seeds the 25 official municipal offices of San Pascual."
 
     def handle(self, *args, **options):
-        self.stdout.write("Seeding municipal offices...")
-        created_count = 0
-        updated_count = 0
+        with disable_audit():
+            self.stdout.write("Seeding municipal offices...")
+            created_count = 0
+            updated_count = 0
 
-        # First pass: create/update office rows without parents
-        for item in OFFICES_DATA:
-            office, created = Office.objects.update_or_create(
-                name=item["name"],
-                defaults={
-                    "acronym": item["acronym"],
-                    "branch": item["branch"],
-                    "type": item["type"],
-                    "head_title": item["head_title"],
-                    "location": item["location"],
-                    "contact": item["contact"],
-                },
+            # First pass: create/update office rows without parents
+            for item in OFFICES_DATA:
+                office, created = Office.objects.update_or_create(
+                    name=item["name"],
+                    defaults={
+                        "acronym": item["acronym"],
+                        "branch": item["branch"],
+                        "type": item["type"],
+                        "head_title": item["head_title"],
+                        "location": item["location"],
+                        "contact": item["contact"],
+                    },
+                )
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+
+            # Second pass: wire up parent foreign keys
+            for item in OFFICES_DATA:
+                if item["parent_name"]:
+                    parent = Office.objects.filter(name=item["parent_name"]).first()
+                    if parent:
+                        child_office = Office.objects.filter(name=item["name"]).first()
+                        if child_office and child_office.parent != parent:
+                            child_office.parent = parent
+                            child_office.save()
+
+            total = Office.objects.count()
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Successfully seeded offices. Created: {created_count}, Updated: {updated_count}. Total in DB: {total}."
+                )
             )
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
 
-        # Second pass: wire up parent foreign keys
-        for item in OFFICES_DATA:
-            if item["parent_name"]:
-                parent = Office.objects.filter(name=item["parent_name"]).first()
-                if parent:
-                    Office.objects.filter(name=item["name"]).update(parent=parent)
-
-        total = Office.objects.count()
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Successfully seeded offices. Created: {created_count}, Updated: {updated_count}. Total in DB: {total}."
-            )
-        )
