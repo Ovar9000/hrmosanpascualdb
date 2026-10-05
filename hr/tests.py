@@ -262,3 +262,67 @@ class SeedFakeCommandTestCase(TestCase):
         # Leave requests exist
         self.assertGreaterEqual(LeaveRequest.objects.count(), 10)
 
+
+class ViewsTestCase(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        self.user = User.objects.create_user(username="staffuser", password="securepassword123", is_staff=True)
+        self.regular_user = User.objects.create_user(username="reguser", password="securepassword123", is_staff=False)
+
+        call_command("seed_offices")
+        call_command("seed_fake")
+
+    def test_views_require_login(self):
+        # Unauthenticated users redirected to login
+        resp = self.client.get("/offices/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/accounts/login/", resp.url)
+
+        resp = self.client.get("/people/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/accounts/login/", resp.url)
+
+    def test_office_views(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/offices/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Municipal Offices Directory")
+        self.assertContains(resp, "Office of the Municipal Mayor")
+
+        # Filter by branch
+        resp_leg = self.client.get("/offices/?branch=legislative")
+        self.assertEqual(resp_leg.status_code, 200)
+        self.assertContains(resp_leg, "Office of the Sangguniang Bayan")
+        self.assertNotContains(resp_leg, "Office of the Municipal Mayor")
+
+        # Office detail
+        office = Office.objects.first()
+        resp_det = self.client.get(f"/offices/{office.pk}/")
+        self.assertEqual(resp_det.status_code, 200)
+        self.assertContains(resp_det, office.name)
+
+    def test_person_views(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/people/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Personnel Directory")
+
+        person = Person.objects.first()
+        resp_det = self.client.get(f"/people/{person.pk}/")
+        self.assertEqual(resp_det.status_code, 200)
+        self.assertContains(resp_det, person.last_name)
+        self.assertContains(resp_det, person.employee_no)
+        # Staff user can see rates
+        self.assertTrue(resp_det.context["can_view_rates"])
+
+    def test_rate_visibility_for_non_staff(self):
+        self.client.force_login(self.regular_user)
+        person = Person.objects.first()
+        resp_det = self.client.get(f"/people/{person.pk}/")
+        self.assertEqual(resp_det.status_code, 200)
+        # Regular non-staff user does not see rates
+        self.assertFalse(resp_det.context["can_view_rates"])
+        self.assertContains(resp_det, "Pay rates are restricted")
+
+

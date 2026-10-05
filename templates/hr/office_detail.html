@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}{{ office.name }} · Office Details{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'office_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Offices Directory</a>
+</div>
+
+<!-- Office Summary Header -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+      <div>
+        <h1 class="h3 mb-1">{{ office.name }}</h1>
+        {% if office.acronym %}<div class="text-muted fw-bold">{{ office.acronym }}</div>{% endif %}
+      </div>
+      <div class="d-flex gap-1">
+        <span class="badge 
+          {% if office.branch == 'legislative' %}bg-info text-dark
+          {% elif office.branch == 'other' %}bg-secondary
+          {% else %}bg-primary{% endif %} fs-6">
+          {{ office.get_branch_display }}
+        </span>
+        <span class="badge bg-light text-muted border fs-6">{{ office.get_type_display }}</span>
+      </div>
+    </div>
+
+    <div class="row g-2 mt-2 small text-muted">
+      {% if office.head_title %}
+        <div class="col-12 col-md-4"><strong>Designated Head:</strong> {{ office.head_title }}</div>
+      {% endif %}
+      {% if office.location %}
+        <div class="col-12 col-md-4"><strong>Office Location:</strong> {{ office.location }}</div>
+      {% endif %}
+      {% if office.contact %}
+        <div class="col-12 col-md-4"><strong>Official Contact:</strong> {{ office.contact }}</div>
+      {% endif %}
+      {% if office.parent %}
+        <div class="col-12 col-md-4"><strong>Parent Office:</strong> <a href="{% url 'office_detail' office.parent.pk %}">{{ office.parent.name }}</a></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Active Personnel Roster -->
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
+    <span>Active Personnel Roster</span>
+    <span class="badge bg-primary">{{ active_engagements|length }} personnel</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Personnel</th>
+          <th>Position Title</th>
+          <th>Appointment Type</th>
+          <th>Start Date</th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for eng in active_engagements %}
+          <tr>
+            <td>
+              <div class="fw-bold">
+                <a href="{% url 'person_detail' eng.person.pk %}" class="text-decoration-none">
+                  {{ eng.person.full_name }}
+                </a>
+              </div>
+              <div class="text-muted font-monospace">{{ eng.person.employee_no }}</div>
+            </td>
+            <td>
+              <div>{{ eng.position_title }}</div>
+              {% if eng.type == 'plantilla' %}
+                <div class="text-muted font-monospace">SG {{ eng.salary_grade }}, Step {{ eng.step }} ({{ eng.item_number }})</div>
+              {% elif eng.type == 'project' and eng.project %}
+                <div class="text-muted">Project: {{ eng.project.name }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge 
+                {% if eng.type == 'plantilla' %}bg-primary
+                {% elif eng.type == 'casual' %}bg-info text-dark
+                {% elif eng.type == 'jo' %}bg-warning text-dark
+                {% elif eng.type == 'elected' %}bg-success
+                {% elif eng.type == 'project' %}bg-dark
+                {% else %}bg-secondary{% endif %}">
+                {{ eng.get_type_display }}
+              </span>
+            </td>
+            <td>{{ eng.start_date|date:"M d, Y" }}</td>
+            <td class="text-end">
+              <a href="{% url 'person_detail' eng.person.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="text-center py-3 text-muted">No active personnel assigned to this office.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Historical Engagements in this Office -->
+{% if ended_engagements %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2 small text-muted">Past / Completed Appointments in this Office</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small text-muted">
+      <thead class="table-light">
+        <tr>
+          <th>Personnel</th>
+          <th>Position</th>
+          <th>Type</th>
+          <th>Period</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for eng in ended_engagements %}
+          <tr>
+            <td>
+              <a href="{% url 'person_detail' eng.person.pk %}" class="text-decoration-none text-body">
+                {{ eng.person.full_name }}
+              </a>
+            </td>
+            <td>{{ eng.position_title }}</td>
+            <td>{{ eng.get_type_display }}</td>
+            <td>{{ eng.start_date|date:"M Y" }} – {{ eng.end_date|date:"M Y"|default:"—" }}</td>
+            <td><span class="badge bg-secondary">{{ eng.get_status_display }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

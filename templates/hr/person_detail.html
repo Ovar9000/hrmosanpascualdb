@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}{{ person.full_name }} · Personnel Record{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'person_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Personnel List</a>
+</div>
+
+<!-- Header Card -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+      <div>
+        <h1 class="h3 mb-1">{{ person.full_name }}</h1>
+        <div class="text-muted font-monospace">Employee No: {{ person.employee_no }}</div>
+      </div>
+      <div>
+        {% with curr=engagements.first %}
+          {% if curr and curr.status == 'active' %}
+            <span class="badge bg-success fs-6">Active Employee</span>
+          {% else %}
+            <span class="badge bg-secondary fs-6">Inactive / Term Ended</span>
+          {% endif %}
+        {% endwith %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <!-- Personal Information -->
+  <div class="col-12 col-md-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2">Personal Information</div>
+      <div class="card-body p-3">
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4 text-muted">Birthdate</dt>
+          <dd class="col-sm-8">{{ person.birthdate|date:"F d, Y" }}</dd>
+
+          <dt class="col-sm-4 text-muted">Sex</dt>
+          <dd class="col-sm-8">{{ person.get_sex_display|default:"—" }}</dd>
+
+          <dt class="col-sm-4 text-muted">Mobile</dt>
+          <dd class="col-sm-8">{{ person.mobile|default:"—" }}</dd>
+
+          <dt class="col-sm-4 text-muted">Email</dt>
+          <dd class="col-sm-8">{{ person.email|default:"—" }}</dd>
+
+          <dt class="col-sm-4 text-muted">Address</dt>
+          <dd class="col-sm-8">{{ person.address|default:"—" }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- Government IDs & Leave Credits -->
+  <div class="col-12 col-md-6">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between">
+        <span>Identification (Fake IDs)</span>
+        <span class="badge bg-light text-muted border">Prototype Only</span>
+      </div>
+      <div class="card-body p-3">
+        <dl class="row mb-0 small font-monospace">
+          <dt class="col-sm-5 text-muted font-sans-serif">TIN</dt>
+          <dd class="col-sm-7">{{ person.tin|default:"—" }}</dd>
+
+          <dt class="col-sm-5 text-muted font-sans-serif">GSIS BP No.</dt>
+          <dd class="col-sm-7">{{ person.gsis_no|default:"—" }}</dd>
+
+          <dt class="col-sm-5 text-muted font-sans-serif">PhilHealth</dt>
+          <dd class="col-sm-7">{{ person.philhealth_no|default:"—" }}</dd>
+
+          <dt class="col-sm-5 text-muted font-sans-serif">Pag-IBIG MID</dt>
+          <dd class="col-sm-7">{{ person.pagibig_no|default:"—" }}</dd>
+
+          <dt class="col-sm-5 text-muted font-sans-serif">SSS No.</dt>
+          <dd class="col-sm-7">{{ person.sss_no|default:"—" }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Leave Balances -->
+    {% if leave_balances %}
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">Leave Balances (Days)</div>
+      <div class="card-body p-3">
+        <div class="d-flex flex-wrap gap-2">
+          {% for label, balance in leave_balances.items %}
+            <div class="border rounded p-2 text-center flex-fill bg-light">
+              <div class="small text-muted">{{ label }}</div>
+              <div class="h5 mb-0 text-primary">{{ balance }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Career History & Engagements -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
+    <span>Engagement & Appointment History</span>
+    <span class="small text-muted">{{ engagements|length }} record(s)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Period</th>
+          <th>Office & Position</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Plantilla / Project Details</th>
+          {% if can_view_rates %}<th>Compensation</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for eng in engagements %}
+          <tr>
+            <td class="text-nowrap">
+              <div>{{ eng.start_date|date:"M Y" }} –</div>
+              <div>{{ eng.end_date|date:"M Y"|default:"Present" }}</div>
+            </td>
+            <td>
+              <div class="fw-bold">{{ eng.position_title }}</div>
+              <div class="text-muted"><a href="{% url 'office_detail' eng.office.pk %}" class="text-decoration-none">{{ eng.office.name }}</a></div>
+              {% if eng.notes %}<div class="text-muted fst-italic">{{ eng.notes }}</div>{% endif %}
+            </td>
+            <td>
+              <span class="badge 
+                {% if eng.type == 'plantilla' %}bg-primary
+                {% elif eng.type == 'casual' %}bg-info text-dark
+                {% elif eng.type == 'jo' %}bg-warning text-dark
+                {% elif eng.type == 'elected' %}bg-success
+                {% elif eng.type == 'project' %}bg-dark
+                {% else %}bg-secondary{% endif %}">
+                {{ eng.get_type_display }}
+              </span>
+            </td>
+            <td>
+              {% if eng.status == 'active' %}
+                <span class="badge bg-success">Active</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ eng.get_status_display }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if eng.type == 'plantilla' %}
+                <div><strong>SG {{ eng.salary_grade }}</strong>, Step {{ eng.step }}</div>
+                <div class="font-monospace text-muted">{{ eng.item_number }}</div>
+              {% elif eng.type == 'project' and eng.project %}
+                <div>Project: {{ eng.project.name }}</div>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% if can_view_rates %}
+            <td class="text-nowrap font-monospace">
+              {% if eng.rate %}
+                ₱{{ eng.rate|floatformat:2 }} <span class="text-muted small">/ {{ eng.get_rate_basis_display }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center py-3 text-muted">No appointments recorded.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not can_view_rates %}
+    <div class="card-footer bg-light small text-muted">
+      🔒 Pay rates are restricted to HRMO and Auditor roles (DECISIONS R6).
+    </div>
+  {% endif %}
+</div>
+
+<!-- Attached Documents / 201-Files -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Attached Documents & 201-File Filing</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr>
+          <th>Document Type</th>
+          <th>Status</th>
+          <th>Physical Archive Location</th>
+          <th>Date Filed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for doc in documents %}
+          <tr>
+            <td class="fw-bold">{{ doc.get_doc_type_display }}</td>
+            <td><span class="badge bg-secondary">{{ doc.get_status_display }}</span></td>
+            <td>
+              {% if doc.physical_location %}
+                <span class="badge bg-light text-dark border">📁 {{ doc.physical_location }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+              {% if doc.notes %}<div class="text-muted small mt-1">{{ doc.notes }}</div>{% endif %}
+            </td>
+            <td class="text-muted">{{ doc.uploaded_at|date:"M d, Y" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" class="text-center py-3 text-muted">No documents filed yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
