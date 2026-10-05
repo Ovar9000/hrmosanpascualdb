@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Edit Document · {{ document.filename_for_display }} · HR Records{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  {% if person %}
+    <a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to {{ person.full_name }}</a>
+  {% else %}
+    <a href="{% url 'person_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Personnel List</a>
+  {% endif %}
+</div>
+
+<!-- Prototype Warning Banner -->
+<div class="alert alert-warning border-warning shadow-sm mb-4" role="alert">
+  <div class="d-flex align-items-center">
+    <div>
+      <h6 class="alert-heading mb-1 fw-bold">PROTOTYPE - FAKE DATA ONLY</h6>
+      <p class="mb-0 small">
+        Never enter real confidential notes or real personal data.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+    <div>
+      <h1 class="h4 mb-0">Edit Document Metadata</h1>
+      <div class="text-muted small mt-1">
+        Document: <strong>{{ document.filename_for_display }}</strong> ({{ document.get_doc_type_display }})
+      </div>
+    </div>
+    {% if document.file %}
+      <div>
+        <a href="{% url 'document_replace' document.pk %}" class="btn btn-outline-warning btn-sm">
+          ↻ Upload Replacement Scan
+        </a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card-body p-4">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger shadow-sm mb-4">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.version }}
+
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <label class="form-label fw-semibold" for="{{ form.doc_type.id_for_label }}">Document Type <span class="text-danger">*</span></label>
+          {{ form.doc_type }}
+          {% if form.doc_type.errors %}
+            <div class="text-danger small mt-1">{{ form.doc_type.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-semibold" for="{{ form.status.id_for_label }}">Status <span class="text-danger">*</span></label>
+          {{ form.status }}
+          {% if form.status.errors %}
+            <div class="text-danger small mt-1">{{ form.status.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-semibold" for="{{ form.physical_location.id_for_label }}">Physical Filing Location</label>
+          {{ form.physical_location }}
+          <div class="form-text">e.g. 201 File Cabinet 1, Drawer 3, Folder Dela Cruz</div>
+          {% if form.physical_location.errors %}
+            <div class="text-danger small mt-1">{{ form.physical_location.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-semibold" for="{{ form.verified_by.id_for_label }}">Verified By</label>
+          {{ form.verified_by }}
+          <div class="form-text">HRMO staff member who verified the document.</div>
+          {% if form.verified_by.errors %}
+            <div class="text-danger small mt-1">{{ form.verified_by.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12">
+          <div class="form-check mt-2">
+            {{ form.original_on_file }}
+            <label class="form-check-label fw-semibold" for="{{ form.original_on_file.id_for_label }}">
+              Original paper copy is on file (wet signatures stay in records archive)
+            </label>
+          </div>
+          {% if form.original_on_file.errors %}
+            <div class="text-danger small mt-1">{{ form.original_on_file.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="{{ form.notes.id_for_label }}">Notes / Remarks</label>
+          {{ form.notes }}
+          {% if form.notes.errors %}
+            <div class="text-danger small mt-1">{{ form.notes.errors.0 }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary px-4">Update Metadata</button>
+        {% if person %}
+          <a href="{% url 'person_detail' person.pk %}" class="btn btn-outline-secondary">Cancel</a>
+        {% else %}
+          <a href="{% url 'person_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

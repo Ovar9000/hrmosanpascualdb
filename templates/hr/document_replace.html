@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Replace Scan · {{ document.filename_for_display }} · HR Records{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  {% if person %}
+    <a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to {{ person.full_name }}</a>
+  {% else %}
+    <a href="{% url 'person_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Personnel List</a>
+  {% endif %}
+</div>
+
+<!-- Prototype Warning Banner -->
+<div class="alert alert-warning border-warning shadow-sm mb-4" role="alert">
+  <div class="d-flex align-items-center">
+    <div>
+      <h6 class="alert-heading mb-1 fw-bold">PROTOTYPE - FAKE DATA ONLY</h6>
+      <p class="mb-0 small">
+        Never upload real confidential documents. Upload fake sample files only.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Replacement Notice Banner -->
+<div class="alert alert-info border-info shadow-sm mb-4">
+  <h6 class="alert-heading fw-bold mb-1">Scan Replacement & Archive Notice</h6>
+  <p class="mb-0 small">
+    Uploading a replacement scan does <strong>not</strong> delete or overwrite the previous scan. The existing document record
+    is archived as superseded (<code>is_replaced=True</code>) and linked to the new scan to preserve full audit and document history.
+  </p>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3">
+    <h1 class="h4 mb-0">
+      Upload Replacement Scan
+      <span class="text-muted fw-normal fs-6">({{ document.filename_for_display }})</span>
+    </h1>
+  </div>
+
+  <div class="card-body p-4">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger shadow-sm mb-4">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" novalidate>
+      {% csrf_token %}
+      {{ form.version }}
+
+      <div class="row g-3 mb-4">
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="{{ form.file.id_for_label }}">New Scan File <span class="text-danger">*</span></label>
+          {{ form.file }}
+          <div class="form-text">
+            Accepted formats: PDF, JPG, PNG. Maximum size: 5 MB. Stored using a new secure random UUID on disk.
+          </div>
+          {% if form.file.errors %}
+            <div class="text-danger small mt-1">{{ form.file.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-semibold" for="{{ form.physical_location.id_for_label }}">Physical Filing Location</label>
+          {{ form.physical_location }}
+          {% if form.physical_location.errors %}
+            <div class="text-danger small mt-1">{{ form.physical_location.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-6">
+          <div class="form-check mt-4 pt-2">
+            {{ form.original_on_file }}
+            <label class="form-check-label fw-semibold" for="{{ form.original_on_file.id_for_label }}">
+              Original paper copy is on file in records archive
+            </label>
+          </div>
+          {% if form.original_on_file.errors %}
+            <div class="text-danger small mt-1">{{ form.original_on_file.errors.0 }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12">
+          <label class="form-label fw-semibold" for="{{ form.notes.id_for_label }}">Reason for Replacement / Re-scan</label>
+          {{ form.notes }}
+          <div class="form-text">e.g. Cleared smudged scan, signed copy updated with municipal seal</div>
+          {% if form.notes.errors %}
+            <div class="text-danger small mt-1">{{ form.notes.errors.0 }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-warning px-4">Upload Replacement Scan</button>
+        <a href="{% url 'document_edit' document.pk %}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

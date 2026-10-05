@@ -157,3 +157,5 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Uploaded HR documents. Deliberately NOT exposed via MEDIA_URL: files are only
 # served through views that check permissions.
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", "/data/media"))
+MAX_UPLOAD_SIZE = int(os.environ.get("MAX_UPLOAD_SIZE", 5 * 1024 * 1024))  # 5 MB default
+

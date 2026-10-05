@@ -135,6 +135,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | S5 | **Duplicate person matching and limits:** Duplicate check compares `(last_name, first_name, middle_name, suffix, birthdate)` case-insensitively.<br>*Documented limitation:* Automated checks cannot detect duplicates when an employee changes surname upon marriage, when middle names are omitted or misspelled on legacy documents, or when two distinct individuals share identical names and birthdates. Such cases require manual verification by HRMO staff. | No |
 | S6 | **Candidate CSC Form 212 (PDS) fields to review with HRMO:**<br>- Civil Service Eligibility (Career Service Professional/Sub-Professional, RA 1080 Board/Bar, Barangay Official Eligibility)<br>- Blood type, height (m), weight (kg)<br>- GSIS BP Number vs. Common Reference Number (CRN) vs. Policy Number<br>- Educational Background (Elementary, Secondary, Vocational, College, Graduate Studies)<br>- Emergency Contact Person, Relationship, and Mobile Number<br>- Civil Status (Single, Married, Widowed, Separated, Other)<br>- Citizenship (Filipino by birth / naturalization / dual citizenship)<br>- Residential Address vs. Permanent Address distinction | Yes |
 | S7 | **Engagement workflows, overlap warnings, and rate field gating:**<br>- *Overlap warning:* Overlapping active engagements of the same type within the same office do not hard-block creation/renewal, but require the user to check an explicit warning acknowledgment (`confirm_overlap`) before saving.<br>- *Plantilla rules:* Plantilla appointments (`PERMANENT`, `COTERMINOUS`, `TEMPORARY`, `ELECTIVE`) require `salary_grade`, `step`, and `item_number`; non-plantilla engagements prohibit them.<br>- *Project-based:* `PROJECT_BASED` engagements require an associated project link; other types disallow project association.<br>- *Renewal & ending:* Ending sets `status=ended` with an `end_date` and optional audit note. Renewing pre-fills a new engagement record from the old one, retaining full historical continuity.<br>- *Field gating:* Pay rate and basis inputs are restricted to users with `hr.view_pay` (`HRMO Staff`, `Auditor`).<br>- *Lost-update protection:* Managed via integer `version` field on `Engagement` with `select_for_update()`. | No |
+| S8 | **Document storage security, file validation, and non-destructive replacement:**<br>- *Upload validation:* Restricted to PDF, JPG, and PNG files under `MAX_UPLOAD_SIZE` (default 5 MB). Validates magic byte signatures (`%PDF`, JPEG header, PNG chunk signature) and performs Pillow `Image.verify()` on images to prevent malformed polyglot files.<br>- *Random UUID storage:* Files are saved on disk using random UUID names (`documents/YYYY/MM/<uuid>.<ext>`) without the user-provided filename, eliminating directory traversal risks and collision overwrites. A sanitized `display_name` is stored in the database.<br>- *Safe downloads:* Served strictly via authenticated endpoints with `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` (never rendered inline in the browser).<br>- *Scan replacement tracking:* Uploading a replacement scan archives the prior document with `is_replaced=True` and links `replaced_by` to the new record without deleting or overwriting the original file or scan on disk.<br>- *Antivirus notice:* There is currently no active in-line antivirus scanning engine (e.g. ClamAV) on uploads. Server-level file inspection is an open operational item for municipal IT infrastructure. | No |
 
 ---
 
@@ -146,6 +147,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | B2 | Storage: Local server volume + secondary encrypted backup on separate physical storage or municipal network share. | No |
 | B3 | Restoration drill: IT System Admin executes annual/quarterly dry-run restores in a sandboxed container to verify backup integrity. | No |
 | B4 | Nightly encrypted export of the `hr_auditlog` table streamed to LGU-held storage. | No |
+| B5 | **Uploads media volume backup & antivirus status:** The `/data/media` volume containing scanned documents is backed up in nightly incremental file syncs alongside `pg_dump`. As replacement scans never overwrite historical files, snapshotting is append-only and space-efficient. In-line file antivirus scanning is currently absent and should be reviewed for municipal IT deployment. | No |
 
 ---
 
@@ -162,8 +164,8 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 - **Step 6:** HRMO data entry screens:
   - 6A: People (create, edit, race-safe sequence, lost-update, duplicate & age validation). *(Done)*
   - 6B: Engagements (create, edit, end, renew, overlap warning). *(Done)*
-  - 6C: Documents (upload verification, signature check, metadata edit). *(Current)*
-  - 6D: Demo user management command, DPO wrap-up.
+  - 6C: Documents (upload verification, signature check, metadata edit). *(Done)*
+  - 6D: Demo user management command, DPO wrap-up. *(Current)*
 - **Step 7:** Reports & analytics (demographics, tenure bands, contract expirations, CSC lists, payroll inputs).
 - **Step 8:** Configurable leave approval workflow (steps, delegation, scan attachment, ledger deduction).
 - **Step 9:** Excel import/export (configurable columns, row-by-row error report).

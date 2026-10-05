@@ -216,7 +216,14 @@
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
     <span>Attached Documents & 201-File Filing</span>
-    <span class="small text-muted">{{ documents|length }} record(s)</span>
+    <div>
+      {% if can_manage_records %}
+        <a href="{% url 'document_create_person' person.pk %}" class="btn btn-sm btn-outline-success py-0 px-2 me-2">
+          + Upload / Record Document
+        </a>
+      {% endif %}
+      <span class="small text-muted">{{ documents|length }} record(s)</span>
+    </div>
   </div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 small">
@@ -233,7 +240,15 @@
       <tbody>
         {% for doc in documents %}
           <tr>
-            <td class="fw-bold">{{ doc.get_doc_type_display }}</td>
+            <td class="fw-bold">
+              <div>{{ doc.get_doc_type_display }}</div>
+              {% if doc.display_name %}
+                <div class="small text-muted font-monospace">{{ doc.display_name }}</div>
+              {% endif %}
+              {% if doc.is_replaced %}
+                <span class="badge bg-secondary">Superseded</span>
+              {% endif %}
+            </td>
             <td><span class="badge bg-secondary">{{ doc.get_status_display }}</span></td>
             <td>
               {% if doc.original_on_file %}
@@ -252,13 +267,21 @@
             </td>
             <td class="text-muted">{{ doc.uploaded_at|date:"M d, Y" }}</td>
             <td>
-              {% if can_view_doc_content and doc.file %}
-                <a href="{% url 'document_download' doc.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" target="_blank">View / Download</a>
-              {% elif not can_view_doc_content %}
-                <span class="text-muted small">🔒 Restricted</span>
-              {% else %}
-                <span class="text-muted small">No scan uploaded</span>
-              {% endif %}
+              <div class="d-flex flex-wrap gap-1 align-items-center">
+                {% if can_view_doc_content and doc.file %}
+                  <a href="{% url 'document_download' doc.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Download</a>
+                {% elif not can_view_doc_content %}
+                  <span class="text-muted small">🔒 Restricted</span>
+                {% else %}
+                  <span class="text-muted small">Paper only</span>
+                {% endif %}
+                {% if can_manage_records %}
+                  <a href="{% url 'document_edit' doc.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
+                  {% if doc.file and not doc.is_replaced %}
+                    <a href="{% url 'document_replace' doc.pk %}" class="btn btn-sm btn-outline-warning py-0 px-2">Replace</a>
+                  {% endif %}
+                {% endif %}
+              </div>
             </td>
           </tr>
         {% empty %}

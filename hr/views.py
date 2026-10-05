@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 from datetime import date, timedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -10,7 +11,15 @@ from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from .audit import log_audit_event
-from .forms import EndEngagementForm, EngagementForm, PersonForm
+from .forms import (
+    DocumentEditForm,
+    DocumentForm,
+    DocumentReplaceForm,
+    EndEngagementForm,
+    EngagementForm,
+    PersonForm,
+    sanitize_filename,
+)
 from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
 from .permissions import (
     can_manage_hr_records,
@@ -506,8 +515,181 @@ def engagement_renew(request, pk):
 
 
 @login_required
+def document_create_person(request, person_pk):
+    """Upload or record a document for a Person (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to upload or manage HR documents.")
+
+    person = get_object_or_404(Person, pk=person_pk)
+    if request.method == "POST":
+        form = DocumentForm(request.POST, request.FILES, person=person)
+        if form.is_valid():
+            with transaction.atomic():
+                doc = form.save(commit=False)
+                doc.uploaded_by = request.user
+                doc.version = 1
+                doc.save()
+            messages.success(request, f"Document '{doc.filename_for_display}' recorded for {person.full_name}.")
+            return redirect("person_detail", pk=person.pk)
+    else:
+        form = DocumentForm(person=person)
+
+    return render(
+        request,
+        "hr/document_form.html",
+        {
+            "form": form,
+            "person": person,
+            "target_name": person.full_name,
+            "is_create": True,
+        },
+    )
+
+
+@login_required
+def document_create_engagement(request, engagement_pk):
+    """Upload or record a document for an Engagement (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to upload or manage HR documents.")
+
+    engagement = get_object_or_404(Engagement, pk=engagement_pk)
+    if request.method == "POST":
+        form = DocumentForm(request.POST, request.FILES, engagement=engagement)
+        if form.is_valid():
+            with transaction.atomic():
+                doc = form.save(commit=False)
+                doc.uploaded_by = request.user
+                doc.version = 1
+                doc.save()
+            messages.success(request, f"Document '{doc.filename_for_display}' recorded for {engagement.position_title}.")
+            return redirect("person_detail", pk=engagement.person_id)
+    else:
+        form = DocumentForm(engagement=engagement)
+
+    return render(
+        request,
+        "hr/document_form.html",
+        {
+            "form": form,
+            "engagement": engagement,
+            "person": engagement.person,
+            "target_name": f"{engagement.person.full_name} – {engagement.position_title}",
+            "is_create": True,
+        },
+    )
+
+
+@login_required
+def document_edit(request, pk):
+    """Edit metadata of an existing document (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to edit HR documents.")
+
+    doc = get_object_or_404(Document, pk=pk)
+    target_person = doc.person or (doc.engagement.person if doc.engagement else None)
+
+    if request.method == "POST":
+        form = DocumentEditForm(request.POST, instance=doc)
+        if form.is_valid():
+            with transaction.atomic():
+                locked_doc = Document.objects.select_for_update().get(pk=doc.pk)
+                submitted_version = form.cleaned_data.get("version")
+                if submitted_version is not None and locked_doc.version != submitted_version:
+                    form.add_error(
+                        None,
+                        "Conflict: This document record was modified by another user while you were editing it. "
+                        "Please refresh the page and review the latest details before submitting changes.",
+                    )
+                else:
+                    saved_doc = form.save(commit=False)
+                    saved_doc.version = locked_doc.version + 1
+                    saved_doc.save()
+                    messages.success(request, f"Document metadata updated for '{saved_doc.filename_for_display}'.")
+                    if target_person:
+                        return redirect("person_detail", pk=target_person.pk)
+                    return redirect("person_list")
+    else:
+        form = DocumentEditForm(instance=doc)
+
+    return render(
+        request,
+        "hr/document_edit.html",
+        {
+            "form": form,
+            "document": doc,
+            "person": target_person,
+        },
+    )
+
+
+@login_required
+def document_replace(request, pk):
+    """Upload a replacement scan for an existing document without deleting old scan (HRMO Staff only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to replace HR document scans.")
+
+    old_doc = get_object_or_404(Document, pk=pk)
+    target_person = old_doc.person or (old_doc.engagement.person if old_doc.engagement else None)
+
+    if request.method == "POST":
+        form = DocumentReplaceForm(request.POST, request.FILES, document=old_doc)
+        if form.is_valid():
+            with transaction.atomic():
+                locked_old = Document.objects.select_for_update().get(pk=old_doc.pk)
+                submitted_version = form.cleaned_data.get("version")
+                if submitted_version is not None and locked_old.version != submitted_version:
+                    form.add_error(
+                        None,
+                        "Conflict: This document record was modified by another user. "
+                        "Please refresh and review the latest details before uploading a replacement.",
+                    )
+                else:
+                    new_file = form.cleaned_data["file"]
+                    new_doc = Document(
+                        person=locked_old.person,
+                        engagement=locked_old.engagement,
+                        doc_type=locked_old.doc_type,
+                        status=locked_old.status,
+                        file=new_file,
+                        display_name=sanitize_filename(new_file.name),
+                        original_on_file=form.cleaned_data.get("original_on_file", True),
+                        physical_location=form.cleaned_data.get("physical_location") or locked_old.physical_location,
+                        notes=form.cleaned_data.get("notes") or f"Replacement scan for doc #{locked_old.pk}",
+                        uploaded_by=request.user,
+                        version=1,
+                    )
+                    new_doc.save()
+
+                    locked_old.is_replaced = True
+                    locked_old.replaced_by = new_doc
+                    locked_old.version = locked_old.version + 1
+                    locked_old.save()
+
+                    messages.success(
+                        request,
+                        f"Replacement scan uploaded successfully for '{new_doc.filename_for_display}'. "
+                        "The previous scan has been preserved in audit history as superseded.",
+                    )
+                    if target_person:
+                        return redirect("person_detail", pk=target_person.pk)
+                    return redirect("person_list")
+    else:
+        form = DocumentReplaceForm(document=old_doc)
+
+    return render(
+        request,
+        "hr/document_replace.html",
+        {
+            "form": form,
+            "document": old_doc,
+            "person": target_person,
+        },
+    )
+
+
+@login_required
 def document_download(request, pk):
-    """Private file serving for uploaded documents, checking permissions."""
+    """Private file serving for uploaded documents, checking permissions and enforcing safe headers."""
     doc = get_object_or_404(Document, pk=pk)
     if not can_view_document_content(request.user, doc):
         return HttpResponseForbidden("You do not have permission to view or download this document.")
@@ -524,7 +706,10 @@ def document_download(request, pk):
         request=request,
     )
 
-    return FileResponse(doc.file.open(), as_attachment=False, filename=doc.file.name.split("/")[-1])
+    filename = doc.display_name or os.path.basename(doc.file.name)
+    response = FileResponse(doc.file.open("rb"), as_attachment=True, filename=filename)
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @login_required

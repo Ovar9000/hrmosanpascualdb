@@ -5,6 +5,9 @@ option lists are TextChoices in this file; most business rules are DB CHECK
 constraints, which Django also validates in forms and the admin.
 """
 
+import os
+import uuid
+from datetime import date
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
@@ -294,8 +297,16 @@ class Engagement(models.Model):
 
 
 def validate_file_size(f):
-    if f.size > 10 * 1024 * 1024:
-        raise ValidationError("File too large (max 10 MB).")
+    max_size = getattr(settings, "MAX_UPLOAD_SIZE", 5 * 1024 * 1024)
+    if f.size > max_size:
+        raise ValidationError(f"File too large (maximum allowed size is {max_size // (1024 * 1024)} MB).")
+
+
+def document_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    rand_name = f"{uuid.uuid4().hex}{ext}"
+    date_path = instance.uploaded_at.strftime("%Y/%m") if instance.uploaded_at else date.today().strftime("%Y/%m")
+    return f"documents/{date_path}/{rand_name}"
 
 
 class Document(models.Model):
@@ -322,9 +333,12 @@ class Document(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.RECEIVED)
     # Optional: a record may track a paper-only document by its physical location.
     file = models.FileField(
-        upload_to="documents/%Y/%m/",
+        upload_to=document_upload_path,
         blank=True,
         validators=[FileExtensionValidator(["pdf", "jpg", "jpeg", "png"]), validate_file_size],
+    )
+    display_name = models.CharField(
+        max_length=255, blank=True, help_text="Original sanitized filename shown to users"
     )
     # The system tracks paper; it does not replace it. Wet signatures stay (survey Oct 2026).
     original_on_file = models.BooleanField(
@@ -340,6 +354,28 @@ class Document(models.Model):
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="verified_documents",
+        help_text="HRMO staff who verified the physical or digital document.",
+    )
+    is_replaced = models.BooleanField(
+        default=False,
+        help_text="Whether this document has been superseded by a newer scan.",
+    )
+    replaced_by = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="replaces",
+        help_text="The newer document record that superseded this scan.",
+    )
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-uploaded_at"]
@@ -357,6 +393,14 @@ class Document(models.Model):
 
     def __str__(self):
         return f"{self.get_doc_type_display()} – {self.person or self.engagement}"
+
+    @property
+    def filename_for_display(self):
+        if self.display_name:
+            return self.display_name
+        if self.file and self.file.name:
+            return os.path.basename(self.file.name)
+        return self.get_doc_type_display()
 
 
 # --- Leave (kept simple until the survey, DECISIONS L1-L3) -------------------

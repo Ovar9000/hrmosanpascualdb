@@ -1,11 +1,12 @@
-"""Forms for San Pascual HR records data entry and editing."""
-
+import os
 import re
 from datetime import date
+from pathlib import Path
+from PIL import Image
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from .models import FAKE_ID_FIELDS, Engagement, Person
+from .models import FAKE_ID_FIELDS, Document, Engagement, Person
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -315,3 +316,184 @@ class EndEngagementForm(forms.Form):
         if self.engagement and ed and ed < self.engagement.start_date:
             raise ValidationError("End date cannot be earlier than the start date of the appointment.")
         return ed
+
+
+def sanitize_filename(filename):
+    """Sanitize user-provided filename for safe database display name."""
+    if not filename:
+        return "document"
+    base = Path(filename).name
+    base = base.replace("\x00", "").replace("/", "").replace("\\", "")
+    cleaned = re.sub(r"[^\w\s\.\-\(\)]", "_", base).strip()
+    return cleaned[:255] or "document"
+
+
+def validate_uploaded_document_file(uploaded_file):
+    """Validate uploaded document file size, extension, magic bytes, and image integrity."""
+    if not uploaded_file:
+        return
+
+    max_size = getattr(settings, "MAX_UPLOAD_SIZE", 5 * 1024 * 1024)
+    if uploaded_file.size > max_size:
+        raise ValidationError(f"File exceeds maximum upload size of {max_size // (1024 * 1024)} MB.")
+
+    ext = os.path.splitext(uploaded_file.name)[1].lower()
+    allowed_exts = [".pdf", ".jpg", ".jpeg", ".png"]
+    if ext not in allowed_exts:
+        raise ValidationError(f"Unsupported file format '{ext}'. Only PDF, JPG, and PNG files are allowed.")
+
+    pos = uploaded_file.tell() if hasattr(uploaded_file, "tell") else 0
+    header = uploaded_file.read(32)
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(pos)
+
+    if ext == ".pdf":
+        if not header.startswith(b"%PDF"):
+            raise ValidationError("File content is not a valid PDF document (invalid magic bytes signature).")
+    elif ext in [".jpg", ".jpeg"]:
+        if not header.startswith(b"\xff\xd8\xff"):
+            raise ValidationError("File content is not a valid JPEG image (invalid magic bytes signature).")
+        try:
+            img = Image.open(uploaded_file)
+            img.verify()
+        except Exception:
+            raise ValidationError("Uploaded JPEG image is corrupted or invalid.")
+        finally:
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(pos)
+    elif ext == ".png":
+        if not header.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValidationError("File content is not a valid PNG image (invalid magic bytes signature).")
+        try:
+            img = Image.open(uploaded_file)
+            img.verify()
+        except Exception:
+            raise ValidationError("Uploaded PNG image is corrupted or invalid.")
+        finally:
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(pos)
+
+
+class DocumentForm(forms.ModelForm):
+    """Form for uploading or recording a physical/digital document for a Person or Engagement."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Document
+        fields = [
+            "doc_type",
+            "status",
+            "file",
+            "original_on_file",
+            "physical_location",
+            "notes",
+            "verified_by",
+        ]
+        widgets = {
+            "doc_type": forms.Select(attrs={"class": "form-select"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+            "file": forms.FileInput(attrs={"class": "form-control", "accept": ".pdf,.jpg,.jpeg,.png"}),
+            "original_on_file": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "physical_location": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Cabinet 2, Drawer 1"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Additional notes..."}),
+            "verified_by": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def __init__(self, *args, person=None, engagement=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.person = person
+        self.engagement = engagement
+        if self.instance and self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+
+    def clean_file(self):
+        f = self.cleaned_data.get("file")
+        if f:
+            validate_uploaded_document_file(f)
+        return f
+
+    def save(self, commit=True):
+        doc = super().save(commit=False)
+        if self.person:
+            doc.person = self.person
+        if self.engagement:
+            doc.engagement = self.engagement
+        f = self.cleaned_data.get("file")
+        if f and hasattr(f, "name"):
+            doc.display_name = sanitize_filename(f.name)
+        if commit:
+            doc.save()
+        return doc
+
+
+class DocumentEditForm(forms.ModelForm):
+    """Form for editing document metadata without altering existing uploaded scans."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Document
+        fields = [
+            "doc_type",
+            "status",
+            "original_on_file",
+            "physical_location",
+            "notes",
+            "verified_by",
+        ]
+        widgets = {
+            "doc_type": forms.Select(attrs={"class": "form-select"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+            "original_on_file": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "physical_location": forms.TextInput(attrs={"class": "form-control"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "verified_by": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+
+
+class DocumentReplaceForm(forms.Form):
+    """Form for uploading a replacement scan of an existing document without overwriting historical records."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+    file = forms.FileField(
+        required=True,
+        widget=forms.FileInput(attrs={"class": "form-control", "accept": ".pdf,.jpg,.jpeg,.png"}),
+        label="New Scan File (PDF, JPG, PNG - max 5 MB)",
+    )
+    notes = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Reason for re-scan / replacement..."}),
+        label="Replacement Reason / Notes",
+        required=False,
+    )
+    original_on_file = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        label="Original paper copy on file",
+    )
+    physical_location = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+        label="Physical Location",
+    )
+
+    def __init__(self, *args, document=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.document = document
+        if document:
+            self.fields["version"].initial = document.version
+            self.fields["original_on_file"].initial = document.original_on_file
+            self.fields["physical_location"].initial = document.physical_location
+
+    def clean_file(self):
+        f = self.cleaned_data.get("file")
+        if f:
+            validate_uploaded_document_file(f)
+        return f
+

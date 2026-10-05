@@ -1,14 +1,24 @@
 import ast
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
+from PIL import Image
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
-from hr.forms import EndEngagementForm, EngagementForm, PersonForm
+from hr.forms import (
+    DocumentEditForm,
+    DocumentForm,
+    DocumentReplaceForm,
+    EndEngagementForm,
+    EngagementForm,
+    PersonForm,
+)
 from hr.models import (
     AuditLog,
     Delegate,
@@ -1631,6 +1641,317 @@ class Step6BEngagementEntryTestCase(TestCase):
         hrmo_form = EngagementForm(user=self.hrmo_user, person=self.person)
         self.assertIn("rate", hrmo_form.fields)
         self.assertIn("rate_basis", hrmo_form.fields)
+
+
+class Step6CDocumentEntryTestCase(TestCase):
+    """Test suite for Document data-entry, file validation, storage, and replacement (Step 6C)."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="hrmo_doc_user", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+        self.sys_admin = User.objects.create_user(username="sys_admin_doc", password="Password123!")
+        self.sys_admin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+
+        self.office_head = User.objects.create_user(username="head_doc", password="Password123!")
+        self.office_head.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+
+        self.executive = User.objects.create_user(username="exec_doc", password="Password123!")
+        self.executive.groups.add(Group.objects.get(name=ROLE_EXECUTIVE))
+
+        self.auditor = User.objects.create_user(username="audit_doc", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+
+        self.employee = User.objects.create_user(username="emp_doc", password="Password123!")
+
+        self.office = Office.objects.get(acronym="MTO")
+        UserProfile.objects.create(user=self.office_head, office=self.office)
+
+        self.person = Person.objects.create(
+            employee_no="SP-00010",
+            last_name="Bautista",
+            first_name="Ramon",
+            middle_name="Santos",
+            suffix="",
+            sex=Person.Sex.MALE,
+            birthdate=date(1988, 7, 20),
+            version=1,
+        )
+        self.engagement = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Revenue Collector I",
+            start_date=date(2025, 1, 1),
+            status=Engagement.Status.ACTIVE,
+            version=1,
+        )
+        self.sample_doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            status=Document.Status.RECEIVED,
+            original_on_file=True,
+            physical_location="Cab 1, D 2",
+            version=1,
+        )
+
+    def _make_image_bytes(self, img_format="JPEG"):
+        buf = BytesIO()
+        img = Image.new("RGB", (30, 30), color="teal")
+        img.save(buf, format=img_format)
+        buf.seek(0)
+        return buf.getvalue()
+
+    def test_non_hrmo_roles_cannot_access_document_actions(self):
+        non_hrmo_users = [
+            self.sys_admin,
+            self.office_head,
+            self.executive,
+            self.auditor,
+            self.employee,
+        ]
+        for user in non_hrmo_users:
+            self.client.force_login(user)
+
+            # Create for person
+            resp = self.client.get(f"/people/{self.person.pk}/documents/new/")
+            self.assertEqual(resp.status_code, 403, f"{user.username} must get 403 on person doc create")
+
+            # Create for engagement
+            resp = self.client.get(f"/engagements/{self.engagement.pk}/documents/new/")
+            self.assertEqual(resp.status_code, 403, f"{user.username} must get 403 on engagement doc create")
+
+            # Edit doc
+            resp = self.client.get(f"/documents/{self.sample_doc.pk}/edit/")
+            self.assertEqual(resp.status_code, 403, f"{user.username} must get 403 on doc edit")
+
+            # Replace doc
+            resp = self.client.get(f"/documents/{self.sample_doc.pk}/replace/")
+            self.assertEqual(resp.status_code, 403, f"{user.username} must get 403 on doc replace")
+
+    def test_hrmo_can_create_paper_only_document(self):
+        self.client.force_login(self.hrmo_user)
+
+        payload = {
+            "doc_type": Document.Type.SERVICE_RECORD,
+            "status": Document.Status.FILED,
+            "original_on_file": True,
+            "physical_location": "201 Cabinet A, Folder Bautista",
+            "notes": "Original wet-signed service record archived.",
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/documents/new/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        doc = Document.objects.filter(doc_type=Document.Type.SERVICE_RECORD, person=self.person).first()
+        self.assertIsNotNone(doc)
+        self.assertEqual(doc.version, 1)
+        self.assertTrue(doc.original_on_file)
+        self.assertEqual(doc.physical_location, "201 Cabinet A, Folder Bautista")
+        self.assertFalse(bool(doc.file))
+
+    def test_hrmo_can_upload_pdf_with_uuid_storage_and_sanitized_name(self):
+        self.client.force_login(self.hrmo_user)
+
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        uploaded_file = SimpleUploadedFile("Bautista Ramon PDS (Draft 2026).pdf", pdf_bytes, content_type="application/pdf")
+
+        payload = {
+            "doc_type": Document.Type.PDS,
+            "status": Document.Status.APPROVED,
+            "original_on_file": True,
+            "physical_location": "Cabinet 2, Drawer 1",
+            "file": uploaded_file,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/documents/new/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        doc = Document.objects.filter(doc_type=Document.Type.PDS, person=self.person).first()
+        self.assertIsNotNone(doc)
+        self.assertEqual(doc.display_name, "Bautista Ramon PDS (Draft 2026).pdf")
+        # Ensure stored file path is random UUID, not the original filename
+        self.assertNotIn("Bautista", doc.file.name)
+        self.assertTrue(doc.file.name.endswith(".pdf"))
+        self.assertIn("documents/", doc.file.name)
+
+    def test_upload_validation_rejects_unsupported_extension(self):
+        self.client.force_login(self.hrmo_user)
+
+        bad_file = SimpleUploadedFile("script.sh", b"#!/bin/bash\necho bad\n", content_type="application/x-sh")
+        payload = {
+            "doc_type": Document.Type.OTHER,
+            "status": Document.Status.RECEIVED,
+            "file": bad_file,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/documents/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Unsupported file format")
+
+    def test_upload_validation_rejects_oversized_file(self):
+        from django.test import override_settings
+
+        self.client.force_login(self.hrmo_user)
+
+        # Set MAX_UPLOAD_SIZE to 50 bytes for test
+        with override_settings(MAX_UPLOAD_SIZE=50):
+            pdf_bytes = b"%PDF-1.4 " + (b"A" * 100)
+            uploaded_file = SimpleUploadedFile("oversized.pdf", pdf_bytes, content_type="application/pdf")
+            payload = {
+                "doc_type": Document.Type.PDS,
+                "status": Document.Status.RECEIVED,
+                "file": uploaded_file,
+            }
+            resp = self.client.post(f"/people/{self.person.pk}/documents/new/", payload)
+            self.assertEqual(resp.status_code, 200)
+            self.assertContains(resp, "File exceeds maximum upload size")
+
+    def test_magic_bytes_check_rejects_spoofed_pdf(self):
+        self.client.force_login(self.hrmo_user)
+
+        # File named .pdf but containing plain text
+        spoofed = SimpleUploadedFile("fake.pdf", b"This is plain text pretending to be a PDF file.", content_type="application/pdf")
+        payload = {
+            "doc_type": Document.Type.PDS,
+            "status": Document.Status.RECEIVED,
+            "file": spoofed,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/documents/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "invalid magic bytes signature")
+
+    def test_image_validation_with_pillow_for_jpeg_and_png(self):
+        self.client.force_login(self.hrmo_user)
+
+        # 1. Valid JPEG
+        jpg_bytes = self._make_image_bytes(img_format="JPEG")
+        jpg_file = SimpleUploadedFile("scan.jpg", jpg_bytes, content_type="image/jpeg")
+        resp_jpg = self.client.post(
+            f"/people/{self.person.pk}/documents/new/",
+            {"doc_type": Document.Type.CERTIFICATE, "status": Document.Status.RECEIVED, "file": jpg_file},
+        )
+        self.assertEqual(resp_jpg.status_code, 302)
+
+        # 2. Valid PNG
+        png_bytes = self._make_image_bytes(img_format="PNG")
+        png_file = SimpleUploadedFile("scan.png", png_bytes, content_type="image/png")
+        resp_png = self.client.post(
+            f"/people/{self.person.pk}/documents/new/",
+            {"doc_type": Document.Type.CLEARANCE, "status": Document.Status.RECEIVED, "file": png_file},
+        )
+        self.assertEqual(resp_png.status_code, 302)
+
+    def test_image_validation_rejects_corrupted_image(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Header has JPEG magic bytes but payload is corrupted garbage
+        corrupted_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00corrupted_payload_data"
+        bad_img = SimpleUploadedFile("corrupt.jpg", corrupted_bytes, content_type="image/jpeg")
+        resp = self.client.post(
+            f"/people/{self.person.pk}/documents/new/",
+            {"doc_type": Document.Type.CERTIFICATE, "status": Document.Status.RECEIVED, "file": bad_img},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "corrupted or invalid")
+
+    def test_document_download_safe_headers_and_attachment(self):
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        uploaded_file = SimpleUploadedFile("Appointment_Letter.pdf", pdf_bytes, content_type="application/pdf")
+        doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            status=Document.Status.APPROVED,
+            file=uploaded_file,
+            display_name="Appointment_Letter.pdf",
+            version=1,
+        )
+
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/documents/{doc.pk}/download/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('attachment; filename="Appointment_Letter.pdf"', resp["Content-Disposition"])
+        self.assertEqual(resp["X-Content-Type-Options"], "nosniff")
+
+        # Verify audit log recorded VIEW event
+        audit = AuditLog.objects.filter(
+            action=AuditLog.Action.VIEW, model_name="Document", object_id=str(doc.pk)
+        ).first()
+        self.assertIsNotNone(audit)
+
+    def test_document_metadata_edit_and_lost_update_protection(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Valid edit
+        payload = {
+            "doc_type": self.sample_doc.doc_type,
+            "status": Document.Status.APPROVED,
+            "original_on_file": False,
+            "physical_location": "Cabinet 9, Drawer 9",
+            "notes": "Updated filing location",
+            "version": 1,
+        }
+        resp = self.client.post(f"/documents/{self.sample_doc.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        self.sample_doc.refresh_from_db()
+        self.assertEqual(self.sample_doc.version, 2)
+        self.assertEqual(self.sample_doc.physical_location, "Cabinet 9, Drawer 9")
+        self.assertFalse(self.sample_doc.original_on_file)
+
+        # Stale version edit rejection
+        stale_payload = {
+            "doc_type": self.sample_doc.doc_type,
+            "status": Document.Status.APPROVED,
+            "version": 1,  # Stale version!
+        }
+        resp_stale = self.client.post(f"/documents/{self.sample_doc.pk}/edit/", stale_payload)
+        self.assertEqual(resp_stale.status_code, 200)
+        self.assertContains(resp_stale, "modified by another user")
+
+    def test_document_replace_preserves_old_scan_and_creates_new_record(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Original scan
+        pdf1 = b"%PDF-1.4 original scan content"
+        f1 = SimpleUploadedFile("First_Scan.pdf", pdf1, content_type="application/pdf")
+        doc1 = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            status=Document.Status.APPROVED,
+            file=f1,
+            display_name="First_Scan.pdf",
+            version=1,
+        )
+
+        # Replacement scan
+        pdf2 = b"%PDF-1.4 new clearer scan content"
+        f2 = SimpleUploadedFile("Second_Scan.pdf", pdf2, content_type="application/pdf")
+        payload = {
+            "file": f2,
+            "notes": "Re-scanned with municipal official stamp",
+            "original_on_file": True,
+            "physical_location": "Cabinet 1, Archive",
+            "version": 1,
+        }
+        resp = self.client.post(f"/documents/{doc1.pk}/replace/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        # Old document is marked superseded and pointed to new scan
+        doc1.refresh_from_db()
+        self.assertTrue(doc1.is_replaced)
+        self.assertIsNotNone(doc1.replaced_by)
+        self.assertEqual(doc1.version, 2)
+
+        # New document exists with clean version 1
+        new_doc = doc1.replaced_by
+        self.assertEqual(new_doc.version, 1)
+        self.assertEqual(new_doc.display_name, "Second_Scan.pdf")
+        self.assertEqual(new_doc.person, self.person)
+        self.assertFalse(new_doc.is_replaced)
+        self.assertNotEqual(doc1.file.name, new_doc.file.name)
+
 
 
 
