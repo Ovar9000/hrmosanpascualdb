@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
@@ -1951,6 +1952,90 @@ class Step6CDocumentEntryTestCase(TestCase):
         self.assertEqual(new_doc.person, self.person)
         self.assertFalse(new_doc.is_replaced)
         self.assertNotEqual(doc1.file.name, new_doc.file.name)
+
+
+class Step6DDemoUsersTestCase(TestCase):
+    """Test suite for create_demo_users command and demo accounts setup (Step 6D)."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        self.person = Person.objects.create(
+            employee_no="SP-00020",
+            last_name="Flores",
+            first_name="Maria",
+            middle_name="Santos",
+            suffix="",
+            sex=Person.Sex.FEMALE,
+            birthdate=date(1992, 3, 15),
+            version=1,
+        )
+
+    def test_create_demo_users_aborts_when_debug_is_false(self):
+        from django.test import override_settings
+
+        with override_settings(DEBUG=False):
+            with self.assertRaises(CommandError) as ctx:
+                call_command("create_demo_users")
+            self.assertIn("DJANGO_DEBUG=1", str(ctx.exception))
+
+    def test_create_demo_users_creates_all_roles_with_must_change_password(self):
+        from io import StringIO
+        from django.test import override_settings
+
+        out = StringIO()
+        with override_settings(DEBUG=True):
+            call_command("create_demo_users", stdout=out)
+
+        output_str = out.getvalue()
+        self.assertIn("demo_hrmo", output_str)
+        self.assertIn("demo_head", output_str)
+        self.assertIn("demo_exec", output_str)
+        self.assertIn("demo_auditor", output_str)
+        self.assertIn("demo_admin", output_str)
+        self.assertIn("demo_employee", output_str)
+
+        User = get_user_model()
+
+        # 1. demo_hrmo
+        u_hrmo = User.objects.get(username="demo_hrmo")
+        self.assertTrue(u_hrmo.groups.filter(name=ROLE_HRMO).exists())
+        self.assertTrue(u_hrmo.profile.must_change_password)
+        self.assertIsNotNone(u_hrmo.profile.office)
+        self.assertEqual(u_hrmo.profile.office.acronym, "HRMO")
+
+        # 2. demo_head
+        u_head = User.objects.get(username="demo_head")
+        self.assertTrue(u_head.groups.filter(name=ROLE_OFFICE_HEAD).exists())
+        self.assertTrue(u_head.profile.must_change_password)
+        self.assertIsNotNone(u_head.profile.office)
+        self.assertEqual(u_head.profile.office.acronym, "MTO")
+
+        # 3. demo_exec
+        u_exec = User.objects.get(username="demo_exec")
+        self.assertTrue(u_exec.groups.filter(name=ROLE_EXECUTIVE).exists())
+        self.assertTrue(u_exec.profile.must_change_password)
+        self.assertIsNotNone(u_head.profile.office)
+        self.assertEqual(u_exec.profile.office.acronym, "MO")
+
+        # 4. demo_auditor
+        u_auditor = User.objects.get(username="demo_auditor")
+        self.assertTrue(u_auditor.groups.filter(name=ROLE_AUDITOR).exists())
+        self.assertTrue(u_auditor.profile.must_change_password)
+
+        # 5. demo_admin
+        u_admin = User.objects.get(username="demo_admin")
+        self.assertTrue(u_admin.groups.filter(name=ROLE_SYSADMIN).exists())
+        self.assertTrue(u_admin.is_staff)
+        self.assertTrue(u_admin.profile.must_change_password)
+
+        # 6. demo_employee
+        u_emp = User.objects.get(username="demo_employee")
+        self.assertEqual(u_emp.groups.count(), 0)
+        self.assertTrue(u_emp.profile.must_change_password)
+        self.assertIsNotNone(u_emp.profile.person)
+        self.assertEqual(u_emp.profile.person, self.person)
+
 
 
 
