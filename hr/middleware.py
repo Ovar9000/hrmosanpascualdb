@@ -3,12 +3,16 @@
 - Binds request context to thread-local ContextVar for signal-based audit logging.
 - Automatically logs HTTP 403 Permission Denied events on protected resources (DECISIONS U1/R2).
 - De-duplicates PERMISSION_DENIED entries (at most one per user + path + minute).
+- Forces users flagged with must_change_password to the password-change page (DECISIONS A1).
 """
 
 from datetime import timedelta
+from django.conf import settings
+from django.shortcuts import redirect
+from django.urls import reverse
 from django.utils import timezone
 from .audit import log_audit_event, resolve_request_id, set_current_request
-from .models import AuditLog
+from .models import AuditLog, UserProfile
 
 
 class AuditMiddleware:
@@ -51,3 +55,30 @@ class AuditMiddleware:
             return response
         finally:
             set_current_request(None)
+
+
+class MustChangePasswordMiddleware:
+    """Redirects users with UserProfile.must_change_password to the password-change page.
+
+    Every URL is blocked except password change, logout, and static files. The flag is
+    cleared by hr.views.PasswordChangeView after a successful change.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        user = getattr(request, "user", None)
+        if (
+            user
+            and user.is_authenticated
+            and not self._is_exempt(request.path)
+            and UserProfile.objects.filter(user=user, must_change_password=True).exists()
+        ):
+            return redirect("password_change")
+        return self.get_response(request)
+
+    @staticmethod
+    def _is_exempt(path):
+        static_prefix = "/" + settings.STATIC_URL.lstrip("/")
+        return path in (reverse("password_change"), reverse("logout")) or path.startswith(static_prefix)

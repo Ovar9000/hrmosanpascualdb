@@ -94,7 +94,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 | # | Decision | Survey? |
 |---|---|---|
-| A1 | Employee accounts receive a **random one-time password** with `must_change_password=True`. No shared default passwords. | Maybe |
+| A1 | Employee accounts receive a **random one-time password** with `must_change_password=True`. No shared default passwords. The flag is enforced by `MustChangePasswordMiddleware`: a flagged user is redirected to the password-change page from every URL except password change, logout and static files, and the flag is cleared after a successful change. *Enforced; proven by* `MustChangePasswordTestCase`. | Maybe |
 | A2 | No email password reset. Password resets handled by HRMO issuing a new one-time password. | Maybe |
 | A3 | Session timeout: 30 minutes idle. Login rate-limiting: 5 failed attempts per username+IP locks for 15 minutes. | Maybe |
 

@@ -2336,11 +2336,79 @@ class AuditHardeningTestCase(TestCase):
         self.assertEqual(cached_updated["last_verified_id"], new_entry.pk)
 
 
+class MustChangePasswordTestCase(TestCase):
+    """B4: UserProfile.must_change_password is enforced by middleware (DECISIONS A1)."""
 
+    NEW_PASSWORD = "Fresh-Pass-2026-xyz"
 
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.user = User.objects.create_user(username="otp_user", password="Password123!")
+        self.user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.profile = UserProfile.objects.create(user=self.user, must_change_password=True)
 
+    def _assert_redirects_to_password_change(self, resp):
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"], "/accounts/password/")
 
+    def test_flagged_user_is_redirected_from_every_page(self):
+        self.client.force_login(self.user)
+        for url in ["/people/", "/offices/", "/audit/", "/admin/", "/does-not-exist/"]:
+            with self.subTest(url=url):
+                self._assert_redirects_to_password_change(self.client.get(url))
+        # POSTs are blocked too, not just page views
+        self._assert_redirects_to_password_change(self.client.post("/people/new/", {}))
 
+    def test_flagged_user_can_reach_password_change_logout_and_static(self):
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get("/accounts/password/").status_code, 200)
+        static_resp = self.client.get("/static/does-not-matter.css")
+        self.assertNotEqual(static_resp.get("Location"), "/accounts/password/")
+        logout_resp = self.client.post("/accounts/logout/")
+        self.assertEqual(logout_resp.status_code, 302)
+        self.assertEqual(logout_resp["Location"], "/accounts/login/")
 
+    def test_successful_change_clears_flag_and_unblocks(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/accounts/password/",
+            {
+                "old_password": "Password123!",
+                "new_password1": self.NEW_PASSWORD,
+                "new_password2": self.NEW_PASSWORD,
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.must_change_password)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
 
+    def test_failed_change_keeps_flag(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/accounts/password/",
+            {"old_password": "wrong-password", "new_password1": self.NEW_PASSWORD, "new_password2": self.NEW_PASSWORD},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.must_change_password)
+        self._assert_redirects_to_password_change(self.client.get("/people/"))
 
+    def test_unflagged_users_and_users_without_profile_are_not_redirected(self):
+        self.profile.must_change_password = False
+        self.profile.save()
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+        User = get_user_model()
+        no_profile = User.objects.create_user(username="no_profile_user", password="Password123!")
+        no_profile.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.client.force_login(no_profile)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+    def test_anonymous_users_go_to_login_not_password_change(self):
+        resp = self.client.get("/people/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp["Location"].startswith("/accounts/login/"))

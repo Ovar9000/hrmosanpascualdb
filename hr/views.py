@@ -4,6 +4,7 @@ import os
 from datetime import date, timedelta
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -21,7 +22,7 @@ from .forms import (
     PersonForm,
     sanitize_filename,
 )
-from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
+from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person, UserProfile
 from .permissions import (
     can_manage_hr_records,
     can_view_document_content,
@@ -35,6 +36,17 @@ from .permissions import (
 )
 from .sequences import get_next_employee_no
 
+
+class PasswordChangeView(auth_views.PasswordChangeView):
+    """Django's password change, plus clearing must_change_password on success (DECISIONS A1)."""
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        profile = UserProfile.objects.filter(user=self.request.user, must_change_password=True).first()
+        if profile:
+            profile.must_change_password = False
+            profile.save()
+        return response
 
 
 @login_required
