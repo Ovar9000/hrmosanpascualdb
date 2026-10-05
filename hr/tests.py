@@ -2204,6 +2204,18 @@ class AuditHardeningTestCase(TestCase):
         self.assertContains(resp, "Chain verification unconfirmed")
         self.assertNotContains(resp, "tamper-evident")
 
+    def test_audit_row_lock_select_for_update_supported(self):
+        # Verify select_for_update can acquire row locks on AuditLog without permission issues
+        entry = log_audit_event(
+            action=AuditLog.Action.CREATE,
+            model_name="LockTest",
+            object_id="1",
+        )
+        with transaction.atomic():
+            locked = AuditLog.objects.select_for_update().order_by("-id").first()
+            self.assertEqual(locked.pk, entry.pk)
+
+
 
 
 
