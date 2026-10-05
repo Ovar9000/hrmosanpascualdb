@@ -5,6 +5,8 @@ option lists are TextChoices in this file; most business rules are DB CHECK
 constraints, which Django also validates in forms and the admin.
 """
 
+import hashlib
+import json
 import os
 import uuid
 from datetime import date
@@ -14,6 +16,7 @@ from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.db.models import F, Q
 from django.db.models.functions import Lower
+from django.utils import timezone
 
 # --- Offices -----------------------------------------------------------------
 
@@ -571,7 +574,7 @@ class AuditLog(models.Model):
         GROUP_CHANGE = "group_change", "Group Change"
         PERMISSION_DENIED = "permission_denied", "Permission Denied (403)"
 
-    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
     action = models.CharField(max_length=30, choices=Action.choices, db_index=True)
 
     # Plain integer IDs and snapshots without foreign keys (Requirement 2)
@@ -588,10 +591,12 @@ class AuditLog(models.Model):
     # Changes diff (field names only for sensitive fields, no values or password hashes)
     changes = models.JSONField(default=dict, blank=True)
 
-    # Network metadata
+    # Network, session, and request tracing metadata (Requirements 3 & 4)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    request_id = models.CharField(max_length=64, blank=True, db_index=True)
+    session_key_hash = models.CharField(max_length=64, blank=True, db_index=True)
 
-    # Optional cryptographic hash chain
+    # Cryptographic SHA-256 hash chain
     prev_hash = models.CharField(max_length=64, blank=True)
     row_hash = models.CharField(max_length=64, blank=True)
 
@@ -609,4 +614,29 @@ class AuditLog(models.Model):
     def __str__(self):
         user_str = self.username or (f"User #{self.user_id}" if self.user_id else "System")
         return f"[{self.timestamp:%Y-%m-%d %H:%M:%S}] {user_str} {self.action} {self.model_name}:{self.object_id}"
+
+    def calculate_row_hash(self, prev_hash=None):
+        """Calculates canonical SHA-256 hash of this audit row with its previous hash link."""
+        if prev_hash is None:
+            prev_hash = self.prev_hash
+        ts_str = self.timestamp.isoformat() if self.timestamp else ""
+        canonical_changes = json.dumps(self.changes or {}, sort_keys=True)
+        parts = [
+            str(prev_hash or ""),
+            ts_str,
+            str(self.action or ""),
+            str(self.user_id if self.user_id is not None else ""),
+            str(self.username or ""),
+            str(self.office_id if self.office_id is not None else ""),
+            str(self.office_name or ""),
+            str(self.model_name or ""),
+            str(self.object_id or ""),
+            str(self.object_repr or ""),
+            canonical_changes,
+            str(self.ip_address or ""),
+            str(self.request_id or ""),
+            str(self.session_key_hash or ""),
+        ]
+        payload = "|".join(parts)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

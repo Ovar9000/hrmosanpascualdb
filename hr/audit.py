@@ -18,6 +18,8 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 # Thread-safe context variables
 _audit_disabled_var = contextvars.ContextVar("audit_disabled", default=False)
@@ -119,13 +121,6 @@ def redact_changes_diff(raw_changes):
     return cleaned
 
 
-def calculate_hash(prev_hash, timestamp_str, user_id, action, model_name, object_id, changes_dict):
-    """Calculates SHA-256 hash for optional tamper-evident chaining."""
-    serialized_changes = json.dumps(changes_dict, sort_keys=True)
-    payload = f"{prev_hash}|{timestamp_str}|{user_id}|{action}|{model_name}|{object_id}|{serialized_changes}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 def log_audit_event(
     action,
     model_name="",
@@ -138,9 +133,9 @@ def log_audit_event(
     office=None,
     request=None,
 ):
-    """Creates an AuditLog record in the active transaction.
+    """Creates an AuditLog record in the active transaction with race-safe hash chaining.
 
-    If audit creation fails, the exception propagates so the enclosing action fails.
+    If audit creation fails, the exception propagates so the enclosing action fails (DECISIONS U3).
     """
     if is_audit_disabled():
         return None
@@ -158,6 +153,14 @@ def log_audit_event(
 
     if not ip_address and req:
         ip_address = get_client_ip(req)
+
+    # Request ID and Session Key Hash (Requirement 3)
+    request_id = ""
+    session_key_hash = ""
+    if req:
+        request_id = getattr(req, "request_id", "") or req.META.get("HTTP_X_REQUEST_ID", "")
+        if hasattr(req, "session") and req.session.session_key:
+            session_key_hash = hashlib.sha256(req.session.session_key.encode("utf-8")).hexdigest()
 
     office_id = None
     office_name = ""
@@ -177,27 +180,83 @@ def log_audit_event(
     # Circular import guard
     from .models import AuditLog
 
-    # Fetch latest hash for optional chain
-    prev_entry = AuditLog.objects.order_by("-id").only("row_hash").first()
-    prev_hash = prev_entry.row_hash if prev_entry else "0" * 64
-    now_str = datetime.now().isoformat()
-    row_hash = calculate_hash(
-        prev_hash, now_str, user_id, action, model_name, str(object_id), safe_changes
-    )
+    # Lock latest row and compute row_hash with last row locked in active transaction
+    with transaction.atomic():
+        last_entry = AuditLog.objects.select_for_update().order_by("-id").first()
+        prev_hash = last_entry.row_hash if (last_entry and last_entry.row_hash) else ("0" * 64)
 
-    # Write in current transaction (fails the action if this fails)
-    entry = AuditLog.objects.create(
-        action=action,
-        user_id=user_id,
-        username=username or "",
-        office_id=office_id,
-        office_name=office_name,
-        model_name=model_name,
-        object_id=str(object_id) if object_id is not None else "",
-        object_repr=str(object_repr)[:255] if object_repr else "",
-        changes=safe_changes,
-        ip_address=ip_address,
-        prev_hash=prev_hash,
-        row_hash=row_hash,
-    )
-    return entry
+        now = timezone.now()
+        entry_mock = AuditLog(
+            timestamp=now,
+            action=action,
+            user_id=user_id,
+            username=username or "",
+            office_id=office_id,
+            office_name=office_name,
+            model_name=model_name,
+            object_id=str(object_id) if object_id is not None else "",
+            object_repr=str(object_repr)[:255] if object_repr else "",
+            changes=safe_changes,
+            ip_address=ip_address,
+            request_id=request_id,
+            session_key_hash=session_key_hash,
+            prev_hash=prev_hash,
+        )
+        row_hash = entry_mock.calculate_row_hash(prev_hash=prev_hash)
+
+        return AuditLog.objects.create(
+            timestamp=now,
+            action=action,
+            user_id=user_id,
+            username=username or "",
+            office_id=office_id,
+            office_name=office_name,
+            model_name=model_name,
+            object_id=str(object_id) if object_id is not None else "",
+            object_repr=str(object_repr)[:255] if object_repr else "",
+            changes=safe_changes,
+            ip_address=ip_address,
+            request_id=request_id,
+            session_key_hash=session_key_hash,
+            prev_hash=prev_hash,
+            row_hash=row_hash,
+        )
+
+
+def verify_chain():
+    """Verifies the integrity of the cryptographic SHA-256 hash chain across all AuditLog entries.
+
+    Returns:
+        tuple: (is_valid: bool, count: int, error_msg: str, broken_id: int | None)
+    """
+    from .models import AuditLog
+
+    count = 0
+    prev_expected = "0" * 64
+
+    for entry in AuditLog.objects.order_by("id").iterator():
+        count += 1
+        # 1. Verify previous hash pointer
+        if entry.prev_hash != prev_expected:
+            return (
+                False,
+                count,
+                f"Broken link at record #{entry.pk}: prev_hash mismatch. "
+                f"Expected '{prev_expected}', found '{entry.prev_hash}'.",
+                entry.pk,
+            )
+
+        # 2. Verify row contents hash
+        expected_row_hash = entry.calculate_row_hash(prev_hash=entry.prev_hash)
+        if entry.row_hash != expected_row_hash:
+            return (
+                False,
+                count,
+                f"Tampered record at #{entry.pk}: row_hash mismatch. "
+                f"Expected '{expected_row_hash}', found '{entry.row_hash}'.",
+                entry.pk,
+            )
+
+        prev_expected = entry.row_hash
+
+    return (True, count, "", None)

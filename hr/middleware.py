@@ -5,6 +5,7 @@
 - De-duplicates PERMISSION_DENIED entries (at most one per user + path + minute).
 """
 
+import uuid
 from datetime import timedelta
 from django.utils import timezone
 from .audit import log_audit_event, set_current_request
@@ -12,15 +13,17 @@ from .models import AuditLog
 
 
 class AuditMiddleware:
-    """Captures request context and records 403 permission denials."""
+    """Captures request context, assigns request_id, and records 403 permission denials."""
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        request.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
         token = set_current_request(request)
         try:
             response = self.get_response(request)
+            response["X-Request-ID"] = request.request_id
 
             # Log HTTP 403 permission denials (de-duplicated: 1 per user + path + minute)
             if response.status_code == 403:

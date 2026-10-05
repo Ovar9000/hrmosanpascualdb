@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
-from .audit import log_audit_event
+from .audit import log_audit_event, verify_chain
 from .forms import (
     DocumentEditForm,
     DocumentForm,
@@ -745,6 +745,8 @@ def audit_list(request):
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
+    chain_verified, verified_count, chain_error, broken_id = verify_chain()
+
     return render(
         request,
         "hr/audit_list.html",
@@ -756,6 +758,10 @@ def audit_list(request):
             "start_date": start_date,
             "end_date": end_date,
             "actions": AuditLog.Action.choices,
+            "chain_verified": chain_verified,
+            "verified_count": verified_count,
+            "chain_error": chain_error,
+            "broken_id": broken_id,
         },
     )
 
@@ -780,7 +786,8 @@ def audit_export_csv(request):
     writer = csv.writer(response)
     writer.writerow([
         "Timestamp", "Action", "User ID", "Username", "Office",
-        "Model", "Object ID", "Object Description", "Changes", "IP Address"
+        "Model", "Object ID", "Object Description", "Changes", "IP Address",
+        "Request ID", "Session Key Hash", "Prev Hash", "Row Hash",
     ])
 
     qs = AuditLog.objects.all().order_by("-timestamp")[:5000]
@@ -796,6 +803,10 @@ def audit_export_csv(request):
             row.object_repr,
             json.dumps(row.changes),
             row.ip_address or "",
+            row.request_id or "",
+            row.session_key_hash or "",
+            row.prev_hash or "",
+            row.row_hash or "",
         ])
 
     return response

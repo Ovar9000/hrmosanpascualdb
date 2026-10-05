@@ -1,4 +1,5 @@
 import ast
+import hashlib
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -11,7 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
-from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
+from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event, verify_chain
 from hr.forms import (
     DocumentEditForm,
     DocumentForm,
@@ -2035,6 +2036,174 @@ class Step6DDemoUsersTestCase(TestCase):
         self.assertTrue(u_emp.profile.must_change_password)
         self.assertIsNotNone(u_emp.profile.person)
         self.assertEqual(u_emp.profile.person, self.person)
+
+
+class AuditHardeningTestCase(TestCase):
+    """Test suite for audit hash chain, verification command, request tracing, and last_login suppression."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor_user = User.objects.create_user(username="auditor_test", password="Password123!")
+        self.auditor_user.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+
+    def test_user_update_ignored_when_only_last_login_changes(self):
+        from django.utils import timezone
+
+        User = get_user_model()
+        user = User.objects.create_user(username="login_user", password="Password123!")
+
+        # Update ONLY last_login
+        user.last_login = timezone.now()
+        user.save()
+
+        # No UPDATE audit event should be logged for User
+        after_login_count = AuditLog.objects.filter(
+            model_name="User", object_id=str(user.pk), action=AuditLog.Action.UPDATE
+        ).count()
+        self.assertEqual(after_login_count, 0)
+
+        # Updating another field (e.g., first_name) must log an UPDATE event
+        user.first_name = "Maria"
+        user.save()
+
+        update_log = AuditLog.objects.filter(
+            model_name="User", object_id=str(user.pk), action=AuditLog.Action.UPDATE
+        ).first()
+        self.assertIsNotNone(update_log)
+        self.assertIn("first_name", update_log.changes)
+
+    def test_audit_hash_chain_creation_and_verify_chain(self):
+        entry1 = log_audit_event(
+            action=AuditLog.Action.CREATE,
+            model_name="TestModel",
+            object_id="1",
+            object_repr="Test Obj 1",
+        )
+        self.assertIsNotNone(entry1.row_hash)
+        self.assertEqual(len(entry1.row_hash), 64)
+        self.assertEqual(entry1.row_hash, entry1.calculate_row_hash(prev_hash=entry1.prev_hash))
+
+        entry2 = log_audit_event(
+            action=AuditLog.Action.UPDATE,
+            model_name="TestModel",
+            object_id="1",
+            object_repr="Test Obj 1 Updated",
+        )
+        self.assertEqual(entry2.prev_hash, entry1.row_hash)
+        self.assertEqual(entry2.row_hash, entry2.calculate_row_hash(prev_hash=entry1.row_hash))
+
+        # verify_chain() must report valid
+        is_valid, count, error_msg, broken_id = verify_chain()
+        self.assertTrue(is_valid)
+        self.assertGreaterEqual(count, 2)
+        self.assertEqual(error_msg, "")
+        self.assertIsNone(broken_id)
+
+    def test_verify_audit_chain_management_command(self):
+        from io import StringIO
+
+        out = StringIO()
+        call_command("verify_audit_chain", stdout=out)
+        self.assertIn("Audit hash chain verified", out.getvalue())
+        self.assertIn("record(s) intact", out.getvalue().lower())
+
+    def test_broken_prev_hash_detection(self):
+        from django.utils import timezone
+
+        bad_entry = AuditLog(
+            timestamp=timezone.now(),
+            action=AuditLog.Action.CREATE,
+            model_name="TamperedModel",
+            object_id="999",
+            object_repr="Tampered Obj",
+            prev_hash="corrupted_prev_hash_12345",
+            row_hash="corrupted_row_hash_12345",
+        )
+        bad_entry.save()
+
+        is_valid, count, error_msg, broken_id = verify_chain()
+        self.assertFalse(is_valid)
+        self.assertIn("prev_hash mismatch", error_msg)
+        self.assertEqual(broken_id, bad_entry.pk)
+
+        # verify_audit_chain command must fail with CommandError
+        with self.assertRaises(CommandError) as ctx:
+            call_command("verify_audit_chain")
+        self.assertIn(f"Broken audit chain detected at record #{bad_entry.pk}", str(ctx.exception))
+
+    def test_tampered_row_hash_detection(self):
+        from django.utils import timezone
+
+        last_entry = AuditLog.objects.order_by("-id").first()
+        prev_hash = last_entry.row_hash if last_entry else ("0" * 64)
+        tampered_entry = AuditLog(
+            timestamp=timezone.now(),
+            action=AuditLog.Action.CREATE,
+            model_name="TamperedModel",
+            object_id="1000",
+            object_repr="Tampered Row Hash",
+            prev_hash=prev_hash,
+            row_hash="tampered_hash_that_does_not_match_canonical_hash",
+        )
+        tampered_entry.save()
+
+        is_valid, count, error_msg, broken_id = verify_chain()
+        self.assertFalse(is_valid)
+        self.assertIn("row_hash mismatch", error_msg)
+        self.assertEqual(broken_id, tampered_entry.pk)
+
+    def test_request_id_and_session_key_hash_captured(self):
+        from django.contrib.sessions.backends.db import SessionStore
+
+        rf = RequestFactory()
+        req = rf.get("/people/", HTTP_X_REQUEST_ID="trace-req-456")
+        req.user = self.auditor_user
+        req.request_id = "trace-req-456"
+        req.session = SessionStore()
+        req.session.create()
+        raw_key = req.session.session_key
+        expected_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+        entry = log_audit_event(
+            action=AuditLog.Action.VIEW,
+            model_name="TestTracing",
+            object_id="123",
+            request=req,
+        )
+        self.assertEqual(entry.request_id, "trace-req-456")
+        self.assertEqual(entry.session_key_hash, expected_hash)
+        self.assertNotEqual(entry.session_key_hash, raw_key)
+
+    def test_audit_list_chain_verified_display(self):
+        self.client.force_login(self.auditor_user)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["chain_verified"])
+        self.assertContains(resp, "Chain verified")
+        self.assertContains(resp, "tamper-evident")
+
+    def test_audit_list_unconfirmed_when_chain_broken(self):
+        from django.utils import timezone
+
+        bad_entry = AuditLog(
+            timestamp=timezone.now(),
+            action=AuditLog.Action.CREATE,
+            model_name="BrokenModel",
+            object_id="777",
+            prev_hash="invalid_prev",
+            row_hash="invalid_row",
+        )
+        bad_entry.save()
+
+        self.client.force_login(self.auditor_user)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context["chain_verified"])
+        self.assertContains(resp, "Chain verification unconfirmed")
+        self.assertNotContains(resp, "tamper-evident")
+
 
 
 

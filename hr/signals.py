@@ -114,6 +114,10 @@ def log_model_mutation(sender, instance, created, **kwargs):
                     }
 
         if changes:
+            # Do not log User UPDATE events when only last_login changed (Requirement 2)
+            if sender is User and list(changes.keys()) == ["last_login"]:
+                return
+
             action = (
                 AuditLog.Action.PASSWORD_RESET
                 if (sender is User and password_changed)

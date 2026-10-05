@@ -5,7 +5,18 @@
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
   <div>
     <h1 class="h3 mb-0">System Audit Trail</h1>
-    <div class="text-muted small">Tamper-evident, immutable audit log for compliance & security (DECISIONS U1-U6).</div>
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+      {% if chain_verified %}
+        <span class="badge bg-success-subtle text-success border border-success-subtle">
+          ✓ Chain verified ({{ verified_count }} records intact, tamper-evident)
+        </span>
+      {% else %}
+        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+          ⚠ Chain verification unconfirmed (broken link at record #{{ broken_id|default:"?" }})
+        </span>
+      {% endif %}
+      <span class="text-muted small">Immutable append-only audit trail (DECISIONS U1-U6).</span>
+    </div>
   </div>
   <div>
     <a href="{% url 'audit_export_csv' %}" class="btn btn-outline-success btn-sm">
@@ -120,7 +131,10 @@
               {% endif %}
             </td>
             <td class="text-nowrap font-monospace text-muted">
-              {{ log.ip_address|default:"—" }}
+              <div>{{ log.ip_address|default:"—" }}</div>
+              {% if log.request_id %}
+                <div class="small text-muted" title="Request ID: {{ log.request_id }}">req: {{ log.request_id|slice:":8" }}...</div>
+              {% endif %}
             </td>
           </tr>
         {% empty %}
