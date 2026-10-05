@@ -2738,3 +2738,18 @@ class LeaveEligibleDefaultTestCase(TestCase):
                 self.assertEqual(Engagement.default_leave_eligible(eng_type), expected)
                 form = EngagementForm(initial={"type": eng_type}, user=self.hrmo_user, person=self.person)
                 self.assertEqual(bool(form["leave_eligible"].initial), expected)
+
+
+class SetupRolesAuditTestCase(TestCase):
+    """B5: setup_roles runs entirely inside disable_audit(), including group creation."""
+
+    def test_setup_roles_writes_no_audit_rows(self):
+        self.assertFalse(Group.objects.exists())
+        before = AuditLog.objects.count()
+        call_command("setup_roles")
+        self.assertTrue(Group.objects.filter(name=ROLE_HRMO).exists())
+        self.assertEqual(AuditLog.objects.count(), before)
+
+        # Re-running (idempotent) also writes nothing.
+        call_command("setup_roles")
+        self.assertEqual(AuditLog.objects.count(), before)
