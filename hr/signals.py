@@ -196,13 +196,18 @@ def log_user_logout(sender, request, user, **kwargs):
 def log_failed_login(sender, credentials, request, **kwargs):
     if is_audit_disabled():
         return
-    username = credentials.get("username", "") if credentials else ""
+    raw_username = credentials.get("username", "") if credentials else ""
+    if raw_username and User.objects.filter(username=raw_username).exists():
+        safe_username = raw_username
+    else:
+        safe_username = "[unknown]"
+
     log_audit_event(
         action=AuditLog.Action.FAILED_LOGIN,
         model_name="User",
-        username=username,
-        object_repr=f"Failed login attempt for '{username}'",
-        changes={"username_attempted": username},
+        username=safe_username,
+        object_repr=f"Failed login attempt for '{safe_username}'",
+        changes={"username_attempted": safe_username},
         request=request,
     )
 

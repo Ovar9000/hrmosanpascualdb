@@ -945,6 +945,85 @@ class Step5AuditLogTestCase(TestCase):
             AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="AuditLog").exists()
         )
 
+    def test_failed_login_records_username_only_for_existing_account(self):
+        # 1. Failed login for existing account: records the actual username
+        self.client.post("/accounts/login/", {"username": "auditor_user", "password": "wrongpassword"})
+        log_existing = AuditLog.objects.filter(
+            action=AuditLog.Action.FAILED_LOGIN, changes__username_attempted="auditor_user"
+        ).first()
+        self.assertIsNotNone(log_existing)
+        self.assertEqual(log_existing.username, "auditor_user")
+        self.assertIn("auditor_user", log_existing.object_repr)
+
+        # 2. Failed login for non-existent account: records "[unknown]" to prevent credential leaks
+        self.client.post("/accounts/login/", {"username": "nonexistent_stranger", "password": "somepassword"})
+        log_unknown = AuditLog.objects.filter(
+            action=AuditLog.Action.FAILED_LOGIN, changes__username_attempted="[unknown]"
+        ).first()
+        self.assertIsNotNone(log_unknown)
+        self.assertEqual(log_unknown.username, "[unknown]")
+        self.assertIn("[unknown]", log_unknown.object_repr)
+        self.assertNotIn("nonexistent_stranger", str(log_unknown.changes))
+
+    def test_permission_denied_deduplication(self):
+        # Office head accesses protected /audit/ repeatedly
+        self.client.force_login(self.office_head)
+
+        # 1. First request creates PERMISSION_DENIED entry
+        resp1 = self.client.get("/audit/")
+        self.assertEqual(resp1.status_code, 403)
+        count_after_first = AuditLog.objects.filter(
+            action=AuditLog.Action.PERMISSION_DENIED,
+            user_id=self.office_head.pk,
+            changes__path="/audit/",
+        ).count()
+        self.assertEqual(count_after_first, 1)
+
+        # 2. Second request within the same minute does NOT create a duplicate entry
+        resp2 = self.client.get("/audit/")
+        self.assertEqual(resp2.status_code, 403)
+        count_after_second = AuditLog.objects.filter(
+            action=AuditLog.Action.PERMISSION_DENIED,
+            user_id=self.office_head.pk,
+            changes__path="/audit/",
+        ).count()
+        self.assertEqual(count_after_second, 1)
+
+        # 3. Request to a different forbidden path DOES create a new entry
+        doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            physical_location="Cabinet A",
+        )
+        resp3 = self.client.get(f"/documents/{doc.pk}/download/")
+        self.assertEqual(resp3.status_code, 403)
+        count_doc_denied = AuditLog.objects.filter(
+            action=AuditLog.Action.PERMISSION_DENIED,
+            user_id=self.office_head.pk,
+            changes__path=f"/documents/{doc.pk}/download/",
+        ).count()
+        self.assertEqual(count_doc_denied, 1)
+
+        # 4. A different user accessing /audit/ creates a separate entry for that user
+        self.client.force_login(self.hrmo)
+        resp4 = self.client.get("/audit/")
+        self.assertEqual(resp4.status_code, 403)
+        count_hrmo_denied = AuditLog.objects.filter(
+            action=AuditLog.Action.PERMISSION_DENIED,
+            user_id=self.hrmo.pk,
+            changes__path="/audit/",
+        ).count()
+        self.assertEqual(count_hrmo_denied, 1)
+
+    def test_trusted_proxies_environment_setting(self):
+        from django.test import override_settings
+
+        with override_settings(TRUSTED_PROXIES=["127.0.0.1", "::1", "172.18.0.0/16"]):
+            self.assertTrue(is_ip_trusted("127.0.0.1"))
+            self.assertTrue(is_ip_trusted("::1"))
+            self.assertTrue(is_ip_trusted("172.18.0.42"))
+            self.assertFalse(is_ip_trusted("192.168.1.1"))
+
     def test_codebase_inspection_forbids_unlogged_queryset_mutations(self):
         # Scans hr/ app views and domain code to ensure no .update(), .bulk_create(), or raw SQL are used
         from pathlib import Path

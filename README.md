@@ -64,6 +64,7 @@ If you change `APP_DB_USER` / `APP_DB_PASSWORD` after the first start, run
 | Database roles | The website connects as `APP_DB_USER`, which can read and write data but cannot change tables. Migrations and tests run as the owner role in the one-shot `manage` container. The DB port is not published to the host. | Limits damage if the web app is compromised, and lets the audit table be made append-only (step 5). |
 | Uploaded files | Stored in a private volume, never at a public URL; served only through permission-checked views. | HR documents are sensitive. |
 | HTTPS | One switch: `DJANGO_HTTPS=1` turns on secure cookies, HTTP→HTTPS redirect, HSTS, and trusts `X-Forwarded-Proto` from the reverse proxy. | Ready for a TLS proxy without code changes. |
+| Reverse proxy IP | `TRUSTED_PROXIES` in `.env` (comma-separated IPs/subnets). `X-Forwarded-For` is inspected ONLY when `REMOTE_ADDR` matches a trusted proxy. | Prevents IP spoofing in audit logs and rate-limiting while capturing the real client IP behind Caddy/Nginx. |
 | Other defaults kept on | CSRF protection, clickjacking protection (`X-Frame-Options: DENY`), `nosniff`, HTML auto-escaping, parameterised SQL (Django ORM). | |
 
 ### HTTPS is required for phone self-service
@@ -79,6 +80,13 @@ On a local office server, the simplest route is a reverse proxy such as
 - With a public domain name: Caddy obtains a free Let's Encrypt certificate automatically.
 - LAN only (no public domain): use Caddy's `tls internal` (or your own CA) and
   install the root certificate on staff phones, or phones will show warnings.
+
+#### Reverse proxy IP handling (`TRUSTED_PROXIES`)
+
+When Caddy sits in front of the application, client connections terminate at Caddy, and requests reach Django from Caddy's IP (e.g., `127.0.0.1` or a Docker network bridge IP like `172.18.0.x`).
+
+- Configure `TRUSTED_PROXIES` in `.env` with Caddy's IP address or Docker subnet (e.g. `TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12`). Defaults to localhost (`127.0.0.1,::1`).
+- Django inspects `REMOTE_ADDR`: if and only if it matches an entry or CIDR block in `TRUSTED_PROXIES`, the true client IP is resolved from the `X-Forwarded-For` header for audit logs and rate-limiting. Direct or untrusted connections ignore spoofed proxy headers.
 
 Then in `.env`: `DJANGO_HTTPS=1`, add the hostname to `DJANGO_ALLOWED_HOSTS`, and
 add `https://<hostname>` to `DJANGO_CSRF_TRUSTED_ORIGINS`. Also replace `runserver`

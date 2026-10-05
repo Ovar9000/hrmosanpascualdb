@@ -50,7 +50,7 @@ MIDDLEWARE = [
 ]
 
 # Trusted reverse proxies for client IP extraction from X-Forwarded-For (DECISIONS U5)
-TRUSTED_PROXIES = os.environ.get("TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
+TRUSTED_PROXIES = env_list("TRUSTED_PROXIES", "127.0.0.1,::1")
 
 
 ROOT_URLCONF = "config.urls"

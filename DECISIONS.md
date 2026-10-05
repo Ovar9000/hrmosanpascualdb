@@ -119,7 +119,8 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | U4 | **Data minimization & redaction:** Sensitive fields (`rate`, `tin`, `gsis_no`, `philhealth_no`, `pagibig_no`, `sss_no`, `password`) log field names only. Values and password hashes are **NEVER** stored in the audit changes diff. | No |
 | U5 | **Trusted proxy IP extraction:** Client IP is resolved from `X-Forwarded-For` strictly when `REMOTE_ADDR` matches `TRUSTED_PROXIES`. Direct connections ignore spoofed proxy headers. | No |
 | U6 | **Signal limitations & code prohibitions:**<br>- Django signals do **not** trigger on `QuerySet.update()`, `QuerySet.bulk_create()`, `QuerySet.bulk_update()`, raw SQL `cursor.execute()`, or direct `psql` queries.<br>- **Policy:** HR application code is forbidden from calling `.update()`, `.bulk_create()`, `.bulk_update()`, or raw SQL for mutating domain entities. All domain mutations must use model `.save()` or `.delete()`. An automated AST test verifies this in the test suite.<br>- **Dev DB reset:** Because `TRUNCATE` is blocked by the PostgreSQL trigger, `manage.py flush` will be rejected. Developers must use `docker compose down -v` to reset a local development database.<br>- **Hash chain assessment:** An optional SHA-256 hash chain (`prev_hash`, `row_hash`) is supported on `AuditLog`. **Recommendation:** We do *not* recommend relying on synchronous in-database hash chaining as the primary defense over PostgreSQL engine-level append-only triggers. In a high-concurrency web application, computing a strictly linear hash chain requires serializing database writes (`SELECT FOR UPDATE`), creating heavy lock contention. Database-level triggers combined with periodic external write-once log export (e.g. daily signed CSV archives or off-site syslog streaming) provide stronger immutability without crippling concurrent web write performance. | No |
-
+| U7 | **Audit retention policy & no-purge design:** The web application cannot purge or truncate audit rows by design (enforced by PostgreSQL trigger and DB privilege revocation). Audit-log retention policy (e.g., retention window, active DB vs. cold storage archiving) is an open question to align with the municipal Data Privacy Officer (DPO). | Yes |
+| U8 | **Nightly encrypted export of audit table:** Nightly encrypted export of the `hr_auditlog` table is automatically exported and streamed to LGU-held storage (e.g., external encrypted backup volume or isolated municipal share) to protect audit integrity even in the event of host failure or database corruption. | No |
 
 ---
 
@@ -130,6 +131,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | B1 | Nightly scheduled `pg_dump` of PostgreSQL database (schema, records, and append-only audit log). | No |
 | B2 | Storage: Local server volume + secondary encrypted backup on separate physical storage or municipal network share. | No |
 | B3 | Restoration drill: IT System Admin executes annual/quarterly dry-run restores in a sandboxed container to verify backup integrity. | No |
+| B4 | Nightly encrypted export of the `hr_auditlog` table streamed to LGU-held storage. | No |
 
 ---
 
