@@ -5,6 +5,7 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from hr.models import (
+    Delegate,
     Document,
     Engagement,
     LeaveCredit,
@@ -324,5 +325,105 @@ class ViewsTestCase(TestCase):
         # Regular non-staff user does not see rates
         self.assertFalse(resp_det.context["can_view_rates"])
         self.assertContains(resp_det, "Pay rates are restricted")
+
+
+class Step4AModelAndAdminTestCase(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser("superadmin", "super@test.com", "superpass123")
+        self.staff_sysadmin = User.objects.create_user("sysadmin", "sys@test.com", "syspass123", is_staff=True)
+        self.mayor = User.objects.create_user("mayor", "mayor@test.com", "mayorpass123")
+        self.delegate_user = User.objects.create_user("delegate", "delegate@test.com", "delpass123")
+
+        self.office = Office.objects.create(name="Office of the Mayor", branch=Office.Branch.EXECUTIVE, type=Office.Type.DEPARTMENT)
+        self.person = Person.objects.create(
+            employee_no="SP-00099",
+            last_name="Santiago",
+            first_name="Miriam",
+            birthdate=date(1970, 6, 15),
+        )
+
+    def test_engagement_leave_eligible_defaults_and_toggle(self):
+        # Plantilla defaults leave_eligible=True
+        plantilla = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.PLANTILLA,
+            position_title="Attorney IV",
+            salary_grade=23,
+            step=1,
+            item_number="SP-MO-099",
+            start_date=date(2025, 1, 1),
+        )
+        self.assertTrue(plantilla.leave_eligible)
+        self.assertTrue(self.person.earns_leave_credits())
+
+        # Casual defaults leave_eligible=True
+        casual = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Legal Aide",
+            start_date=date(2025, 1, 1),
+        )
+        self.assertTrue(casual.leave_eligible)
+
+        # Job order defaults leave_eligible=False
+        jo = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.JOB_ORDER,
+            position_title="Office Encoder",
+            start_date=date(2025, 1, 1),
+        )
+        self.assertFalse(jo.leave_eligible)
+
+        # HRMO can explicitly toggle leave_eligible on JO
+        jo.leave_eligible = True
+        jo.save()
+        self.assertTrue(jo.leave_eligible)
+
+    def test_document_original_on_file(self):
+        doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.PDS,
+            physical_location="Cabinet 1, Drawer 2",
+        )
+        self.assertTrue(doc.original_on_file)
+
+    def test_delegate_model_and_active_window(self):
+        d = Delegate.objects.create(
+            principal=self.mayor,
+            delegate=self.delegate_user,
+            valid_from=date(2026, 10, 1),
+            valid_to=date(2026, 10, 15),
+            notes="Covering Mayor leave",
+        )
+        self.assertTrue(d.is_active(date(2026, 10, 5)))
+        self.assertFalse(d.is_active(date(2026, 10, 20)))  # Expired
+        self.assertFalse(d.is_active(date(2026, 9, 28)))   # Prior
+
+        # valid_to < valid_from constraint
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Delegate.objects.create(
+                    principal=self.mayor,
+                    delegate=self.delegate_user,
+                    valid_from=date(2026, 10, 20),
+                    valid_to=date(2026, 10, 10),
+                )
+
+    def test_admin_hr_models_forbidden_for_non_superusers(self):
+        # Non-superuser (System Admin) accessing HR models in /admin/ gets 403
+        self.client.force_login(self.staff_sysadmin)
+        resp = self.client.get("/admin/hr/person/")
+        self.assertEqual(resp.status_code, 403)
+
+        # Superuser can access /admin/hr/person/
+        self.client.force_login(self.superuser)
+        resp_super = self.client.get("/admin/hr/person/")
+        self.assertEqual(resp_super.status_code, 200)
+
 
 

@@ -80,6 +80,15 @@ class Person(models.Model):
     class Meta:
         ordering = ["last_name", "first_name"]
         verbose_name_plural = "people"
+        indexes = [
+            models.Index(fields=["last_name", "first_name"], name="person_name_idx"),
+            models.Index(fields=["employee_no"], name="person_emp_no_idx"),
+        ]
+        permissions = [
+            ("view_ids", "Can view government identification numbers"),
+            ("view_hr_records", "Can view personnel directory and records"),
+            ("manage_hr_records", "Can manage personnel records"),
+        ]
         constraints = [
             # DECISIONS X2: same last name + first name + birthdate = same person.
             models.UniqueConstraint(
@@ -106,10 +115,10 @@ class Person(models.Model):
         return f"{self.last_name}, {self.first_name}{middle}{suffix}"
 
     def earns_leave_credits(self):
-        """DECISIONS L3: only active Plantilla and Casual engagements earn leave credits."""
+        """Only active engagements with leave_eligible=True earn leave credits (DECISIONS L3)."""
         return self.engagements.filter(
             status=Engagement.Status.ACTIVE,
-            type__in=Engagement.LEAVE_CREDIT_TYPES,
+            leave_eligible=True,
         ).exists()
 
 
@@ -183,6 +192,11 @@ class Engagement(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    leave_eligible = models.BooleanField(
+        "Leave eligible",
+        default=False,
+        help_text="Eligible to earn leave credits. Default True for Plantilla/Casual, editable by HRMO.",
+    )
 
     # Plantilla only (DECISIONS D5).
     salary_grade = models.PositiveSmallIntegerField(null=True, blank=True)
@@ -197,6 +211,9 @@ class Engagement(models.Model):
 
     class Meta:
         ordering = ["-start_date"]
+        permissions = [
+            ("view_pay", "Can view compensation rates and salary grades"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(end_date__isnull=True) | Q(end_date__gte=F("start_date")),
@@ -245,6 +262,12 @@ class Engagement(models.Model):
     def __str__(self):
         return f"{self.person} – {self.position_title} ({self.get_type_display()})"
 
+    def save(self, *args, **kwargs):
+        # Auto-set leave_eligible for new plantilla/casual if not explicitly altered
+        if self._state.adding and not self.leave_eligible and self.type in self.LEAVE_CREDIT_TYPES:
+            self.leave_eligible = True
+        super().save(*args, **kwargs)
+
 
 # --- Documents (kept simple until the survey, DECISIONS F1) ------------------
 
@@ -282,6 +305,12 @@ class Document(models.Model):
         blank=True,
         validators=[FileExtensionValidator(["pdf", "jpg", "jpeg", "png"]), validate_file_size],
     )
+    # The system tracks paper; it does not replace it. Wet signatures stay (survey Oct 2026).
+    original_on_file = models.BooleanField(
+        "Original paper copy on file",
+        default=True,
+        help_text="Whether the wet-signed physical paper document is filed in the records archive.",
+    )
     physical_location = models.CharField(
         max_length=100, blank=True, help_text="e.g. Cabinet 3, Drawer 2"
     )
@@ -293,6 +322,9 @@ class Document(models.Model):
 
     class Meta:
         ordering = ["-uploaded_at"]
+        permissions = [
+            ("view_documents", "Can view and download HR documents"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(person__isnull=False, engagement__isnull=True)
@@ -343,6 +375,9 @@ class LeaveRequest(models.Model):
 
     class Meta:
         ordering = ["-filed_at"]
+        permissions = [
+            ("approve_leave", "Can act on and approve leave requests"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(end_date__gte=F("start_date")),
@@ -379,7 +414,7 @@ class LeaveCredit(models.Model):
 
     def clean(self):
         if self.person_id and not self.person.earns_leave_credits():
-            raise ValidationError("Only people with an active Plantilla or Casual engagement have leave credits.")
+            raise ValidationError("Only people with an active leave-eligible engagement have leave credits (DECISIONS L3).")
 
 
 # --- User Profile -----------------------------------------------------------
@@ -404,3 +439,42 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile of {self.user.username}"
+
+
+# --- Delegation -------------------------------------------------------------
+
+
+class Delegate(models.Model):
+    """Time-bound delegation for Executive approvals (e.g. Mayor's representative)."""
+
+    principal = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="delegations_given"
+    )
+    delegate = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="delegations_received"
+    )
+    valid_from = models.DateField()
+    valid_to = models.DateField()
+    notes = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-valid_from"]
+        permissions = [
+            ("manage_delegates", "Can assign and manage executive delegates"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(valid_to__gte=F("valid_from")),
+                name="delegate_valid_to_gte_from",
+                violation_error_message="Delegation end date cannot be before start date.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.delegate.username} for {self.principal.username} ({self.valid_from} to {self.valid_to})"
+
+    def is_active(self, target_date=None):
+        if target_date is None:
+            from django.utils import timezone
+            target_date = timezone.localdate()
+        return self.valid_from <= target_date <= self.valid_to
