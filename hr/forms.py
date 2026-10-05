@@ -201,11 +201,9 @@ class EngagementForm(forms.ModelForm):
             if not self.person:
                 self.person = self.instance.person
 
-        # Default leave_eligible based on engagement type if new form
-        if not self.instance.pk and "leave_eligible" in self.fields and not self.initial.get("leave_eligible"):
-            initial_type = self.initial.get("type")
-            if initial_type in [Engagement.Type.PLANTILLA, Engagement.Type.CASUAL]:
-                self.fields["leave_eligible"].initial = True
+        # Type-based leave_eligible default is only an initial value (DECISIONS L3); HRMO may untick it.
+        if not self.instance.pk and "leave_eligible" in self.fields and "leave_eligible" not in self.initial:
+            self.fields["leave_eligible"].initial = Engagement.default_leave_eligible(self.initial.get("type"))
 
         # Field-level permission gate: pay rate fields visible only with view_pay (DECISIONS R6)
         from .permissions import can_view_pay

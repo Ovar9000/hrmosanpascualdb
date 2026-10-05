@@ -290,11 +290,14 @@ class Engagement(models.Model):
     def __str__(self):
         return f"{self.person} – {self.position_title} ({self.get_type_display()})"
 
-    def save(self, *args, **kwargs):
-        # Auto-set leave_eligible for new plantilla/casual if not explicitly altered
-        if self._state.adding and not self.leave_eligible and self.type in self.LEAVE_CREDIT_TYPES:
-            self.leave_eligible = True
-        super().save(*args, **kwargs)
+    @classmethod
+    def default_leave_eligible(cls, engagement_type):
+        """Suggested leave_eligible for a new engagement of this type (DECISIONS L3).
+
+        Only a default for entry screens and imports to apply explicitly; save() never
+        overrides the stored value, so HRMO can record Plantilla/Casual without leave.
+        """
+        return engagement_type in cls.LEAVE_CREDIT_TYPES
 
 
 # --- Documents (kept simple until the survey, DECISIONS F1) ------------------

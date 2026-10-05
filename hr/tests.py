@@ -245,7 +245,7 @@ class DocumentAndLeaveTestCase(TestCase):
         with self.assertRaises(ValidationError):
             credit.clean()
 
-        # Add casual engagement -> clean() passes
+        # Add leave-eligible casual engagement -> clean() passes
         Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -253,6 +253,7 @@ class DocumentAndLeaveTestCase(TestCase):
             position_title="Utility Worker",
             start_date=date(2026, 1, 1),
             status=Engagement.Status.ACTIVE,
+            leave_eligible=True,
         )
         credit.clean()  # should not raise
 
@@ -382,7 +383,12 @@ class Step4AModelAndAdminTestCase(TestCase):
         )
 
     def test_engagement_leave_eligible_defaults_and_toggle(self):
-        # Plantilla defaults leave_eligible=True
+        # The type default (True for Plantilla/Casual) is a suggestion for entry screens;
+        # the model stores exactly what it is given (DECISIONS L3, LeaveEligibleDefaultTestCase).
+        self.assertTrue(Engagement.default_leave_eligible(Engagement.Type.PLANTILLA))
+        self.assertTrue(Engagement.default_leave_eligible(Engagement.Type.CASUAL))
+        self.assertFalse(Engagement.default_leave_eligible(Engagement.Type.JOB_ORDER))
+
         plantilla = Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -392,11 +398,12 @@ class Step4AModelAndAdminTestCase(TestCase):
             step=1,
             item_number="SP-MO-099",
             start_date=date(2025, 1, 1),
+            leave_eligible=True,
         )
         self.assertTrue(plantilla.leave_eligible)
         self.assertTrue(self.person.earns_leave_credits())
 
-        # Casual defaults leave_eligible=True
+        # Casual saved without the flag is not forced to True
         casual = Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -404,7 +411,7 @@ class Step4AModelAndAdminTestCase(TestCase):
             position_title="Legal Aide",
             start_date=date(2025, 1, 1),
         )
-        self.assertTrue(casual.leave_eligible)
+        self.assertFalse(casual.leave_eligible)
 
         # Job order defaults leave_eligible=False
         jo = Engagement.objects.create(
@@ -2653,3 +2660,81 @@ class DocumentMissingVersionTestCase(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.version, 4)
+
+
+class LeaveEligibleDefaultTestCase(TestCase):
+    """B2: leave_eligible is editable by HRMO for every type; the type default is only a form initial value."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="leave_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.office = Office.objects.get(acronym="MTO")
+        self.person = Person.objects.create(
+            employee_no="SP-00088", last_name="Leave", first_name="Flag", birthdate=date(1980, 2, 2)
+        )
+
+    def _payload(self, eng_type, **extra):
+        payload = {
+            "office": self.office.pk,
+            "type": eng_type,
+            "position_title": "Clerk",
+            "start_date": "2026-01-01",
+            "end_date": "",
+            "status": Engagement.Status.ACTIVE,
+            # leave_eligible omitted = checkbox left unticked
+        }
+        if eng_type == Engagement.Type.PLANTILLA:
+            payload.update({"salary_grade": 8, "step": 1, "item_number": "SP-MTO-008"})
+        payload.update(extra)
+        return payload
+
+    def test_model_save_keeps_explicit_false_for_plantilla_and_casual(self):
+        plantilla = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PLANTILLA, position_title="Clerk",
+            salary_grade=8, step=1, item_number="SP-MTO-001", start_date=date(2026, 1, 1), leave_eligible=False,
+        )
+        casual = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.CASUAL, position_title="Aide",
+            start_date=date(2026, 1, 1), leave_eligible=False,
+        )
+        plantilla.refresh_from_db()
+        casual.refresh_from_db()
+        self.assertFalse(plantilla.leave_eligible)
+        self.assertFalse(casual.leave_eligible)
+
+    def test_hrmo_can_create_plantilla_and_casual_without_leave_via_form(self):
+        self.client.force_login(self.hrmo_user)
+        for eng_type in (Engagement.Type.PLANTILLA, Engagement.Type.CASUAL):
+            with self.subTest(type=eng_type):
+                resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", self._payload(eng_type))
+                self.assertEqual(resp.status_code, 302)
+                eng = Engagement.objects.filter(person=self.person, type=eng_type).latest("pk")
+                self.assertFalse(eng.leave_eligible)
+
+    def test_hrmo_can_untick_leave_on_existing_plantilla(self):
+        eng = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PLANTILLA, position_title="Clerk",
+            salary_grade=8, step=1, item_number="SP-MTO-008", start_date=date(2026, 1, 1), leave_eligible=True,
+        )
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(
+            f"/engagements/{eng.pk}/edit/", self._payload(Engagement.Type.PLANTILLA, version=eng.version)
+        )
+        self.assertEqual(resp.status_code, 302)
+        eng.refresh_from_db()
+        self.assertFalse(eng.leave_eligible)
+
+    def test_type_default_is_applied_as_form_initial_value(self):
+        for eng_type, expected in [
+            (Engagement.Type.PLANTILLA, True),
+            (Engagement.Type.CASUAL, True),
+            (Engagement.Type.JOB_ORDER, False),
+            (Engagement.Type.CONTRACT_OF_SERVICE, False),
+        ]:
+            with self.subTest(type=eng_type):
+                self.assertEqual(Engagement.default_leave_eligible(eng_type), expected)
+                form = EngagementForm(initial={"type": eng_type}, user=self.hrmo_user, person=self.person)
+                self.assertEqual(bool(form["leave_eligible"].initial), expected)

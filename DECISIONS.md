@@ -77,7 +77,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 |---|---|---|
 | L1 | **Approval chain:** Configurable `ApprovalStep` per request type. Default seeded chain: 1) Supervisor recommends, 2) HRMO certifies credits, 3) Mayor or delegate approves. Marked **UNCONFIRMED**. | **Likely** |
 | L2 | **Credit deduction:** Simple ledger (`LeaveCredit`). Deductions occur only upon final approval. Computation formulas marked **UNVERIFIED**. | **Likely** |
-| L3 | **Leave eligibility:** Controlled by `Engagement.leave_eligible` (default True for Plantilla and Casual, False for others; editable by HRMO). Replaces strict type hardcoding. | No |
+| L3 | **Leave eligibility:** Controlled by `Engagement.leave_eligible`, editable by HRMO for every type (including Plantilla and Casual set to False). The type default (True for Plantilla and Casual, False for others, `Engagement.default_leave_eligible()`) is only the engagement form's initial value, and the future importer must apply it explicitly; `Engagement.save()` never changes the stored value. *Proven by* `LeaveEligibleDefaultTestCase`. | No |
 
 ---
 
