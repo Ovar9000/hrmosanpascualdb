@@ -1,5 +1,6 @@
 import csv
 import json
+from datetime import date, timedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -9,7 +10,7 @@ from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from .audit import log_audit_event
-from .forms import PersonForm
+from .forms import EndEngagementForm, EngagementForm, PersonForm
 from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
 from .permissions import (
     can_manage_hr_records,
@@ -303,6 +304,203 @@ def person_edit(request, pk):
             "form": form,
             "person": person,
             "is_edit": True,
+        },
+    )
+
+
+@login_required
+def engagement_create(request, person_pk):
+    """Add a new engagement (appointment / contract) for a person (HRMO only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to manage appointments.")
+
+    person = get_object_or_404(Person, pk=person_pk)
+
+    if request.method == "POST":
+        form = EngagementForm(request.POST, user=request.user, person=person)
+        if form.is_valid():
+            with transaction.atomic():
+                eng = form.save(commit=False)
+                eng.person = person
+                eng.version = 1
+                eng.save()
+
+            messages.success(
+                request,
+                f"New {eng.get_type_display()} engagement for {person.full_name} successfully recorded."
+            )
+            return redirect("person_detail", pk=person.pk)
+    else:
+        form = EngagementForm(user=request.user, person=person)
+
+    return render(
+        request,
+        "hr/engagement_form.html",
+        {
+            "form": form,
+            "person": person,
+            "is_edit": False,
+        },
+    )
+
+
+@login_required
+def engagement_edit(request, pk):
+    """Edit an existing engagement record with lost-update protection (HRMO only)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to edit appointments.")
+
+    eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+
+    if request.method == "POST":
+        form = EngagementForm(request.POST, instance=eng, user=request.user, person=eng.person)
+        if form.is_valid():
+            with transaction.atomic():
+                locked_eng = Engagement.objects.select_for_update().get(pk=pk)
+                submitted_version = form.cleaned_data.get("version")
+                if locked_eng.version != submitted_version:
+                    form.add_error(
+                        None,
+                        "This engagement was modified by another user while you were editing it. "
+                        "Please refresh the page and review before saving."
+                    )
+                    return render(
+                        request,
+                        "hr/engagement_form.html",
+                        {
+                            "form": form,
+                            "person": eng.person,
+                            "engagement": eng,
+                            "is_edit": True,
+                        },
+                    )
+
+                saved_eng = form.save(commit=False)
+                saved_eng.version = locked_eng.version + 1
+                saved_eng.save()
+
+            messages.success(
+                request,
+                f"Engagement ({saved_eng.get_type_display()}) for {eng.person.full_name} successfully updated."
+            )
+            return redirect("person_detail", pk=eng.person.pk)
+    else:
+        form = EngagementForm(instance=eng, user=request.user, person=eng.person)
+
+    return render(
+        request,
+        "hr/engagement_form.html",
+        {
+            "form": form,
+            "person": eng.person,
+            "engagement": eng,
+            "is_edit": True,
+        },
+    )
+
+
+@login_required
+def engagement_end(request, pk):
+    """End / retire an engagement (sets status=ended and end_date, keeps row intact)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to end appointments.")
+
+    eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+
+    if request.method == "POST":
+        form = EndEngagementForm(request.POST, engagement=eng)
+        if form.is_valid():
+            with transaction.atomic():
+                locked_eng = Engagement.objects.select_for_update().get(pk=pk)
+                submitted_version = form.cleaned_data.get("version")
+                if locked_eng.version != submitted_version:
+                    form.add_error(
+                        None,
+                        "This engagement was modified by another user while you were viewing it. "
+                        "Please refresh and try again."
+                    )
+                    return render(
+                        request,
+                        "hr/engagement_end_confirm.html",
+                        {"form": form, "engagement": eng, "person": eng.person},
+                    )
+
+                locked_eng.status = Engagement.Status.ENDED
+                locked_eng.end_date = form.cleaned_data["end_date"]
+                if form.cleaned_data.get("notes"):
+                    note_entry = f"Ended on {locked_eng.end_date}: {form.cleaned_data['notes']}"
+                    locked_eng.notes = f"{locked_eng.notes}\n{note_entry}".strip()
+                locked_eng.version += 1
+                locked_eng.save()
+
+            messages.success(
+                request,
+                f"{eng.get_type_display()} engagement for {eng.person.full_name} ended as of {locked_eng.end_date}."
+            )
+            return redirect("person_detail", pk=eng.person.pk)
+    else:
+        form = EndEngagementForm(engagement=eng)
+
+    return render(
+        request,
+        "hr/engagement_end_confirm.html",
+        {
+            "form": form,
+            "engagement": eng,
+            "person": eng.person,
+        },
+    )
+
+
+@login_required
+def engagement_renew(request, pk):
+    """Renew / new appointment pre-filled from previous engagement (preserves history)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to renew appointments.")
+
+    old_eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+
+    if request.method == "POST":
+        form = EngagementForm(request.POST, user=request.user, person=old_eng.person)
+        if form.is_valid():
+            with transaction.atomic():
+                new_eng = form.save(commit=False)
+                new_eng.person = old_eng.person
+                new_eng.version = 1
+                new_eng.save()
+
+            messages.success(
+                request,
+                f"New {new_eng.get_type_display()} appointment for {old_eng.person.full_name} recorded (previous history preserved)."
+            )
+            return redirect("person_detail", pk=old_eng.person.pk)
+    else:
+        start_date = (old_eng.end_date + timedelta(days=1)) if old_eng.end_date else date.today()
+        initial_data = {
+            "office": old_eng.office_id,
+            "type": old_eng.type,
+            "position_title": old_eng.position_title,
+            "rate": old_eng.rate,
+            "rate_basis": old_eng.rate_basis,
+            "leave_eligible": old_eng.leave_eligible,
+            "salary_grade": old_eng.salary_grade,
+            "step": old_eng.step,
+            "item_number": old_eng.item_number,
+            "project": old_eng.project_id,
+            "start_date": start_date,
+            "status": Engagement.Status.ACTIVE,
+        }
+        form = EngagementForm(initial=initial_data, user=request.user, person=old_eng.person)
+
+    return render(
+        request,
+        "hr/engagement_form.html",
+        {
+            "form": form,
+            "person": old_eng.person,
+            "previous_engagement": old_eng,
+            "is_renew": True,
+            "is_edit": False,
         },
     )
 

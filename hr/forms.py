@@ -5,8 +5,8 @@ from datetime import date
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from .models import FAKE_ID_FIELDS, Person
-from .permissions import can_view_ids
+from .models import FAKE_ID_FIELDS, Engagement, Person
+from .permissions import can_view_ids, can_view_pay
 
 
 class PersonForm(forms.ModelForm):
@@ -142,3 +142,176 @@ class PersonForm(forms.ModelForm):
                     self.add_error(f, "Prototype accepts fake ID numbers only (must start with 00).")
 
         return cleaned_data
+
+
+class EngagementForm(forms.ModelForm):
+    """Form for creating and editing personnel engagements with permission gates and overlap checks."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+    confirm_overlap = forms.BooleanField(
+        required=False,
+        label="I understand that an active engagement of the same type in this office overlaps these dates, save anyway",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+
+    class Meta:
+        model = Engagement
+        fields = [
+            "office",
+            "type",
+            "position_title",
+            "rate",
+            "rate_basis",
+            "start_date",
+            "end_date",
+            "status",
+            "leave_eligible",
+            "salary_grade",
+            "step",
+            "item_number",
+            "project",
+            "notes",
+        ]
+        widgets = {
+            "office": forms.Select(attrs={"class": "form-select"}),
+            "type": forms.Select(attrs={"class": "form-select"}),
+            "position_title": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Administrative Officer IV"}),
+            "rate": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "placeholder": "0.00"}),
+            "rate_basis": forms.Select(attrs={"class": "form-select"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+            "leave_eligible": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "salary_grade": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "33"}),
+            "step": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "8"}),
+            "item_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. SP-MO-001"}),
+            "project": forms.Select(attrs={"class": "form-select"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+        }
+
+    def __init__(self, *args, user=None, person=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.person = person
+
+        # Pre-populate version for edit
+        if self.instance and self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+            if not self.person:
+                self.person = self.instance.person
+
+        # Default leave_eligible based on engagement type if new form
+        if not self.instance.pk and "leave_eligible" in self.fields and not self.initial.get("leave_eligible"):
+            initial_type = self.initial.get("type")
+            if initial_type in [Engagement.Type.PLANTILLA, Engagement.Type.CASUAL]:
+                self.fields["leave_eligible"].initial = True
+
+        # Field-level permission gate: pay rate fields visible only with view_pay (DECISIONS R6)
+        from .permissions import can_view_pay
+        if not can_view_pay(user):
+            if "rate" in self.fields:
+                del self.fields["rate"]
+            if "rate_basis" in self.fields:
+                del self.fields["rate_basis"]
+
+    def clean_position_title(self):
+        return self.cleaned_data.get("position_title", "").strip()
+
+    def clean_item_number(self):
+        return self.cleaned_data.get("item_number", "").strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        eng_type = cleaned_data.get("type")
+        salary_grade = cleaned_data.get("salary_grade")
+        step = cleaned_data.get("step")
+        item_number = cleaned_data.get("item_number", "")
+        project = cleaned_data.get("project")
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        office = cleaned_data.get("office")
+        status = cleaned_data.get("status")
+
+        # Plantilla validations
+        if eng_type == Engagement.Type.PLANTILLA:
+            if not salary_grade or not step or not item_number:
+                raise ValidationError("Salary grade, step, and item number are required for Plantilla appointments.")
+            if salary_grade < 1 or salary_grade > 33:
+                self.add_error("salary_grade", "Salary grade must be between 1 and 33.")
+            if step < 1 or step > 8:
+                self.add_error("step", "Step must be between 1 and 8.")
+        else:
+            if salary_grade or step or item_number:
+                raise ValidationError("Salary grade, step, and item number must be empty for non-Plantilla engagements.")
+
+        # Project-based validations
+        if eng_type == Engagement.Type.PROJECT_BASED:
+            if not project:
+                raise ValidationError("Project-based engagements require an associated project.")
+        else:
+            if project:
+                raise ValidationError("Only project-based engagements can link to a project.")
+
+        # Date chronological order
+        if start_date and end_date and end_date < start_date:
+            self.add_error("end_date", "End date cannot be earlier than start date.")
+
+        # Overlap check with existing active engagements of same type in same office
+        if self.person and office and eng_type and start_date and status == Engagement.Status.ACTIVE:
+            overlap_qs = Engagement.objects.filter(
+                person=self.person,
+                office=office,
+                type=eng_type,
+                status=Engagement.Status.ACTIVE,
+            )
+            if self.instance and self.instance.pk:
+                overlap_qs = overlap_qs.exclude(pk=self.instance.pk)
+
+            has_overlap = False
+            for other in overlap_qs:
+                other_end = other.end_date or date.max
+                this_end = end_date or date.max
+                if start_date <= other_end and other.start_date <= this_end:
+                    has_overlap = True
+                    break
+
+            if has_overlap and not cleaned_data.get("confirm_overlap"):
+                self.add_error(
+                    "confirm_overlap",
+                    f"Warning: {self.person.full_name} already has an active {eng_type} engagement in {office.name} "
+                    "overlapping these dates. Check 'I understand, save anyway' to proceed."
+                )
+
+        return cleaned_data
+
+
+class EndEngagementForm(forms.Form):
+    """Confirmation form for ending / retiring an engagement."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+    end_date = forms.DateField(
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        label="Contract / Term End Date",
+        required=True,
+    )
+    notes = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+        label="Reason / Notes",
+        required=False,
+    )
+
+    def __init__(self, *args, engagement=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.engagement = engagement
+        if engagement:
+            self.fields["version"].initial = engagement.version
+            if engagement.end_date:
+                self.fields["end_date"].initial = engagement.end_date
+            else:
+                self.fields["end_date"].initial = date.today()
+
+    def clean_end_date(self):
+        ed = self.cleaned_data.get("end_date")
+        if self.engagement and ed and ed < self.engagement.start_date:
+            raise ValidationError("End date cannot be earlier than the start date of the appointment.")
+        return ed

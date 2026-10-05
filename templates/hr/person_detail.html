@@ -113,8 +113,15 @@
 <!-- Career History & Engagements -->
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
-    <span>Engagement & Appointment History</span>
-    <span class="small text-muted">{{ engagements|length }} record(s)</span>
+    <div>
+      <span>Engagement & Appointment History</span>
+      <span class="small text-muted ms-2">{{ engagements|length }} record(s)</span>
+    </div>
+    {% if can_manage_records %}
+      <a href="{% url 'engagement_create' person.pk %}" class="btn btn-sm btn-primary">
+        + Add Appointment / Contract
+      </a>
+    {% endif %}
   </div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 small">
@@ -126,6 +133,7 @@
           <th>Status</th>
           <th>Plantilla / Project Details</th>
           {% if can_view_rates %}<th>Compensation</th>{% endif %}
+          {% if can_manage_records %}<th class="text-end">Actions</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -174,6 +182,17 @@
                 ₱{{ eng.rate|floatformat:2 }} <span class="text-muted small">/ {{ eng.get_rate_basis_display }}</span>
               {% else %}
                 <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% endif %}
+            {% if can_manage_records %}
+            <td class="text-end text-nowrap">
+              <a href="{% url 'engagement_edit' eng.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
+              {% if eng.status == 'active' %}
+                <a href="{% url 'engagement_renew' eng.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Renew</a>
+                <a href="{% url 'engagement_end' eng.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2">End</a>
+              {% else %}
+                <a href="{% url 'engagement_renew' eng.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">New Appt</a>
               {% endif %}
             </td>
             {% endif %}

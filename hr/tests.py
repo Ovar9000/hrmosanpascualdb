@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, transaction
 from django.test import RequestFactory, TestCase
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event
-from hr.forms import PersonForm
+from hr.forms import EndEngagementForm, EngagementForm, PersonForm
 from hr.models import (
     AuditLog,
     Delegate,
@@ -1329,6 +1329,308 @@ class Step6APersonEntryTestCase(TestCase):
         )
         synced = sync_employee_sequence()
         self.assertGreaterEqual(synced, num2)
+
+
+class Step6BEngagementEntryTestCase(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        call_command("seed_offices")
+        call_command("setup_roles")
+
+        self.hrmo_user = User.objects.create_user("hrmo_editor", "hrmo@test.com", "pass123")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+        self.sysadmin = User.objects.create_user("sys_admin", "sys@test.com", "pass123", is_staff=True)
+        self.sysadmin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+
+        self.office_head = User.objects.create_user("head_user", "head@test.com", "pass123")
+        self.office_head.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+
+        self.auditor = User.objects.create_user("audit_user", "audit@test.com", "pass123")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+
+        self.executive = User.objects.create_user("exec_user", "exec@test.com", "pass123")
+        self.executive.groups.add(Group.objects.get(name=ROLE_EXECUTIVE))
+
+        self.employee = User.objects.create_user("reg_emp", "emp@test.com", "pass123")
+
+        self.office = Office.objects.get(name="Office of the Municipal Mayor")
+        self.person = Person.objects.create(
+            employee_no="SP-00050",
+            last_name="Silang",
+            first_name="Diego",
+            birthdate=date(1985, 12, 16),
+            tin="000-555-666-000",
+            version=1,
+        )
+
+        self.engagement = Engagement.objects.create(
+            person=self.person,
+            office=self.office,
+            type=Engagement.Type.CASUAL,
+            position_title="Administrative Aide IV",
+            rate=Decimal("18000.00"),
+            rate_basis=Engagement.RateBasis.MONTHLY,
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 12, 31),
+            status=Engagement.Status.ACTIVE,
+            leave_eligible=True,
+            version=1,
+        )
+
+        self.project = Project.objects.create(
+            name="San Pascual Digital Portal",
+            office=self.office,
+            start_date=date(2025, 1, 1),
+        )
+
+    def test_non_hrmo_roles_cannot_access_engagement_actions(self):
+        non_hrmo_users = [
+            self.sysadmin,
+            self.office_head,
+            self.auditor,
+            self.executive,
+            self.employee,
+        ]
+
+        for user in non_hrmo_users:
+            self.client.force_login(user)
+
+            # Create URL
+            resp_create = self.client.get(f"/people/{self.person.pk}/engagements/new/")
+            self.assertEqual(resp_create.status_code, 403, f"{user.username} must get 403 on create")
+
+            # Edit URL
+            resp_edit = self.client.get(f"/engagements/{self.engagement.pk}/edit/")
+            self.assertEqual(resp_edit.status_code, 403, f"{user.username} must get 403 on edit")
+
+            # End URL
+            resp_end = self.client.get(f"/engagements/{self.engagement.pk}/end/")
+            self.assertEqual(resp_end.status_code, 403, f"{user.username} must get 403 on end")
+
+            # Renew URL
+            resp_renew = self.client.get(f"/engagements/{self.engagement.pk}/renew/")
+            self.assertEqual(resp_renew.status_code, 403, f"{user.username} must get 403 on renew")
+
+    def test_hrmo_can_create_plantilla_engagement_with_audit_redaction(self):
+        self.client.force_login(self.hrmo_user)
+
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.PLANTILLA,
+            "position_title": "Administrative Officer V",
+            "rate": "46725.00",
+            "rate_basis": Engagement.RateBasis.MONTHLY,
+            "start_date": "2026-01-01",
+            "end_date": "",
+            "status": Engagement.Status.ACTIVE,
+            "leave_eligible": True,
+            "salary_grade": 18,
+            "step": 1,
+            "item_number": "SP-MO-018",
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 302)
+
+        new_eng = Engagement.objects.filter(item_number="SP-MO-018").first()
+        self.assertIsNotNone(new_eng)
+        self.assertEqual(new_eng.salary_grade, 18)
+        self.assertEqual(new_eng.version, 1)
+
+        # Audit log verifies CREATE event with rate redacted
+        audit = AuditLog.objects.filter(
+            model_name="Engagement", object_id=str(new_eng.pk), action=AuditLog.Action.CREATE
+        ).first()
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.changes.get("rate"), "[REDACTED]")
+        self.assertNotIn("46725.00", str(audit.changes))
+
+    def test_plantilla_validation_requires_sg_step_and_item(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Missing plantilla fields fails validation
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.PLANTILLA,
+            "position_title": "Officer",
+            "start_date": "2026-01-01",
+            "status": Engagement.Status.ACTIVE,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Salary grade, step, and item number are required")
+
+    def test_non_plantilla_forbids_salary_grade_and_item(self):
+        self.client.force_login(self.hrmo_user)
+
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.JOB_ORDER,
+            "position_title": "Encoder",
+            "start_date": "2026-01-01",
+            "status": Engagement.Status.ACTIVE,
+            "salary_grade": 5,
+            "step": 1,
+            "item_number": "SP-JO-05",
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "must be empty for non-Plantilla")
+
+    def test_project_based_validation(self):
+        self.client.force_login(self.hrmo_user)
+
+        # Project-based without project fails
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.PROJECT_BASED,
+            "position_title": "Civil Engineer",
+            "start_date": "2026-01-01",
+            "status": Engagement.Status.ACTIVE,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "require an associated project")
+
+        # With project succeeds
+        payload["project"] = self.project.pk
+        resp_valid = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp_valid.status_code, 302)
+
+    def test_end_date_before_start_date_validation(self):
+        self.client.force_login(self.hrmo_user)
+
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.JOB_ORDER,
+            "position_title": "Clerk",
+            "start_date": "2026-06-01",
+            "end_date": "2026-05-01",
+            "status": Engagement.Status.ACTIVE,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "cannot be earlier than start date")
+
+    def test_overlap_warning_requires_confirmation_tick(self):
+        self.client.force_login(self.hrmo_user)
+
+        # self.engagement is CASUAL in self.office from 2025-01-01 to 2025-12-31
+        # Attempting to add another overlapping CASUAL engagement without confirmation fails with warning
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.CASUAL,
+            "position_title": "Overlapping Aide",
+            "start_date": "2025-06-01",
+            "end_date": "2025-11-30",
+            "status": Engagement.Status.ACTIVE,
+        }
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Warning:")
+        self.assertContains(resp, "Check &#x27;I understand, save anyway&#x27; to proceed")
+
+        # Ticking confirm_overlap allows save
+        payload["confirm_overlap"] = True
+        resp_confirm = self.client.post(f"/people/{self.person.pk}/engagements/new/", payload)
+        self.assertEqual(resp_confirm.status_code, 302)
+        self.assertTrue(Engagement.objects.filter(position_title="Overlapping Aide").exists())
+
+    def test_end_engagement_action(self):
+        self.client.force_login(self.hrmo_user)
+
+        # GET confirm screen
+        resp_get = self.client.get(f"/engagements/{self.engagement.pk}/end/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertContains(resp_get, "End Appointment / Contract")
+        self.assertContains(resp_get, self.engagement.position_title)
+
+        # POST confirm
+        resp_post = self.client.post(
+            f"/engagements/{self.engagement.pk}/end/",
+            {
+                "end_date": "2025-12-15",
+                "notes": "Contract wrapped up early",
+                "version": self.engagement.version,
+            },
+        )
+        self.assertEqual(resp_post.status_code, 302)
+
+        self.engagement.refresh_from_db()
+        self.assertEqual(self.engagement.status, Engagement.Status.ENDED)
+        self.assertEqual(self.engagement.end_date, date(2025, 12, 15))
+        self.assertIn("Contract wrapped up early", self.engagement.notes)
+        self.assertEqual(self.engagement.version, 2)
+
+    def test_renew_creates_new_engagement_preserving_old(self):
+        self.client.force_login(self.hrmo_user)
+
+        # GET renew form (pre-filled from self.engagement)
+        resp_get = self.client.get(f"/engagements/{self.engagement.pk}/renew/")
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertContains(resp_get, "Renew / New Appointment")
+        # start_date pre-filled to day after old end_date (2025-12-31 -> 2026-01-01)
+        self.assertContains(resp_get, 'value="2026-01-01"')
+
+        # POST creates new appointment
+        payload = {
+            "office": self.office.pk,
+            "type": Engagement.Type.PLANTILLA,  # Career progression to Plantilla!
+            "position_title": "Administrative Aide IV (Permanent)",
+            "rate": "18000.00",
+            "rate_basis": Engagement.RateBasis.MONTHLY,
+            "start_date": "2026-01-01",
+            "status": Engagement.Status.ACTIVE,
+            "leave_eligible": True,
+            "salary_grade": 4,
+            "step": 1,
+            "item_number": "SP-MO-004",
+        }
+        resp_post = self.client.post(f"/engagements/{self.engagement.pk}/renew/", payload)
+        self.assertEqual(resp_post.status_code, 302)
+
+        # Old engagement remains unchanged
+        self.engagement.refresh_from_db()
+        self.assertEqual(self.engagement.type, Engagement.Type.CASUAL)
+        self.assertEqual(self.engagement.position_title, "Administrative Aide IV")
+
+        # New engagement created
+        new_eng = Engagement.objects.get(item_number="SP-MO-004")
+        self.assertEqual(new_eng.type, Engagement.Type.PLANTILLA)
+        self.assertEqual(new_eng.person, self.person)
+
+    def test_lost_update_protection_on_engagement(self):
+        self.client.force_login(self.hrmo_user)
+
+        self.engagement.version = 2
+        self.engagement.save()
+
+        # Submit with stale version 1
+        payload = {
+            "office": self.office.pk,
+            "type": self.engagement.type,
+            "position_title": "Hacked Title",
+            "start_date": self.engagement.start_date.isoformat(),
+            "status": Engagement.Status.ACTIVE,
+            "version": 1,
+        }
+        resp = self.client.post(f"/engagements/{self.engagement.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+
+        self.engagement.refresh_from_db()
+        self.assertNotEqual(self.engagement.position_title, "Hacked Title")
+
+    def test_pay_rate_fields_stripped_without_view_pay(self):
+        # Regular employee has no view_pay permission
+        form = EngagementForm(user=self.employee, person=self.person)
+        self.assertNotIn("rate", form.fields)
+        self.assertNotIn("rate_basis", form.fields)
+
+        # HRMO staff has view_pay permission
+        hrmo_form = EngagementForm(user=self.hrmo_user, person=self.person)
+        self.assertIn("rate", hrmo_form.fields)
+        self.assertIn("rate_basis", hrmo_form.fields)
 
 
 

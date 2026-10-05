@@ -226,6 +226,10 @@ class Engagement(models.Model):
     )
     notes = models.TextField(blank=True)
 
+    # Concurrency control & audit timestamp (DECISIONS S2)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ["-start_date"]
         permissions = [

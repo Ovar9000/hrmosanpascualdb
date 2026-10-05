@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}End Appointment · {{ engagement.position_title }} · HR Records{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to {{ person.full_name }}</a>
+</div>
+
+<!-- Prototype Warning Banner -->
+<div class="alert alert-warning border-warning shadow-sm mb-4" role="alert">
+  <h6 class="alert-heading mb-1 fw-bold">PROTOTYPE - FAKE DATA ONLY</h6>
+  <p class="mb-0 small">
+    Retiring an appointment updates status to <em>Ended</em>. History is retained for service records and audits.
+  </p>
+</div>
+
+<div class="card shadow-sm border-0 mb-4 col-12 col-lg-8 mx-auto">
+  <div class="card-header bg-white py-3 border-bottom">
+    <h1 class="h4 mb-0 text-danger">End Appointment / Contract</h1>
+  </div>
+
+  <div class="card-body p-4">
+    <div class="mb-4">
+      <h5 class="fw-bold mb-1">{{ person.full_name }}</h5>
+      <div class="text-muted small">Employee No: {{ person.employee_no }}</div>
+    </div>
+
+    <div class="card bg-light border-0 p-3 mb-4">
+      <dl class="row mb-0 small">
+        <dt class="col-sm-4 text-muted">Position</dt>
+        <dd class="col-sm-8 fw-semibold">{{ engagement.position_title }}</dd>
+
+        <dt class="col-sm-4 text-muted">Office / Department</dt>
+        <dd class="col-sm-8">{{ engagement.office.name }}</dd>
+
+        <dt class="col-sm-4 text-muted">Type</dt>
+        <dd class="col-sm-8">{{ engagement.get_type_display }}</dd>
+
+        <dt class="col-sm-4 text-muted">Start Date</dt>
+        <dd class="col-sm-8">{{ engagement.start_date|date:"F d, Y" }}</dd>
+
+        <dt class="col-sm-4 text-muted">Current Status</dt>
+        <dd class="col-sm-8"><span class="badge bg-success">{{ engagement.get_status_display }}</span></dd>
+      </dl>
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger shadow-sm mb-4">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ form.version }}
+
+      <div class="mb-3">
+        <label for="{{ form.end_date.id_for_label }}" class="form-label fw-semibold">
+          Effective End Date <span class="text-danger">*</span>
+        </label>
+        {{ form.end_date }}
+        {% if form.end_date.errors %}
+          <div class="invalid-feedback d-block">{{ form.end_date.errors|first }}</div>
+        {% endif %}
+      </div>
+
+      <div class="mb-4">
+        <label for="{{ form.notes.id_for_label }}" class="form-label fw-semibold">
+          Reason / End Remarks (optional)
+        </label>
+        {{ form.notes }}
+        <div class="form-text">e.g. Contract completed, term expired, transition to new appointment.</div>
+        {% if form.notes.errors %}
+          <div class="invalid-feedback d-block">{{ form.notes.errors|first }}</div>
+        {% endif %}
+      </div>
+
+      <div class="d-flex justify-content-end gap-2 pt-3 border-top">
+        <a href="{% url 'person_detail' person.pk %}" class="btn btn-outline-secondary">Cancel</a>
+        <button type="submit" class="btn btn-danger px-4">
+          Confirm End Engagement
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
