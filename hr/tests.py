@@ -2412,3 +2412,35 @@ class MustChangePasswordTestCase(TestCase):
         resp = self.client.get("/people/")
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp["Location"].startswith("/accounts/login/"))
+
+
+class FakeIdGuardTestCase(TestCase):
+    """B3: PROTOTYPE_FAKE_DATA_ONLY=0 only skips the form check; the DB constraint still rejects real IDs."""
+
+    def setUp(self):
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="fake_id_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+    def test_every_id_field_has_a_fake_only_db_constraint(self):
+        from hr.models import FAKE_ID_FIELDS
+
+        names = {c.name for c in Person._meta.constraints}
+        for f in FAKE_ID_FIELDS:
+            self.assertIn(f"person_{f}_fake_only", names)
+
+    def test_flag_off_still_rejects_real_ids_in_form_and_database(self):
+        from django.test import override_settings
+
+        data = {"last_name": "Real", "first_name": "Id", "birthdate": "1990-01-01", "tin": "123-456-789-000"}
+        with override_settings(PROTOTYPE_FAKE_DATA_ONLY=False):
+            form = PersonForm(data=data, user=self.hrmo_user)
+            self.assertFalse(form.is_valid())
+            self.assertIn("must start with 00", str(form.errors))
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Person.objects.create(
+                employee_no="SP-99999", last_name="Real", first_name="Id",
+                birthdate=date(1990, 1, 1), tin="123-456-789-000",
+            )

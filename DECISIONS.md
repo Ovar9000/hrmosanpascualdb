@@ -43,7 +43,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 | # | Decision | Survey? |
 |---|---|---|
-| D1 | Fake data only. Fake IDs always start with zeros (TIN `000-000-000-000`, SSS `00-0000000-0`, etc.). | No |
+| D1 | Fake data only. Fake IDs always start with zeros (TIN `000-000-000-000`, SSS `00-0000000-0`, etc.). Enforced in two places: a database `CheckConstraint` per ID field (`person_<field>_fake_only`, regex `^00[0-9-]*$`) and a form check controlled by `PROTOTYPE_FAKE_DATA_ONLY`. The flag only switches off the form check; the database constraint stays until a migration removes it (see Go-Live Checklist item 1). *Enforced; proven by* `FakeIdGuardTestCase` and `Step6APersonEntryTestCase.test_prototype_fake_id_rule`. | No |
 | D2 | Payroll computation is out of scope. Only payroll *inputs* (rate, salary grade, step, basis) are stored. | No |
 | D3 | Lists of options (engagement types, statuses, leave types, document types) are defined in code TextChoices. | Maybe |
 | D4 | One `Person` row per human, ever. Each appointment or contract is a separate `Engagement`, so history is kept, not overwritten (e.g. JO → Casual → Plantilla). | No |
@@ -156,10 +156,14 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 The system currently runs in a prototype profile with synthetic test data. Prior to processing genuine municipal personnel data, all items on this checklist must be verified and implemented:
 
-1. **PROTOTYPE_FAKE_DATA_ONLY Flag (Decision S1):**
-   - Set `PROTOTYPE_FAKE_DATA_ONLY=0` in `.env`.
-   - Disables the prototype banner and removes the test-mode requirement where government ID numbers must begin with `00-`.
-   - Validates authentic Philippine government IDs (TIN 9/12 digits, GSIS 11 digits, PhilHealth 12 digits, SSS 10 digits, Pag-IBIG 12 digits).
+1. **Fake-ID guard removal (Decision D1). Requires DPO approval.**
+   - What exists today: each government ID field has a database `CheckConstraint` (`person_<field>_fake_only`) that only accepts values starting with `00`, plus a form check controlled by `PROTOTYPE_FAKE_DATA_ONLY`.
+   - Setting `PROTOTYPE_FAKE_DATA_ONLY=0` **only skips the form check**. The database constraint still rejects every real ID, in the web form, in the admin, and in any import (`FakeIdGuardTestCase`). The flag does not change the "Prototype · fake data only" banner, which is hard-coded in the templates.
+   - **No real-ID format validation exists yet.** Before go-live, all of the following are required, in this order:
+     1. Written DPO approval to load real government ID numbers.
+     2. Real-ID format validation (e.g. TIN 9 or 12 digits, GSIS, PhilHealth, SSS, Pag-IBIG formats), written and tested.
+     3. A deliberate migration that removes the five `person_*_fake_only` constraints, reviewed and applied on purpose. Do not try to bypass the constraints with an environment flag.
+     4. Remove the prototype banners from the templates.
 
 2. **Django DEBUG Mode:**
    - Set `DJANGO_DEBUG=0` in `.env`.

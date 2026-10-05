@@ -54,7 +54,8 @@ class Office(models.Model):
 # --- People ------------------------------------------------------------------
 
 # Prototype guard (DECISIONS D1): government ID fields only accept obviously fake
-# values starting with "00". Remove these constraints before go-live.
+# values starting with "00". PROTOTYPE_FAKE_DATA_ONLY does not affect these DB
+# constraints; removing them needs a deliberate migration (Go-Live Checklist item 1).
 FAKE_ID_FIELDS = ["tin", "gsis_no", "philhealth_no", "pagibig_no", "sss_no"]
 FAKE_ID_REGEX = r"^00[0-9-]*$"
 

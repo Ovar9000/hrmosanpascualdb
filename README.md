@@ -5,6 +5,12 @@ HR records system prototype for the Municipal Human Resource Management Office
 
 > **Fake data only.** Never load real personal data into this prototype. Fake ID
 > numbers always start with zeros (e.g. `00-0000000-0`).
+>
+> This is enforced by database constraints, not just the form. Setting
+> `PROTOTYPE_FAKE_DATA_ONLY=0` only turns off the form check; the database still
+> rejects every ID that doesn't start with `00`. Accepting real IDs needs DPO
+> approval, real-ID format validation, and a deliberate migration that removes the
+> constraints. See item 1 of the Go-Live Checklist in `DECISIONS.md`.
 
 Stack: Django 5.2 LTS · PostgreSQL 17 · Bootstrap 5 (stored in the repo, no CDN) · Docker Compose · openpyxl.
 

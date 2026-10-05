@@ -53,7 +53,8 @@ MIDDLEWARE = [
 # Trusted reverse proxies for client IP extraction from X-Forwarded-For (DECISIONS U5)
 TRUSTED_PROXIES = env_list("TRUSTED_PROXIES", "127.0.0.1,::1")
 
-# Prototype data guard (DECISIONS D1): Enforce fake ID numbers starting with 00
+# Prototype data guard (DECISIONS D1): form-level check that ID numbers start with 00.
+# Turning this off does NOT allow real IDs: the person_*_fake_only DB constraints remain.
 PROTOTYPE_FAKE_DATA_ONLY = env_bool("PROTOTYPE_FAKE_DATA_ONLY", "1")
 
 # Employee age constraints (DECISIONS A3)
