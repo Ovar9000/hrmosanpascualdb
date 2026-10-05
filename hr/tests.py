@@ -2181,26 +2181,28 @@ class AuditHardeningTestCase(TestCase):
 
     def test_audit_list_chain_consistent_badge_without_anchor(self):
         self.client.force_login(self.auditor_user)
+        self.client.post("/audit/reverify/")
         resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.context["chain_verified"])
-        self.assertFalse(resp.context["anchor_verified"])
+        self.assertTrue(resp.context["verification"].is_valid)
+        self.assertEqual(resp.context["verification"].anchor_status, "none")
         # Badge must display "Chain consistent" and NOT "tamper-evident"
         self.assertContains(resp, "Chain consistent")
         self.assertNotContains(resp, "tamper-evident")
-        # Must include "Re-verify all" link
+        # Must include the "Re-verify all" form
         self.assertContains(resp, "Re-verify all")
-        self.assertContains(resp, "reverify=1")
+        self.assertContains(resp, 'action="/audit/reverify/"')
 
     def test_audit_list_tamper_evident_badge_with_anchor(self):
         latest = AuditLog.objects.order_by("-id").first()
         valid_anchor = f"{latest.id}:{latest.row_hash}"
 
         self.client.force_login(self.auditor_user)
-        resp = self.client.get(f"/audit/?anchor={valid_anchor}")
+        self.client.post("/audit/reverify/", {"anchor": valid_anchor})
+        resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.context["chain_verified"])
-        self.assertTrue(resp.context["anchor_verified"])
+        self.assertTrue(resp.context["verification"].is_valid)
+        self.assertEqual(resp.context["verification"].anchor_status, "verified")
         # With anchor verified, it displays "tamper-evident"
         self.assertContains(resp, "Anchor verified")
         self.assertContains(resp, "tamper-evident")
@@ -2219,9 +2221,10 @@ class AuditHardeningTestCase(TestCase):
         bad_entry.save()
 
         self.client.force_login(self.auditor_user)
-        resp = self.client.get("/audit/?reverify=1")
+        self.client.post("/audit/reverify/")
+        resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.context["chain_verified"])
+        self.assertFalse(resp.context["verification"].is_valid)
         self.assertContains(resp, "Chain verification unconfirmed")
         self.assertNotContains(resp, "tamper-evident")
 
@@ -2310,30 +2313,6 @@ class AuditHardeningTestCase(TestCase):
         with self.assertRaises(CommandError) as ctx_mismatch:
             call_command("verify_audit_chain", f"--anchor={wrong_anchor}")
         self.assertIn("Anchor hash mismatch", str(ctx_mismatch.exception))
-
-    def test_incremental_and_cached_verification(self):
-        from hr.audit import CACHE_KEY_AUDIT_CHAIN
-        from django.core.cache import cache
-
-        # Clear cache and run full verification
-        cache.delete(CACHE_KEY_AUDIT_CHAIN)
-        res1 = verify_chain(reverify=True)
-        self.assertTrue(res1.is_valid)
-        cached_data = cache.get(CACHE_KEY_AUDIT_CHAIN)
-        self.assertIsNotNone(cached_data)
-        self.assertEqual(cached_data["last_verified_id"], AuditLog.objects.order_by("-id").first().pk)
-
-        # Append a new record and test incremental verification
-        new_entry = log_audit_event(
-            action=AuditLog.Action.CREATE,
-            model_name="IncrementalTest",
-            object_id="555",
-        )
-        res2 = verify_chain(reverify=False)
-        self.assertTrue(res2.is_valid)
-        self.assertEqual(res2.count, res1.count + 1)
-        cached_updated = cache.get(CACHE_KEY_AUDIT_CHAIN)
-        self.assertEqual(cached_updated["last_verified_id"], new_entry.pk)
 
 
 class MustChangePasswordTestCase(TestCase):
@@ -2444,3 +2423,181 @@ class FakeIdGuardTestCase(TestCase):
                 employee_no="SP-99999", last_name="Real", first_name="Id",
                 birthdate=date(1990, 1, 1), tin="123-456-789-000",
             )
+
+
+class AuditVerificationStatusTestCase(TestCase):
+    """B1 + B7: /audit/ shows the stored result of the last full scan and never verifies on page load."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor = User.objects.create_user(username="verify_auditor", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+        self.hrmo = User.objects.create_user(username="verify_hrmo", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        log_audit_event(action=AuditLog.Action.CREATE, model_name="VerifyTest", object_id="1")
+
+    def _status(self):
+        from hr.models import AuditChainStatus
+
+        return AuditChainStatus.objects.filter(pk=1).first()
+
+    def _verify_log_count(self):
+        return AuditLog.objects.filter(action="verify_chain").count()
+
+    def _age_status(self, seconds=61):
+        from datetime import timedelta
+        from hr.models import AuditChainStatus
+
+        AuditChainStatus.objects.filter(pk=1).update(
+            verified_at=self._status().verified_at - timedelta(seconds=seconds)
+        )
+
+    def test_page_load_never_runs_the_hash_scan(self):
+        from unittest import mock
+
+        self.client.force_login(self.auditor)
+        real = AuditLog.calculate_row_hash
+        with mock.patch.object(AuditLog, "calculate_row_hash", autospec=True, side_effect=real) as spy:
+            self.assertEqual(self.client.get("/audit/").status_code, 200)
+            self.assertEqual(self.client.get("/audit/?reverify=1").status_code, 200)
+        self.assertEqual(spy.call_count, 0)
+
+    def test_stale_cached_checkpoint_does_not_crash(self):
+        """Old code raised UnboundLocalError when the cached checkpoint row no longer matched."""
+        from django.core.cache import cache
+
+        cache.set(
+            "audit_chain_verification_state",
+            {"is_valid": True, "last_verified_id": 999999, "last_verified_hash": "f" * 64, "count": 3},
+        )
+        is_valid, count, error_msg, broken_id = verify_chain()
+        self.assertTrue(is_valid, error_msg)
+        self.assertEqual(count, AuditLog.objects.count())
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/").status_code, 200)
+
+    def test_missing_result_shows_not_verified_yet(self):
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context["verification"])
+        self.assertContains(resp, "Not verified yet")
+        self.assertNotContains(resp, "tamper-evident")
+
+    def test_stale_result_shows_timestamp_and_unverified_newer_entries(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from hr.models import AuditChainStatus
+
+        AuditChainStatus.objects.create(
+            pk=1,
+            verified_at=timezone.now() - timedelta(days=3),
+            is_valid=True,
+            record_count=1,
+            last_record_id=1,
+            source="command",
+        )
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Last verified")
+        self.assertGreater(resp.context["entries_since"], 0)
+
+        # A result pointing past the end of the table (e.g. after a restore) must not crash either.
+        AuditChainStatus.objects.filter(pk=1).update(last_record_id=10**9)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["entries_since"], 0)
+
+    def test_reverify_runs_full_scan_stores_result_and_is_logged(self):
+        self.client.force_login(self.auditor)
+        rows_before = AuditLog.objects.count()
+        resp = self.client.post("/audit/reverify/")
+        self.assertRedirects(resp, "/audit/", fetch_redirect_response=False)
+
+        status = self._status()
+        self.assertTrue(status.is_valid)
+        self.assertEqual(status.record_count, rows_before)
+        self.assertEqual(status.source, "web")
+        self.assertEqual(status.verified_by, "verify_auditor")
+        self.assertEqual(status.anchor_status, "none")
+        log = AuditLog.objects.get(action="verify_chain")
+        self.assertEqual(log.username, "verify_auditor")
+        self.assertEqual(log.changes["is_valid"], True)
+
+        page = self.client.get("/audit/")
+        self.assertContains(page, "Chain consistent")
+        self.assertNotContains(page, "tamper-evident")
+
+    def test_reverify_limited_to_once_per_minute(self):
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/")
+        resp = self.client.post("/audit/reverify/", follow=True)
+        self.assertContains(resp, "once per minute")
+        self.assertEqual(self._verify_log_count(), 1)
+
+        self._age_status()
+        self.client.post("/audit/reverify/")
+        self.assertEqual(self._verify_log_count(), 2)
+
+    def test_reverify_with_valid_and_wrong_anchor(self):
+        latest = AuditLog.objects.order_by("-id").first()
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/", {"anchor": f"{latest.id}:{latest.row_hash}"})
+        self.assertEqual(self._status().anchor_status, "verified")
+        self.assertContains(self.client.get("/audit/"), "tamper-evident")
+
+        self._age_status()
+        self.client.post("/audit/reverify/", {"anchor": f"{latest.id}:" + "0" * 64})
+        status = self._status()
+        self.assertFalse(status.is_valid)
+        self.assertEqual(status.anchor_status, "not_verified")
+        page = self.client.get("/audit/")
+        self.assertContains(page, "Chain verification unconfirmed")
+        self.assertNotContains(page, "tamper-evident")
+
+    def test_broken_chain_is_stored_as_broken(self):
+        from django.utils import timezone
+
+        bad = AuditLog(
+            timestamp=timezone.now(),
+            action=AuditLog.Action.CREATE,
+            model_name="Broken",
+            prev_hash="bad_prev",
+            row_hash="bad_row",
+        )
+        bad.save()
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/")
+        status = self._status()
+        self.assertFalse(status.is_valid)
+        self.assertEqual(status.broken_id, bad.pk)
+        self.assertContains(self.client.get("/audit/"), "Chain verification unconfirmed")
+
+    def test_reverify_requires_auditor_and_post(self):
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.post("/audit/reverify/").status_code, 403)
+        self.assertIsNone(self._status())
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/reverify/").status_code, 405)
+        self.assertIsNone(self._status())
+
+    def test_management_command_stores_result(self):
+        from io import StringIO
+        from django.utils import timezone
+
+        call_command("verify_audit_chain", stdout=StringIO())
+        status = self._status()
+        self.assertTrue(status.is_valid)
+        self.assertEqual(status.source, "command")
+        self.assertEqual(status.record_count, AuditLog.objects.count())
+
+        AuditLog(timestamp=timezone.now(), action=AuditLog.Action.CREATE, prev_hash="x", row_hash="y").save()
+        with self.assertRaises(CommandError):
+            call_command("verify_audit_chain", stdout=StringIO(), stderr=StringIO())
+        self.assertFalse(self._status().is_valid)

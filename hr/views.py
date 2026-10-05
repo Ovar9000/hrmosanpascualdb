@@ -12,7 +12,9 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
-from .audit import log_audit_event, verify_chain
+from django.utils import timezone
+from django.views.decorators.http import require_POST
+from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     DocumentEditForm,
     DocumentForm,
@@ -22,7 +24,17 @@ from .forms import (
     PersonForm,
     sanitize_filename,
 )
-from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person, UserProfile
+from .models import (
+    AuditChainStatus,
+    AuditLog,
+    Document,
+    Engagement,
+    LeaveCredit,
+    LeaveType,
+    Office,
+    Person,
+    UserProfile,
+)
 from .permissions import (
     can_manage_hr_records,
     can_view_document_content,
@@ -758,15 +770,11 @@ def audit_list(request):
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
-    reverify = request.GET.get("reverify") == "1"
-    anchor = request.GET.get("anchor") or getattr(settings, "AUDIT_ANCHOR", None)
-
-    res = verify_chain(anchor=anchor, reverify=reverify)
-    chain_verified = res.is_valid
-    verified_count = res.count
-    chain_error = res.error_msg
-    broken_id = res.broken_id
-    anchor_verified = getattr(res, "anchor_verified", False)
+    # Show the stored result of the last full scan; never verify the chain on page load.
+    verification = AuditChainStatus.objects.filter(pk=1).first()
+    entries_since = 0
+    if verification:
+        entries_since = AuditLog.objects.filter(id__gt=verification.last_record_id or 0).count()
 
     return render(
         request,
@@ -779,14 +787,57 @@ def audit_list(request):
             "start_date": start_date,
             "end_date": end_date,
             "actions": AuditLog.Action.choices,
-            "chain_verified": chain_verified,
-            "verified_count": verified_count,
-            "chain_error": chain_error,
-            "broken_id": broken_id,
-            "anchor_verified": anchor_verified,
-            "anchor": anchor or "",
+            "verification": verification,
+            "entries_since": entries_since,
+            "default_anchor": getattr(settings, "AUDIT_ANCHOR", None) or "",
         },
     )
+
+
+REVERIFY_MIN_INTERVAL = timedelta(minutes=1)
+
+
+@login_required
+@require_POST
+def audit_reverify(request):
+    """Auditor-triggered full hash-chain scan, at most once per minute, logged in the audit trail."""
+    if not (request.user.is_superuser or is_auditor(request.user) or request.user.has_perm("hr.view_audit_log")):
+        return HttpResponseForbidden("You do not have permission to verify the audit log.")
+
+    anchor = request.POST.get("anchor", "").strip() or getattr(settings, "AUDIT_ANCHOR", None)
+
+    with transaction.atomic():
+        # Row lock serializes concurrent clicks so the rate limit cannot be raced.
+        last = AuditChainStatus.objects.select_for_update().filter(pk=1).first()
+        if last and timezone.now() - last.verified_at < REVERIFY_MIN_INTERVAL:
+            messages.warning(
+                request,
+                "The audit chain can be re-verified at most once per minute. "
+                f"It was last verified at {timezone.localtime(last.verified_at):%Y-%m-%d %H:%M:%S}.",
+            )
+            return redirect("audit_list")
+
+        result = run_and_record_verification(
+            anchor=anchor, source="web", username=request.user.get_username()
+        )
+        log_audit_event(
+            action=AuditLog.Action.VERIFY_CHAIN,
+            model_name="AuditLog",
+            object_repr="Re-verify all (full hash-chain scan)",
+            changes={
+                "is_valid": result.is_valid,
+                "record_count": result.count,
+                "broken_id": result.broken_id,
+                "anchor_verified": result.anchor_verified,
+            },
+            request=request,
+        )
+
+    if result.is_valid:
+        messages.success(request, f"Audit chain verified: {result.count} record(s) intact.")
+    else:
+        messages.error(request, f"Audit chain verification failed: {result.error_msg}")
+    return redirect("audit_list")
 
 
 @login_required

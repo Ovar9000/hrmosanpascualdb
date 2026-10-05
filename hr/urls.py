@@ -18,6 +18,7 @@ urlpatterns = [
     path("documents/<int:pk>/replace/", views.document_replace, name="document_replace"),
     path("documents/<int:pk>/download/", views.document_download, name="document_download"),
     path("audit/", views.audit_list, name="audit_list"),
+    path("audit/reverify/", views.audit_reverify, name="audit_reverify"),
     path("audit/export/csv/", views.audit_export_csv, name="audit_export_csv"),
 ]
 

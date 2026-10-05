@@ -574,6 +574,7 @@ class AuditLog(models.Model):
         PASSWORD_RESET = "password_reset", "Password Reset"
         GROUP_CHANGE = "group_change", "Group Change"
         PERMISSION_DENIED = "permission_denied", "Permission Denied (403)"
+        VERIFY_CHAIN = "verify_chain", "Audit Chain Verification"
 
     timestamp = models.DateTimeField(default=timezone.now, db_index=True)
     action = models.CharField(max_length=30, choices=Action.choices, db_index=True)
@@ -641,3 +642,33 @@ class AuditLog(models.Model):
         payload = "|".join(parts)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+
+class AuditChainStatus(models.Model):
+    """Result of the most recent full audit hash-chain verification (a single row, pk=1).
+
+    Written by the verify_audit_chain command and by the rate-limited "Re-verify all"
+    action on /audit/, so the page can show the last result without scanning the chain.
+    Not itself audited; each web re-verification is logged as AuditLog.Action.VERIFY_CHAIN.
+    """
+
+    class AnchorStatus(models.TextChoices):
+        NONE = "none", "No anchor supplied"
+        VERIFIED = "verified", "Anchor verified"
+        NOT_VERIFIED = "not_verified", "Anchor not verified"
+
+    verified_at = models.DateTimeField()
+    is_valid = models.BooleanField()
+    record_count = models.PositiveIntegerField()
+    last_record_id = models.IntegerField(null=True, blank=True)
+    broken_id = models.IntegerField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    anchor = models.CharField(max_length=100, blank=True)
+    anchor_status = models.CharField(max_length=20, choices=AnchorStatus.choices, default=AnchorStatus.NONE)
+    source = models.CharField(max_length=20, help_text="'command' or 'web'")
+    verified_by = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        verbose_name_plural = "audit chain status"
+
+    def __str__(self):
+        return f"{'OK' if self.is_valid else 'BROKEN'} at {self.verified_at:%Y-%m-%d %H:%M:%S} ({self.record_count} records)"
