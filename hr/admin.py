@@ -15,15 +15,8 @@ from .models import (
     UserProfile,
 )
 
+from .accounts import require_password_change
 from .permissions import PROTECTED_ROLES
-
-
-def require_password_change(user):
-    """Flags an account so its next login must set a new password (DECISIONS A1)."""
-    profile, _ = UserProfile.objects.get_or_create(user=user)
-    if not profile.must_change_password:
-        profile.must_change_password = True
-        profile.save()
 
 
 class CustomUserAdmin(BaseUserAdmin):

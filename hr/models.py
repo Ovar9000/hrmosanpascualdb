@@ -531,6 +531,11 @@ class UserProfile(models.Model):
         default=False,
         help_text="If True, user must change password upon login (DECISIONS A1).",
     )
+    password_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When an unused one-time password stops working (DECISIONS A4).",
+    )
 
     def __str__(self):
         return f"Profile of {self.user.username}"

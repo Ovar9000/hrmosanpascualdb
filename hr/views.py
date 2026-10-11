@@ -69,6 +69,7 @@ class PasswordChangeView(auth_views.PasswordChangeView):
         profile = UserProfile.objects.filter(user=self.request.user, must_change_password=True).first()
         if profile:
             profile.must_change_password = False
+            profile.password_expires_at = None
             profile.save()
         return response
 

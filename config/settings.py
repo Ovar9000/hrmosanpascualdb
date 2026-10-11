@@ -109,8 +109,12 @@ AUTH_PASSWORD_VALIDATORS = [
 # Axes first so locked-out users are rejected before the password is even checked.
 AUTHENTICATION_BACKENDS = [
     "axes.backends.AxesStandaloneBackend",
-    "django.contrib.auth.backends.ModelBackend",
+    # ModelBackend that also refuses expired one-time passwords (DECISIONS A4).
+    "hr.backends.OneTimePasswordBackend",
 ]
+
+# Days an unused one-time password stays valid (provision_accounts, admin resets).
+ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

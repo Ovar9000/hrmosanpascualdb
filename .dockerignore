@@ -9,3 +9,4 @@ staticfiles
 *.xlsx
 *.xls
 *.csv
+account_slips*.html

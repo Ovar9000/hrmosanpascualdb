@@ -52,6 +52,7 @@ docker compose run --rm manage python manage.py createsuperuser
 | Start / stop | `docker compose up` / `docker compose down` |
 | Run tests | `docker compose run --rm manage python manage.py test` |
 | Any management command | `docker compose run --rm manage python manage.py <command>` |
+| Create employee accounts (preview first) | `docker compose run --rm manage python manage.py provision_accounts --dry-run` |
 | Django deploy checklist | `docker compose run --rm manage python manage.py check --deploy` |
 | Wipe the database (fake data only!) | `docker compose down -v` |
 

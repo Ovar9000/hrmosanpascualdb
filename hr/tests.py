@@ -3268,3 +3268,253 @@ class ProjectManagementTestCase(TestCase):
         too_early = self.client.post(url, self._contract_payload(start_date="2025-12-01"))
         self.assertContains(too_early, "cannot start before the project")
         self.assertFalse(Engagement.objects.filter(person=self.person).exists())
+
+
+class ProvisionAccountsTestCase(TestCase):
+    """A1/A4/D9: bulk employee accounts with expiring one-time passwords and no roles."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        self.mto = Office.objects.get(acronym="MTO")
+        self.hrmo_office = Office.objects.get(acronym="HRMO")
+        self.active_mto = self._person("SP-00011", "Aquino", self.mto)
+        self.active_hrmo = self._person("SP-00012", "Bautista", self.hrmo_office)
+        self.ended_only = self._person("SP-00013", "Cruz", self.mto, status=Engagement.Status.ENDED)
+        self.linked = self._person("SP-00014", "Diaz", self.mto)
+        linked_user = get_user_model().objects.create_user("SP-00014", password="Existing-Pass-91")
+        UserProfile.objects.create(user=linked_user, person=self.linked)
+        self.conflict = self._person("SP-00015", "Estrada", self.mto)
+        get_user_model().objects.create_user("SP-00015", password="Someone-Else-91")  # not linked
+
+    def _person(self, emp_no, last_name, office, status=Engagement.Status.ACTIVE):
+        person = Person.objects.create(
+            employee_no=emp_no, last_name=last_name, first_name="Test", birthdate=date(1990, 1, 1)
+        )
+        Engagement.objects.create(
+            person=person, office=office, type=Engagement.Type.JOB_ORDER, position_title="Clerk",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31) if status != Engagement.Status.ACTIVE else None,
+            status=status,
+        )
+        return person
+
+    def _provision(self, *args):
+        from io import StringIO
+
+        out = StringIO()
+        call_command("provision_accounts", *args, stdout=out)
+        text = out.getvalue()
+        import re
+
+        passwords = dict(re.findall(r"^(SP-\d{5})\s+.*\s(\S+)$", text, flags=re.M))
+        return text, passwords
+
+    def test_dry_run_creates_nothing(self):
+        text, _ = self._provision("--dry-run")
+        self.assertIn("2 account(s) to create", text)
+        self.assertIn("Skipped SP-00015", text)
+        self.assertFalse(get_user_model().objects.filter(username__in=["SP-00011", "SP-00012"]).exists())
+
+    def test_creates_accounts_only_for_active_unlinked_people(self):
+        _, passwords = self._provision()
+        self.assertEqual(set(passwords), {"SP-00011", "SP-00012"})
+        User = get_user_model()
+        self.assertFalse(User.objects.filter(username="SP-00013").exists())  # no active appointment
+        self.assertFalse(UserProfile.objects.filter(person=self.conflict).exists())  # conflict untouched
+        self.assertTrue(User.objects.get(username="SP-00014").check_password("Existing-Pass-91"))
+
+    def test_office_filter(self):
+        _, passwords = self._provision("--office", "mto")
+        self.assertEqual(set(passwords), {"SP-00011"})
+
+    def test_provisioned_account_is_a_plain_employee_account(self):
+        from django.utils import timezone
+        from hr.permissions import can_view_ids, get_visible_people
+
+        _, passwords = self._provision()
+        user = get_user_model().objects.get(username="SP-00011")
+        self.assertTrue(user.check_password(passwords["SP-00011"]))
+        self.assertFalse(user.is_superuser)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.groups.exists())
+        self.assertEqual(user.get_all_permissions(), set())
+        self.assertEqual(list(get_visible_people(user)), [self.active_mto])
+        self.assertTrue(can_view_ids(user, self.active_mto))
+        self.assertFalse(can_view_ids(user, self.active_hrmo))
+        profile = user.profile
+        self.assertTrue(profile.must_change_password)
+        remaining = profile.password_expires_at - timezone.now()
+        self.assertGreater(remaining.days, 12)
+        self.assertLessEqual(remaining.days, 14)
+
+    def test_first_login_forces_password_change_and_clears_expiry(self):
+        _, passwords = self._provision()
+        resp = self.client.post("/accounts/login/", {"username": "SP-00011", "password": passwords["SP-00011"]})
+        self.assertEqual(resp.status_code, 302)
+        self.assertRedirects(self.client.get(f"/people/{self.active_mto.pk}/"), "/accounts/password/")
+        new_pw = "My-Own-Strong-Pass-2026"
+        resp = self.client.post("/accounts/password/", {
+            "old_password": passwords["SP-00011"], "new_password1": new_pw, "new_password2": new_pw,
+        })
+        self.assertEqual(resp.status_code, 302)
+        profile = UserProfile.objects.get(user__username="SP-00011")
+        self.assertFalse(profile.must_change_password)
+        self.assertIsNone(profile.password_expires_at)
+        self.assertEqual(self.client.get(f"/people/{self.active_mto.pk}/").status_code, 200)
+
+    def test_expired_one_time_password_is_refused(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        _, passwords = self._provision()
+        UserProfile.objects.filter(user__username="SP-00011").update(
+            password_expires_at=timezone.now() - timedelta(minutes=1)
+        )
+        resp = self.client.post("/accounts/login/", {"username": "SP-00011", "password": passwords["SP-00011"]})
+        self.assertEqual(resp.status_code, 200)  # login form again, generic error
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_passwords_never_reach_the_audit_log(self):
+        _, passwords = self._provision()
+        created = AuditLog.objects.filter(action=AuditLog.Action.CREATE, model_name="User",
+                                          object_repr__in=["SP-00011", "SP-00012"])
+        self.assertEqual(created.count(), 2)
+        for row in AuditLog.objects.all():
+            for password in passwords.values():
+                self.assertNotIn(password, f"{row.object_repr} {row.changes}")
+        self.assertEqual(created.first().changes["password"], "[REDACTED]")
+        self.assertTrue(verify_chain().is_valid)
+
+    def test_slips_page_lists_each_account(self):
+        import os
+        import tempfile
+
+        path = os.path.join(tempfile.mkdtemp(), "account_slips_test.html")
+        _, passwords = self._provision("--slips", path)
+        page = open(path, encoding="utf-8").read()
+        for emp_no, password in passwords.items():
+            self.assertIn(emp_no, page)
+            self.assertIn(password, page)
+        os.remove(path)
+
+    def test_admin_reset_password_also_expires(self):
+        from hr.accounts import require_password_change
+
+        user = get_user_model().objects.create_user("reset_me", password="Old-Pass-2026x")
+        profile = require_password_change(user)
+        self.assertTrue(profile.must_change_password)
+        self.assertIsNotNone(profile.password_expires_at)
+
+    def test_one_time_passwords_avoid_look_alike_characters(self):
+        from hr.accounts import generate_one_time_password
+
+        for _ in range(200):
+            pwd = generate_one_time_password()
+            self.assertEqual(len(pwd), 12)
+            self.assertFalse(set(pwd) & set("0O1lI"))
+
+
+class TamperingTestCase(TestCase):
+    """Inspect-element and forged-request attacks: the server must ignore or refuse them all.
+
+    Each test sends what a user could produce by editing the page in the browser's developer
+    tools (or replaying it with curl/Burp): extra fields, removed fields, other people's IDs,
+    pages their role never shows, or a changed redirect.
+    """
+
+    setUp = Step4CSecurityAndRolesTestCase.setUp
+
+    def _person_payload(self, **extra):
+        payload = {
+            "last_name": "Rizal", "first_name": "Jose", "birthdate": "1980-06-19",
+            "tin": "000-111-222-000", "version": Person.objects.get(pk=self.person_a.pk).version,
+        }
+        payload.update(extra)
+        return payload
+
+    def _engagement_payload(self, **extra):
+        payload = {
+            "office": self.office_a.pk, "type": Engagement.Type.PLANTILLA, "position_title": "Executive Assistant IV",
+            "rate": "50000.00", "rate_basis": Engagement.RateBasis.MONTHLY, "start_date": "2025-01-01",
+            "status": Engagement.Status.ACTIVE, "salary_grade": 22, "step": 1, "item_number": "SP-MO-001",
+            "version": Engagement.objects.get(pk=self.eng_a.pk).version,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_extra_field_cannot_change_employee_number(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/people/{self.person_a.pk}/edit/", self._person_payload(employee_no="SP-99999"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Person.objects.get(pk=self.person_a.pk).employee_no, "SP-00101")
+
+    def test_extra_field_cannot_move_engagement_to_another_person(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/engagements/{self.eng_a.pk}/edit/", self._engagement_payload(person=self.person_b.pk))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).person_id, self.person_a.pk)
+
+    def test_fields_hidden_from_a_role_are_ignored_when_posted_anyway(self):
+        # A records clerk with manage_hr_records but no view_pay / view_ids: the rate and ID
+        # inputs are not on their page, so they add them back with developer tools.
+        from django.contrib.auth.models import Permission
+
+        clerk = get_user_model().objects.create_user("records_clerk", password="Password123!")
+        clerk.user_permissions.add(Permission.objects.get(codename="manage_hr_records"))
+        self.client.force_login(clerk)
+
+        payload = self._engagement_payload(rate="999999.00")
+        payload.pop("rate_basis")
+        self.assertEqual(self.client.post(f"/engagements/{self.eng_a.pk}/edit/", payload).status_code, 302)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).rate, Decimal("50000.00"))
+
+        resp = self.client.post(f"/people/{self.person_a.pk}/edit/", self._person_payload(tin="00-TAMPERED"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Person.objects.get(pk=self.person_a.pk).tin, "000-111-222-000")
+
+    def test_guessing_other_ids_is_refused(self):
+        doc_b = Document.objects.create(person=self.person_b, doc_type=Document.Type.PDS)
+        self.client.force_login(self.emp_a_user)
+        self.assertEqual(self.client.get(f"/people/{self.person_b.pk}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/documents/{doc_b.pk}/download/").status_code, 403)
+        self.client.force_login(self.head_a)
+        resp = self.client.get(f"/people/?office={self.office_b.pk}")
+        self.assertNotContains(resp, self.person_b.last_name)
+        self.assertEqual(self.client.get(f"/offices/{self.office_b.pk}/").status_code, 404)
+
+    def test_pages_a_role_never_sees_are_refused(self):
+        self.client.force_login(self.emp_a_user)
+        for url in ("/people/new/", f"/people/{self.person_a.pk}/edit/", f"/engagements/{self.eng_a.pk}/end/",
+                    "/projects/new/", "/audit/", "/audit/export/csv/"):
+            self.assertEqual(self.client.post(url, {}).status_code, 403, url)
+        self.client.force_login(self.staff_a)
+        resp = self.client.post(f"/engagements/{self.eng_a.pk}/end/", {"end_date": "2026-01-31", "version": 1})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).status, Engagement.Status.ACTIVE)
+
+    def test_sysadmin_cannot_tick_is_superuser(self):
+        target = get_user_model().objects.create_user("plain_clerk", password="Password123!")
+        self.client.force_login(self.sysadmin)
+        resp = self.client.post(f"/admin/auth/user/{target.pk}/change/", {
+            "username": "plain_clerk", "first_name": "", "last_name": "", "email": "",
+            "is_active": "on", "is_superuser": "on",
+            "date_joined_0": "2026-10-11", "date_joined_1": "09:00:00",
+            "last_login_0": "", "last_login_1": "", "_save": "Save",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(get_user_model().objects.get(pk=target.pk).is_superuser)
+
+    def test_cross_site_post_without_csrf_token_is_refused(self):
+        from django.test import Client
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.hrmo_user)
+        resp = client.post("/people/new/", {"last_name": "X", "first_name": "Y", "birthdate": "1990-01-01"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_login_redirect_cannot_point_off_site(self):
+        resp = self.client.post("/accounts/login/?next=https://evil.example/", {
+            "username": "hrmo", "password": "hrmopass123", "next": "https://evil.example/",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(resp.url.startswith("https://evil.example"))
