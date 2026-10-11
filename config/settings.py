@@ -118,9 +118,10 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_RESET_ON_SUCCESS = True
-# Client IP = REMOTE_ADDR (axes default). Behind a reverse proxy, set
-# AXES_IPWARE_PROXY_COUNT / AXES_IPWARE_META_PRECEDENCE_ORDER, or every user
-# shares the proxy's IP.
+# Same client-IP resolver as the audit log: behind a proxy listed in TRUSTED_PROXIES each
+# client is keyed on its own address, not the proxy's. Otherwise every user would share the
+# proxy IP and 5 bad guesses would lock a username out everywhere (DECISIONS U5).
+AXES_CLIENT_IP_CALLABLE = "hr.audit.get_client_ip"
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"

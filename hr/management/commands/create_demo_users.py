@@ -19,6 +19,7 @@ from hr.permissions import (
     ROLE_EXECUTIVE,
     ROLE_HRMO,
     ROLE_OFFICE_HEAD,
+    ROLE_PROJECT_MAINTAINER,
     ROLE_SYSADMIN,
 )
 
@@ -93,6 +94,15 @@ class Command(BaseCommand):
                     "office": None,
                     "person": None,
                     "description": "Read-only auditor with access to rates and audit log",
+                },
+                {
+                    "username": "demo_projects",
+                    "role_name": "Project Maint.",
+                    "group": ROLE_PROJECT_MAINTAINER,
+                    "is_staff": False,
+                    "office": None,
+                    "person": None,
+                    "description": "Planning / Budget: creates and edits projects, no personnel access",
                 },
                 {
                     "username": "demo_admin",

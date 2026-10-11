@@ -1,5 +1,7 @@
 import ast
 import hashlib
+import threading
+import time
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -10,8 +12,8 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import DatabaseError, IntegrityError, transaction
-from django.test import RequestFactory, TestCase
+from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event, verify_chain
 from hr.forms import (
     DocumentEditForm,
@@ -913,9 +915,24 @@ class Step5AuditLogTestCase(TestCase):
         req_untrusted = rf.get("/people/", REMOTE_ADDR="198.51.100.42", HTTP_X_FORWARDED_FOR="1.1.1.1")
         self.assertEqual(get_client_ip(req_untrusted), "198.51.100.42")
 
-        # Trusted remote address: X-Forwarded-For must be extracted
+        # Trusted proxy: the rightmost hop that is not a trusted proxy is the client.
+        # "203.0.113.195" was supplied by the client itself and must not be believed.
         req_trusted = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="203.0.113.195, 10.0.0.1")
-        self.assertEqual(get_client_ip(req_trusted), "203.0.113.195")
+        self.assertEqual(get_client_ip(req_trusted), "10.0.0.1")
+
+        # When the next hop is itself a trusted proxy, keep walking left.
+        with override_settings(TRUSTED_PROXIES=["127.0.0.1", "10.0.0.0/8"]):
+            self.assertEqual(get_client_ip(req_trusted), "203.0.113.195")
+
+        # A malformed hop stops the walk at the last trustworthy address.
+        req_garbage = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="<script>")
+        self.assertEqual(get_client_ip(req_garbage), "127.0.0.1")
+
+        # IPv6 is stored in PostgreSQL's canonical form, so the row hash survives a round trip.
+        req_v6 = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="2001:DB8:0:0:0:0:0:1")
+        self.assertEqual(get_client_ip(req_v6), "2001:db8::1")
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Ip", request=req_v6)
+        self.assertTrue(verify_chain().is_valid)
 
     def test_selective_view_logging(self):
         self.client.force_login(self.hrmo)
@@ -1401,6 +1418,7 @@ class Step6BEngagementEntryTestCase(TestCase):
             name="San Pascual Digital Portal",
             office=self.office,
             start_date=date(2025, 1, 1),
+            funding_reference="FAKE-CAF-2025-900",  # required to hire against it (DECISIONS P2)
         )
 
     def test_non_hrmo_roles_cannot_access_engagement_actions(self):
@@ -2753,3 +2771,500 @@ class SetupRolesAuditTestCase(TestCase):
         # Re-running (idempotent) also writes nothing.
         call_command("setup_roles")
         self.assertEqual(AuditLog.objects.count(), before)
+
+
+class AuditChainConcurrencyTestCase(TransactionTestCase):
+    """Concurrent audit writes must append to one linear chain, never fork it."""
+
+    def _fixture_teardown(self):
+        # TransactionTestCase flushes with TRUNCATE, which the append-only trigger blocks.
+        # The test database runs as the owner role, so lift that trigger for the flush only.
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE hr_auditlog DISABLE TRIGGER trg_hr_auditlog_no_truncate")
+        try:
+            super()._fixture_teardown()
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE hr_auditlog ENABLE TRIGGER trg_hr_auditlog_no_truncate")
+
+    def _writer(self, label, errors, logged=None, release=None):
+        def run():
+            try:
+                with transaction.atomic():
+                    log_audit_event(action=AuditLog.Action.VIEW, model_name="Race", object_repr=label)
+                    if logged:
+                        logged.set()
+                    if release:
+                        release.wait(5)
+            except Exception as exc:  # surfaced by the assertion in _race()
+                errors.append(exc)
+            finally:
+                connection.close()
+
+        return threading.Thread(target=run)
+
+    def _race(self):
+        """Writer A appends and holds its transaction open while writer B tries to append."""
+        errors = []
+        a_logged, release_a = threading.Event(), threading.Event()
+        writer_a = self._writer("A", errors, logged=a_logged, release=release_a)
+        writer_b = self._writer("B", errors)
+        writer_a.start()
+        self.assertTrue(a_logged.wait(5))
+        writer_b.start()
+        time.sleep(0.5)  # B is now waiting on A (or, without serialization, already done)
+        release_a.set()
+        writer_a.join(10)
+        writer_b.join(10)
+        self.assertEqual(errors, [])
+
+    def test_concurrent_first_writes_share_one_chain(self):
+        self._race()
+        self.assertEqual(AuditLog.objects.count(), 2)
+        result = verify_chain()
+        self.assertTrue(result.is_valid, result.error_msg)
+
+    def test_concurrent_writes_after_existing_rows_share_one_chain(self):
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Seed", object_repr="seed")
+        self._race()
+        self.assertEqual(AuditLog.objects.count(), 3)
+        result = verify_chain()
+        self.assertTrue(result.is_valid, result.error_msg)
+
+
+
+class DataMinimizationTestCase(TestCase):
+    """R4/R5/R6: each role sees only the person fields its row in DECISIONS allows."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    BIRTHDATE = "June 19, 1980"
+
+    def setUp(self):
+        self.setUp_roles()
+        self.person_a.mobile = "0917-555-0101"
+        self.person_a.address = "12 Mabini St, Poblacion"
+        self.person_a.save()
+        self.eng_a.notes = "Confidential HR note"
+        self.eng_a.save()
+        self.doc_a.display_name = "Rizal_Medical_Certificate.pdf"
+        self.doc_a.notes = "Signed copy pending"
+        self.doc_a.save()
+        # Person B used to work in Office A (ended), now in Office B.
+        Engagement.objects.create(
+            person=self.person_b, office=self.office_a, type=Engagement.Type.JOB_ORDER,
+            position_title="Former Clerk", start_date=date(2023, 1, 1), end_date=date(2024, 12, 31),
+            status=Engagement.Status.ENDED,
+        )
+
+    def _person_page(self, user):
+        self.client.force_login(user)
+        resp = self.client.get(f"/people/{self.person_a.pk}/")
+        self.assertEqual(resp.status_code, 200)
+        return resp
+
+    def test_office_staff_sees_contacts_but_no_personal_details_documents_or_pay(self):
+        resp = self._person_page(self.staff_a)
+        self.assertContains(resp, "0917-555-0101")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "SG 22", "Cabinet A, Drawer 1",
+                       "Rizal_Medical_Certificate.pdf", "Signed copy pending", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+        self.assertContains(self.client.get("/people/"), "0917-555-0101")
+
+    def test_office_head_sees_document_status_but_not_file_names_or_notes(self):
+        resp = self._person_page(self.head_a)
+        self.assertContains(resp, "0917-555-0101")
+        self.assertContains(resp, "Cabinet A, Drawer 1")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "SG 22", "Rizal_Medical_Certificate.pdf",
+                       "Signed copy pending", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+
+    def test_executive_sees_name_position_office_type_only(self):
+        resp = self._person_page(self.mayor)
+        self.assertContains(resp, "Executive Assistant IV")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "SG 22", "Cabinet A, Drawer 1",
+                       "Rizal_Medical_Certificate.pdf", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+        self.assertNotContains(self.client.get("/people/"), "0917-555-0101")
+
+    def test_hrmo_and_auditor_see_everything(self):
+        for user in (self.hrmo_user, self.auditor_user):
+            resp = self._person_page(user)
+            for shown in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "SG 22",
+                          "Rizal_Medical_Certificate.pdf", "Signed copy pending", "Confidential HR note"):
+                self.assertContains(resp, shown)
+
+    def test_employee_sees_own_details_and_documents_but_not_salary_grade(self):
+        resp = self._person_page(self.emp_a_user)
+        for shown in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "Rizal_Medical_Certificate.pdf"):
+            self.assertContains(resp, shown)
+        self.assertNotContains(resp, "SG 22")
+
+    def test_employee_can_open_documents_attached_to_own_engagement(self):
+        from hr.permissions import can_view_document_content
+
+        eng_doc = Document.objects.create(engagement=self.eng_a, doc_type=Document.Type.APPOINTMENT)
+        self.assertTrue(can_view_document_content(self.emp_a_user, eng_doc))
+        self.assertFalse(can_view_document_content(self.head_a, eng_doc))
+
+    def test_office_page_hides_salary_grade_and_past_staff_from_office_roles(self):
+        for user in (self.head_a, self.staff_a):
+            self.client.force_login(user)
+            resp = self.client.get(f"/offices/{self.office_a.pk}/")
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotContains(resp, "SG 22")
+            self.assertNotContains(resp, "Bonifacio")  # transferred out (R5)
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/offices/{self.office_a.pk}/")
+        self.assertContains(resp, "SG 22")
+        self.assertContains(resp, "Bonifacio")
+
+
+class SysadminEscalationTestCase(TestCase):
+    """R3/A1: System Admin cannot reach office roles, and admin-set passwords are one-time."""
+
+    setUp = Step4CSecurityAndRolesTestCase.setUp
+
+    def test_office_roles_are_protected(self):
+        self.assertIn(ROLE_OFFICE_HEAD, PROTECTED_ROLES)
+        self.assertIn(ROLE_OFFICE_STAFF, PROTECTED_ROLES)
+        self.client.force_login(self.sysadmin)
+        resp = self.client.get(f"/admin/auth/user/{self.head_a.pk}/change/")
+        self.assertNotEqual(resp.status_code, 200)
+        resp = self.client.get(f"/admin/auth/user/{self.head_a.pk}/password/")
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_admin_password_reset_forces_change_at_next_login(self):
+        self.client.force_login(self.sysadmin)
+        new_pw = "Rq7!fresh-one-time-pass"
+        resp = self.client.post(
+            f"/admin/auth/user/{self.emp_a_user.pk}/password/",
+            {"password1": new_pw, "password2": new_pw, "usable_password": "true"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.emp_a_user.profile.refresh_from_db()
+        self.assertTrue(self.emp_a_user.profile.must_change_password)
+
+    def test_admin_created_account_must_change_password(self):
+        self.client.force_login(self.sysadmin)
+        pw = "Kp4!brand-new-account"
+        resp = self.client.post(
+            "/admin/auth/user/add/",
+            {"username": "new_clerk", "usable_password": "true", "password1": pw, "password2": pw, "_save": "Save"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        new_user = get_user_model().objects.get(username="new_clerk")
+        self.assertTrue(UserProfile.objects.get(user=new_user).must_change_password)
+
+
+class LoginLockoutAuditTestCase(TestCase):
+    """U5/S9: lockouts are per real client behind a proxy and never store unknown usernames."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("clerk", password="Correct-Horse-91")
+
+    def _fail(self, username, client_ip, times=5):
+        for _ in range(times):
+            self.client.post(
+                "/accounts/login/", {"username": username, "password": "wrong-password"},
+                HTTP_X_FORWARDED_FOR=client_ip,
+            )
+
+    def test_lockout_behind_proxy_is_per_client_ip(self):
+        self._fail("clerk", "198.51.100.1")
+        locked = self.client.post(
+            "/accounts/login/", {"username": "clerk", "password": "Correct-Horse-91"},
+            HTTP_X_FORWARDED_FOR="198.51.100.1",
+        )
+        self.assertNotEqual(locked.status_code, 302)
+        other_client = self.client.post(
+            "/accounts/login/", {"username": "clerk", "password": "Correct-Horse-91"},
+            HTTP_X_FORWARDED_FOR="198.51.100.2",
+        )
+        self.assertEqual(other_client.status_code, 302)
+
+    def test_lockout_does_not_store_unknown_username(self):
+        secret = "MyActualPassword!2026"
+        self._fail(secret, "198.51.100.9")
+        lockouts = AuditLog.objects.filter(action=AuditLog.Action.ACCOUNT_LOCKOUT)
+        self.assertTrue(lockouts.exists())
+        self.assertEqual(lockouts.first().username, "[unknown]")
+        self.assertEqual(lockouts.first().ip_address, "198.51.100.9")
+        for row in AuditLog.objects.all():
+            self.assertNotIn(secret, f"{row.username} {row.object_repr} {row.changes}")
+
+    def test_lockout_keeps_real_username(self):
+        self._fail("clerk", "198.51.100.3")
+        self.assertEqual(
+            AuditLog.objects.filter(action=AuditLog.Action.ACCOUNT_LOCKOUT).first().username, "clerk"
+        )
+
+
+class AuditExportAndInputHardeningTestCase(TestCase):
+    """CSV formula escaping, malformed filters, superseded scans, and app-role privileges."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor = User.objects.create_user("aud_csv", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+        self.hrmo = User.objects.create_user("hrmo_csv", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+    def test_csv_safe_escapes_formula_prefixes(self):
+        from hr.views import csv_safe
+
+        for value in ("=1+1", "+1", "-1", "@SUM(A1)", "\t=x", "\r=x"):
+            self.assertTrue(csv_safe(value).startswith("'"), value)
+        self.assertEqual(csv_safe("Rizal, Jose"), "Rizal, Jose")
+        self.assertEqual(csv_safe(None), "")
+
+    def test_audit_export_neutralizes_formula_cells(self):
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Person",
+                        object_repr='=HYPERLINK("http://evil.example","x")')
+        self.client.force_login(self.auditor)
+        content = self.client.get("/audit/export/csv/").content.decode()
+        self.assertIn("'=HYPERLINK", content)
+        self.assertNotIn(",=HYPERLINK", content)
+        self.assertNotIn('"=HYPERLINK', content)
+
+    def test_malformed_filters_do_not_500(self):
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get("/people/?office=abc&type=nope&status=zzz").status_code, 200)
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/?start_date=junk&end_date=2026-02-31").status_code, 200)
+
+    def test_superseded_document_cannot_be_replaced_again(self):
+        person = Person.objects.create(employee_no="SP-00555", last_name="Luna", first_name="Juan",
+                                       birthdate=date(1985, 1, 1))
+        current = Document.objects.create(person=person, doc_type=Document.Type.PDS)
+        old = Document.objects.create(person=person, doc_type=Document.Type.PDS,
+                                      is_replaced=True, replaced_by=current)
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get(f"/documents/{old.pk}/replace/").status_code, 302)
+        pdf = SimpleUploadedFile("scan.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+        before = Document.objects.count()
+        resp = self.client.post(f"/documents/{old.pk}/replace/", {"version": old.version, "file": pdf})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Document.objects.count(), before)
+        old.refresh_from_db()
+        self.assertEqual(old.replaced_by_id, current.pk)
+
+    def test_privilege_migration_uses_configured_role(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        migration = importlib.import_module("hr.migrations.0011_reapply_app_role_audit_privileges")
+        with mock.patch.dict(os.environ, {"APP_DB_USER": "no_such_role_xyz"}):
+            with connection.schema_editor() as editor, self.assertRaises(RuntimeError):
+                migration.restrict_app_role(None, editor)
+
+        role = os.environ.get("APP_DB_USER") or "hr_app"
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [role])
+            if cursor.fetchone() is None:
+                self.skipTest(f"role {role} not present in this cluster")
+        with connection.schema_editor() as editor:
+            migration.restrict_app_role(None, editor)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT has_table_privilege(%s, 'hr_auditlog', 'UPDATE'),"
+                " has_table_privilege(%s, 'hr_auditlog', 'DELETE'),"
+                " has_column_privilege(%s, 'hr_auditlog', 'id', 'UPDATE')",
+                [role, role, role],
+            )
+            self.assertEqual(cursor.fetchone(), (False, False, False))
+
+
+class ProjectManagementTestCase(TestCase):
+    """P1-P3: Project Maintainer role, funding reference, and contract-within-project rules."""
+
+    def setUp(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.office = Office.objects.get(name="Office of the Municipal Engineer")
+
+        self.maintainer = User.objects.create_user("planning_officer", password="Password123!")
+        self.maintainer.groups.add(Group.objects.get(name=ROLE_PROJECT_MAINTAINER))
+        self.hrmo = User.objects.create_user("hrmo_proj", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.sysadmin = User.objects.create_user("sysadmin_proj", password="Password123!", is_staff=True)
+        self.sysadmin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+
+        self.project = Project.objects.create(
+            name="Coastal Road Concreting", office=self.office, status=Project.Status.ONGOING,
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), funding_reference="FAKE-CAF-2026-001",
+        )
+        self.person = Person.objects.create(
+            employee_no="SP-00901", last_name="Dagohoy", first_name="Francisco", birthdate=date(1990, 4, 4)
+        )
+
+    def _project_payload(self, **overrides):
+        payload = {
+            "name": "Evacuation Center Phase 3", "office": self.office.pk, "status": Project.Status.PLANNED,
+            "start_date": "2026-03-01", "end_date": "2027-02-28", "funding_reference": "FAKE-CAF-2026-077",
+            "notes": "",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _contract_payload(self, **overrides):
+        payload = {
+            "office": self.office.pk, "type": Engagement.Type.PROJECT_BASED, "position_title": "Site Inspector",
+            "start_date": "2026-02-01", "end_date": "2026-11-30", "status": Engagement.Status.ACTIVE,
+            "project": self.project.pk,
+        }
+        payload.update(overrides)
+        return payload
+
+    # --- Role and access --------------------------------------------------------
+
+    def test_setup_roles_creates_project_maintainer_group(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        perms = set(Group.objects.get(name=ROLE_PROJECT_MAINTAINER).permissions.values_list("codename", flat=True))
+        self.assertIn("manage_projects", perms)
+        self.assertFalse({"view_person", "view_hr_records", "manage_hr_records"} & perms)
+        hrmo_perms = set(Group.objects.get(name=ROLE_HRMO).permissions.values_list("codename", flat=True))
+        self.assertIn("view_project", hrmo_perms)
+        self.assertNotIn("manage_projects", hrmo_perms)
+
+    def test_maintainer_creates_project_and_it_is_audited(self):
+        self.client.force_login(self.maintainer)
+        resp = self.client.post("/projects/new/", self._project_payload())
+        self.assertEqual(resp.status_code, 302)
+        created = Project.objects.get(name="Evacuation Center Phase 3")
+        self.assertEqual(created.funding_reference, "FAKE-CAF-2026-077")
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.CREATE, model_name="Project", object_id=str(created.pk)
+        ).exists())
+
+    def test_funding_reference_is_required(self):
+        self.client.force_login(self.maintainer)
+        resp = self.client.post("/projects/new/", self._project_payload(funding_reference="  "))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Project.objects.filter(name="Evacuation Center Phase 3").exists())
+
+    def test_maintainer_has_no_personnel_access(self):
+        self.client.force_login(self.maintainer)
+        self.assertRedirects(self.client.get("/"), "/projects/")
+        self.assertEqual(self.client.get("/people/").status_code, 403)
+        self.assertEqual(self.client.get(f"/people/{self.person.pk}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/people/{self.person.pk}/engagements/new/").status_code, 403)
+
+    def test_maintainer_sees_headcount_but_not_names(self):
+        Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.client.force_login(self.maintainer)
+        resp = self.client.get(f"/projects/{self.project.pk}/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["active_count"], 1)
+        self.assertNotContains(resp, "Dagohoy")
+        self.client.force_login(self.hrmo)
+        self.assertContains(self.client.get(f"/projects/{self.project.pk}/"), "Dagohoy")
+
+    def test_hrmo_cannot_create_or_edit_projects_without_the_role(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get("/projects/").status_code, 200)
+        self.assertEqual(self.client.post("/projects/new/", self._project_payload()).status_code, 403)
+        self.assertEqual(self.client.get(f"/projects/{self.project.pk}/edit/").status_code, 403)
+
+        # Roles stack: an HRMO staffer added to Project Maintainer can do both (LGU decision, P1).
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_PROJECT_MAINTAINER))
+        self.assertEqual(self.client.post("/projects/new/", self._project_payload()).status_code, 302)
+
+    def test_sysadmin_cannot_assign_project_maintainer(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        self.assertIn(ROLE_PROJECT_MAINTAINER, PROTECTED_ROLES)
+
+    def test_project_edit_rejects_stale_version(self):
+        self.client.force_login(self.maintainer)
+        payload = self._project_payload(
+            name=self.project.name, status=Project.Status.ONGOING, start_date="2026-01-01",
+            end_date="2026-12-31", version=self.project.version,
+        )
+        self.assertEqual(self.client.post(f"/projects/{self.project.pk}/edit/", payload).status_code, 302)
+        resp = self.client.post(f"/projects/{self.project.pk}/edit/", payload)  # same, now stale version
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.version, 2)
+
+    def test_project_end_cannot_cut_active_contracts(self):
+        Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.client.force_login(self.maintainer)
+        payload = self._project_payload(
+            name=self.project.name, status=Project.Status.ONGOING, start_date="2026-01-01",
+            end_date="2026-06-30", version=self.project.version,
+        )
+        resp = self.client.post(f"/projects/{self.project.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "run past this date")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.end_date, date(2026, 12, 31))
+
+    # --- Hiring against projects --------------------------------------------------
+
+    def test_hrmo_hires_onto_open_funded_project(self):
+        self.client.force_login(self.hrmo)
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", self._contract_payload())
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Engagement.objects.filter(person=self.person, project=self.project).exists())
+
+    def test_unfunded_or_closed_projects_are_not_offered(self):
+        unfunded = Project.objects.create(
+            name="Unfunded Idea", office=self.office, status=Project.Status.PLANNED, start_date=date(2026, 1, 1),
+        )
+        completed = Project.objects.create(
+            name="Finished Bridge", office=self.office, status=Project.Status.COMPLETED,
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31), funding_reference="FAKE-CAF-2025-050",
+        )
+        form = EngagementForm(user=self.hrmo, person=self.person)
+        offered = set(form.fields["project"].queryset)
+        self.assertIn(self.project, offered)
+        self.assertNotIn(unfunded, offered)
+        self.assertNotIn(completed, offered)
+
+        self.client.force_login(self.hrmo)
+        resp = self.client.post(
+            f"/people/{self.person.pk}/engagements/new/", self._contract_payload(project=unfunded.pk)
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Engagement.objects.filter(project=unfunded).exists())
+
+    def test_existing_contract_keeps_its_closed_project_on_edit(self):
+        eng = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.project.status = Project.Status.COMPLETED
+        self.project.save()
+        form = EngagementForm(instance=eng, user=self.hrmo, person=self.person)
+        self.assertIn(self.project, set(form.fields["project"].queryset))
+
+    def test_contract_must_fit_inside_project_dates(self):
+        self.client.force_login(self.hrmo)
+        url = f"/people/{self.person.pk}/engagements/new/"
+        too_late = self.client.post(url, self._contract_payload(end_date="2027-03-31"))
+        self.assertContains(too_late, "Contract must end by the project end date")
+        open_ended = self.client.post(url, self._contract_payload(end_date=""))
+        self.assertContains(open_ended, "Contract must end by the project end date")
+        too_early = self.client.post(url, self._contract_payload(start_date="2025-12-01"))
+        self.assertContains(too_early, "cannot start before the project")
+        self.assertFalse(Engagement.objects.filter(person=self.person).exists())

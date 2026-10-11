@@ -9,13 +9,14 @@ from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.management.base import BaseCommand
 from hr.audit import disable_audit
-from hr.models import AuditLog, Delegate, Document, Engagement, LeaveRequest, Office, Person
+from hr.models import AuditLog, Delegate, Document, Engagement, LeaveRequest, Office, Person, Project
 from hr.permissions import (
     ROLE_AUDITOR,
     ROLE_EXECUTIVE,
     ROLE_HRMO,
     ROLE_OFFICE_HEAD,
     ROLE_OFFICE_STAFF,
+    ROLE_PROJECT_MAINTAINER,
     ROLE_SYSADMIN,
 )
 
@@ -35,6 +36,8 @@ class Command(BaseCommand):
             delegate_ct = ContentType.objects.get_for_model(Delegate)
             office_ct = ContentType.objects.get_for_model(Office)
             audit_ct = ContentType.objects.get_for_model(AuditLog)
+            project_ct = ContentType.objects.get_for_model(Project)
+            view_project = Permission.objects.filter(content_type=project_ct, codename="view_project")
 
             # 1. System Admin (IT)
             # Manages accounts and groups in /admin/. Has ZERO HR permissions.
@@ -50,7 +53,9 @@ class Command(BaseCommand):
             hrmo_group, _ = Group.objects.get_or_create(name=ROLE_HRMO)
             hrmo_perms = Permission.objects.filter(
                 content_type__in=[person_ct, eng_ct, doc_ct, leave_ct, office_ct, delegate_ct]
-            )
+            ) | view_project
+            # Viewing projects only: creating and editing them needs the Project Maintainer
+            # group, so hiring and funding a project can sit with different offices (P1).
             hrmo_group.permissions.set(hrmo_perms)
 
             # 3. Office Head
@@ -94,20 +99,30 @@ class Command(BaseCommand):
                 content_type=eng_ct, codename="view_engagement"
             ) | Permission.objects.filter(
                 content_type=doc_ct, codename="view_document"
-            )
+            ) | view_project
             exec_group.permissions.set(exec_perms)
 
             # 6. Auditor
             # Read-only across all offices, including pay, IDs, documents, and audit logs.
             auditor_group, _ = Group.objects.get_or_create(name=ROLE_AUDITOR)
             auditor_perms = Permission.objects.filter(
-                content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct, audit_ct],
+                content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct, audit_ct, project_ct],
                 codename__in=[
                     "view_hr_records", "view_person", "view_pay", "view_engagement",
                     "view_ids", "view_documents", "view_document", "view_office",
-                    "view_leaverequest", "view_audit_log",
+                    "view_leaverequest", "view_audit_log", "view_project",
                 ],
             )
             auditor_group.permissions.set(auditor_perms)
+
+            # 7. Project Maintainer
+            # Creates and edits projects (dates, status, funding reference). No personnel access:
+            # sees headcounts only. Given to HRMO, Planning or Budget staff by LGU decision (P1).
+            maintainer_group, _ = Group.objects.get_or_create(name=ROLE_PROJECT_MAINTAINER)
+            maintainer_perms = Permission.objects.filter(
+                content_type=project_ct,
+                codename__in=["manage_projects", "add_project", "change_project", "view_project"],
+            ) | Permission.objects.filter(content_type=office_ct, codename="view_office")
+            maintainer_group.permissions.set(maintainer_perms)
 
             self.stdout.write(self.style.SUCCESS("System roles configured successfully."))

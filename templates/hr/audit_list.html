@@ -36,6 +36,8 @@
       {% else %}
         The hash chain has not been verified. Use “Re-verify all” or run <code>manage.py verify_audit_chain</code>.
       {% endif %}
+      <br>This is the result stored by the application. For an authoritative check, the DPO or
+      auditor runs <code>manage.py verify_audit_chain --anchor ID:HASH</code> with the anchor they keep off the server.
     </div>
   </div>
   <div class="d-flex flex-wrap gap-2 align-items-start">

@@ -156,15 +156,33 @@ class Project(models.Model):
         COMPLETED = "completed", "Completed"
         CANCELLED = "cancelled", "Cancelled"
 
+    # Statuses HRMO can still hire into (DECISIONS P3).
+    HIRING_STATUSES = [Status.PLANNED, Status.ONGOING]
+
     name = models.CharField(max_length=200)
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="projects")
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
+    # Reference to the Budget/Accounting document certifying the project is funded, so
+    # contracts are tied to an independent sign-off, not only HR's word (DECISIONS P2).
+    funding_reference = models.CharField(
+        "Funding reference",
+        max_length=100,
+        blank=True,
+        help_text="Certificate or obligation number from Budget / Accounting.",
+    )
     notes = models.TextField(blank=True)
+
+    # Concurrency control & audit timestamp (DECISIONS S2)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-start_date", "name"]
+        permissions = [
+            ("manage_projects", "Can create and edit LGU projects"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(end_date__isnull=True) | Q(end_date__gte=F("start_date")),
@@ -175,6 +193,11 @@ class Project(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_open_for_hiring(self):
+        """New contracts may link only to planned/ongoing projects with a funding reference (P2, P3)."""
+        return self.status in self.HIRING_STATUSES and bool(self.funding_reference)
 
 
 # --- Engagements -------------------------------------------------------------

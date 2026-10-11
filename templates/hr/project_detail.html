@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · Project{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'project_list' %}" class="btn btn-sm btn-outline-secondary">← Back to Projects</a>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+      <div>
+        <h1 class="h3 mb-1">{{ project.name }}</h1>
+        <div class="text-muted">{{ project.office.name }}</div>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        {% if can_manage %}
+          <a href="{% url 'project_edit' project.pk %}" class="btn btn-sm btn-outline-primary">Edit Project</a>
+        {% endif %}
+        <span class="badge fs-6 {% if project.status == 'ongoing' %}bg-success{% elif project.status == 'planned' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+          {{ project.get_status_display }}
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not project.is_open_for_hiring %}
+  <div class="alert alert-warning small">
+    {% if not project.funding_reference %}
+      This project has no funding reference, so HRMO cannot link new contracts to it. The Project Maintainer adds the reference from Budget / Accounting.
+    {% else %}
+      This project is {{ project.get_status_display|lower }}, so HRMO cannot link new contracts to it.
+    {% endif %}
+  </div>
+{% endif %}
+{% if closed_with_active %}
+  <div class="alert alert-danger small">
+    {{ active_count }} contract(s) are still active on this {{ project.get_status_display|lower }} project. HRMO should end them.
+  </div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2">Project Details</div>
+      <div class="card-body p-3">
+        <dl class="row mb-0 small">
+          <dt class="col-sm-5 text-muted">Period</dt>
+          <dd class="col-sm-7">{{ project.start_date|date:"F d, Y" }} – {{ project.end_date|date:"F d, Y"|default:"open-ended" }}</dd>
+          <dt class="col-sm-5 text-muted">Funding reference</dt>
+          <dd class="col-sm-7 font-monospace">{{ project.funding_reference|default:"—" }}</dd>
+          <dt class="col-sm-5 text-muted">Notes</dt>
+          <dd class="col-sm-7">{{ project.notes|default:"—"|linebreaksbr }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2">Staffing</div>
+      <div class="card-body p-3 d-flex flex-wrap gap-2">
+        <div class="border rounded p-2 text-center flex-fill bg-light">
+          <div class="small text-muted">Active contracts</div>
+          <div class="h4 mb-0 text-primary">{{ active_count }}</div>
+        </div>
+        <div class="border rounded p-2 text-center flex-fill bg-light">
+          <div class="small text-muted">Ending in 30 days</div>
+          <div class="h4 mb-0 {% if ending_soon_count %}text-warning{% else %}text-muted{% endif %}">{{ ending_soon_count }}</div>
+        </div>
+        <div class="border rounded p-2 text-center flex-fill bg-light">
+          <div class="small text-muted">Past contracts</div>
+          <div class="h4 mb-0 text-muted">{{ ended_count }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if show_roster %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Active Staff on this Project</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr><th>Personnel</th><th>Position</th><th>Contract period</th></tr>
+      </thead>
+      <tbody>
+        {% for eng in roster %}
+          <tr>
+            <td><a href="{% url 'person_detail' eng.person.pk %}" class="text-decoration-none">{{ eng.person.full_name }}</a></td>
+            <td>{{ eng.position_title }}</td>
+            <td class="text-nowrap">{{ eng.start_date|date:"M d, Y" }} – {{ eng.end_date|date:"M d, Y"|default:"open-ended" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="text-center py-3 text-muted">No active contracts on this project.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+  <div class="text-muted small">🔒 Names of the people hired on this project are visible to HRMO, Auditor and Executive roles only (DECISIONS P1).</div>
+{% endif %}
+{% endblock %}

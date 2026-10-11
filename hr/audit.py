@@ -5,9 +5,9 @@ Features:
 - Transaction-bound writes: if audit logging fails, the action transaction fails (DECISIONS U3).
 - Data minimization: Sensitive fields (rate, fake IDs, passwords) log field names only, never values (DECISIONS U4).
 - No foreign keys: snapshot user_id, username, office_id, office_name to allow clean user deletions.
-- Client IP resolution: reads X-Forwarded-For strictly when REMOTE_ADDR is in TRUSTED_PROXIES (DECISIONS U5).
+- Client IP resolution: walks X-Forwarded-For right to left, only past TRUSTED_PROXIES hops (DECISIONS U5).
 - Suppressible for data seeders (seed_fake, seed_offices) via disable_audit() context manager.
-- Optional cryptographic SHA-256 hash chaining (prev_hash, row_hash).
+- SHA-256 hash chaining (prev_hash, row_hash), appends serialized by an advisory lock.
 """
 
 import contextvars
@@ -20,11 +20,15 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
+from django.utils.ipv6 import clean_ipv6_address
 
 # Request ID validation: only accepted from trusted proxy if matching ^[A-Za-z0-9-]{8,64}$
 REQUEST_ID_REGEX = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+# Key of the transaction-scoped advisory lock that serializes audit chain appends.
+AUDIT_CHAIN_LOCK_KEY = 0x53504155  # "SPAU"
 
 # Thread-safe context variables
 _audit_disabled_var = contextvars.ContextVar("audit_disabled", default=False)
@@ -63,6 +67,25 @@ def get_current_request():
     return _audit_request_var.get()
 
 
+def normalize_ip(value):
+    """Returns the IP in the exact text form PostgreSQL stores and returns, or None if invalid.
+
+    The row hash is computed before the INSERT and re-checked after reading the row back,
+    so a non-canonical spelling (e.g. upper-case IPv6) would break the chain.
+    """
+    if not value:
+        return None
+    try:
+        ip = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return None
+    if ip.version == 6:
+        if ip.scope_id:
+            return None  # zone IDs ("%eth0") are not valid in an inet column
+        return clean_ipv6_address(str(ip))
+    return str(ip)
+
+
 def is_ip_trusted(ip_str):
     """Verifies whether an IP matches the configured TRUSTED_PROXIES."""
     if not ip_str:
@@ -86,20 +109,28 @@ def is_ip_trusted(ip_str):
 
 
 def get_client_ip(request):
-    """Extracts client IP. Inspects X-Forwarded-For ONLY if REMOTE_ADDR is a trusted proxy."""
+    """Returns the client IP (also used by django-axes via AXES_CLIENT_IP_CALLABLE).
+
+    X-Forwarded-For is read only when REMOTE_ADDR is a trusted proxy, and right to left:
+    each proxy appends the address it received the request from, so the first hop that is
+    not a trusted proxy is the client. Entries left of it were sent by the client and can
+    be forged. A malformed hop stops the walk at the last address we could trust.
+    """
     if not request:
         return None
-    remote_addr = request.META.get("REMOTE_ADDR")
-    if not remote_addr:
-        return None
+    client_ip = normalize_ip(request.META.get("REMOTE_ADDR"))
+    if not client_ip or not is_ip_trusted(client_ip):
+        return client_ip
 
-    if is_ip_trusted(remote_addr):
-        xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        if xff:
-            ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
-            if ips:
-                return ips[0]
-    return remote_addr
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    for hop in reversed([h for h in xff.split(",") if h.strip()]):
+        hop_ip = normalize_ip(hop)
+        if hop_ip is None:
+            break
+        client_ip = hop_ip
+        if not is_ip_trusted(hop_ip):
+            break
+    return client_ip
 
 
 def resolve_request_id(request):
@@ -177,6 +208,7 @@ def log_audit_event(
 
     if not ip_address and req:
         ip_address = get_client_ip(req)
+    ip_address = normalize_ip(ip_address)
 
     # Request ID and Session Key Hash (Requirement 3)
     request_id = ""
@@ -204,9 +236,14 @@ def log_audit_event(
     # Circular import guard
     from .models import AuditLog
 
-    # Lock latest row and compute row_hash with last row locked in active transaction
     with transaction.atomic():
-        last_entry = AuditLog.objects.select_for_update().order_by("-id").first()
+        # Serialize appends, then read the chain head in a new statement so READ COMMITTED
+        # sees the row the previous lock holder committed. Locking the last row with
+        # SELECT ... FOR UPDATE is not enough: a waiter gets the old head back and both
+        # writers link to it (and on an empty table there is no row to lock).
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [AUDIT_CHAIN_LOCK_KEY])
+        last_entry = AuditLog.objects.order_by("-id").only("row_hash").first()
         prev_hash = last_entry.row_hash if (last_entry and last_entry.row_hash) else ("0" * 64)
 
         now = timezone.now()

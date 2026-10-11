@@ -143,7 +143,7 @@ class Command(BaseCommand):
     def _seed_data(self):
         # 1. Projects
         projects = []
-        for name, office_name in PROJECTS_DATA:
+        for idx, (name, office_name) in enumerate(PROJECTS_DATA, start=1):
             office = Office.objects.get(name=office_name)
             p, _ = Project.objects.get_or_create(
                 name=name,
@@ -152,6 +152,7 @@ class Command(BaseCommand):
                     "start_date": date(2025, 1, 15),
                     "end_date": date(2026, 12, 31),
                     "status": Project.Status.ONGOING,
+                    "funding_reference": f"FAKE-CAF-2025-{idx:03d}",
                     "notes": "LGU Priority Infrastructure / Environmental Project.",
                 },
             )

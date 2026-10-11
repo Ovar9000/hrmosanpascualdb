@@ -18,12 +18,22 @@ from .models import (
 from .permissions import PROTECTED_ROLES
 
 
+def require_password_change(user):
+    """Flags an account so its next login must set a new password (DECISIONS A1)."""
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    if not profile.must_change_password:
+        profile.must_change_password = True
+        profile.save()
+
+
 class CustomUserAdmin(BaseUserAdmin):
     """Custom User admin preventing privilege escalation by System Admin (DECISIONS R2/R5).
 
     - Non-superusers cannot view, edit, or delete emergency superusers or users in protected roles.
     - Non-superusers cannot assign protected roles (groups) or direct HR permissions.
     - Non-superusers cannot escalate privileges via is_superuser.
+    - A password set by an admin for someone else is one-time: the user must change it at
+      next login, so an admin cannot quietly keep using an account they reset.
     """
 
     def get_queryset(self, request):
@@ -63,6 +73,15 @@ class CustomUserAdmin(BaseUserAdmin):
             # Force is_superuser to False
             obj.is_superuser = False
         super().save_model(request, obj, form, change)
+        if not change and obj.has_usable_password():
+            require_password_change(obj)
+
+    def user_change_password(self, request, id, form_url=""):
+        response = super().user_change_password(request, id, form_url)
+        # A redirect means the new password was saved.
+        if request.method == "POST" and response.status_code == 302 and str(request.user.pk) != str(id):
+            require_password_change(User.objects.get(pk=id))
+        return response
 
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)

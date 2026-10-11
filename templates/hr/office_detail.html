@@ -73,7 +73,7 @@
             <td>
               <div>{{ eng.position_title }}</div>
               {% if eng.type == 'plantilla' %}
-                <div class="text-muted font-monospace">SG {{ eng.salary_grade }}, Step {{ eng.step }} ({{ eng.item_number }})</div>
+                <div class="text-muted font-monospace">{% if can_view_rates %}SG {{ eng.salary_grade }}, Step {{ eng.step }} {% endif %}({{ eng.item_number }})</div>
               {% elif eng.type == 'project' and eng.project %}
                 <div class="text-muted">Project: {{ eng.project.name }}</div>
               {% endif %}

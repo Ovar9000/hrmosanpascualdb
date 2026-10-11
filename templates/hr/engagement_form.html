@@ -131,6 +131,7 @@
           <label for="{{ form.project.id_for_label }}" class="form-label fw-semibold">LGU Project</label>
           {{ form.project }}
           {% if form.project.errors %}<div class="invalid-feedback d-block">{{ form.project.errors|first }}</div>{% endif %}
+          <div class="form-text">Lists Planned and Ongoing projects that have a funding reference. The contract must fit within the project's dates.</div>
         </div>
       </div>
 

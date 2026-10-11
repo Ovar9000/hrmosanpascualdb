@@ -48,6 +48,8 @@ services:
       <<: *django-env
       DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Name only (no password): migrations restrict this role's audit-table privileges.
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
     command: python manage.py migrate --noinput
     depends_on:
       db:
@@ -59,7 +61,9 @@ services:
       <<: *django-env
       DB_USER: ${APP_DB_USER}
       DB_PASSWORD: ${APP_DB_PASSWORD}
-    command: python manage.py runserver 0.0.0.0:8000
+    # --insecure lets runserver serve /static/ when DJANGO_DEBUG=0 (prototype only). A real
+    # server uses gunicorn with the reverse proxy serving /static/ (Go-Live Checklist).
+    command: python manage.py runserver --insecure 0.0.0.0:8000
     ports:
       - "${WEB_BIND:-127.0.0.1}:8000:8000"
     depends_on:
