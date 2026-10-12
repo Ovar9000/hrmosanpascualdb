@@ -50,6 +50,7 @@ docker compose run --rm manage python manage.py createsuperuser
 | Task | Command |
 |---|---|
 | Start / stop | `docker compose up` / `docker compose down` |
+| Prepare a demo (clean fake data, demo accounts, checks) | `pwsh -File scripts\demo_setup.ps1 -Reset` |
 | Run tests | `docker compose run --rm manage python manage.py test` |
 | Any management command | `docker compose run --rm manage python manage.py <command>` |
 | Create employee accounts (preview first) | `docker compose run --rm manage python manage.py provision_accounts --dry-run` |
@@ -106,3 +107,4 @@ and add the PC's LAN IP to `DJANGO_ALLOWED_HOSTS`.
 ## Project docs
 
 - [`DECISIONS.md`](DECISIONS.md): every assumption, and which ones the HRMO survey may change.
+- [`docs/DEMO.md`](docs/DEMO.md): presentation run sheet (rehearsal, walkthrough, questions to ask).

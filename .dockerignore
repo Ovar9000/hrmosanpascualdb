@@ -10,3 +10,4 @@ staticfiles
 *.xls
 *.csv
 account_slips*.html
+demo_files

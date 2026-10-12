@@ -66,7 +66,7 @@ services:
     # server uses gunicorn with the reverse proxy serving /static/ (Go-Live Checklist).
     command: python manage.py runserver --insecure 0.0.0.0:8000
     ports:
-      - "${WEB_BIND:-127.0.0.1}:8000:8000"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy

@@ -5,13 +5,12 @@ Generates random one-time passwords, prints them once to stdout, and sets
 must_change_password=True on UserProfile.
 """
 
-import secrets
-import string
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
+from hr.accounts import generate_one_time_password, one_time_password_expiry
 from hr.audit import disable_audit
 from hr.models import Office, Person, UserProfile
 from hr.permissions import (
@@ -22,20 +21,6 @@ from hr.permissions import (
     ROLE_PROJECT_MAINTAINER,
     ROLE_SYSADMIN,
 )
-
-
-def generate_secure_password(length=14):
-    """Generate a random password meeting Django's validation requirements."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    while True:
-        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
-        if (
-            any(c.islower() for c in pwd)
-            and any(c.isupper() for c in pwd)
-            and any(c.isdigit() for c in pwd)
-            and any(c in "!@#$%^&*" for c in pwd)
-        ):
-            return pwd
 
 
 class Command(BaseCommand):
@@ -134,7 +119,7 @@ class Command(BaseCommand):
                 )
                 user.is_staff = cfg["is_staff"]
 
-                password = generate_secure_password()
+                password = generate_one_time_password()
                 user.set_password(password)
                 user.save()
 
@@ -148,6 +133,7 @@ class Command(BaseCommand):
                 profile.office = cfg["office"]
                 profile.person = cfg["person"]
                 profile.must_change_password = True
+                profile.password_expires_at = one_time_password_expiry()
                 profile.save()
 
                 created_accounts.append({
