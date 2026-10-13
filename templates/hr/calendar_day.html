@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ day|date:"M j, Y" }} · Calendar{% endblock %}
+
+{% block content %}
+{% include "hr/_calendar_styles.html" %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+  <a href="{{ month_url }}" class="btn btn-sm btn-outline-secondary">← Back to {{ day|date:"F Y" }}</a>
+  <div class="d-flex gap-2">
+    <a href="{{ prev_url }}" class="btn btn-sm btn-outline-secondary" aria-label="Previous day">&larr;</a>
+    <a href="{{ next_url }}" class="btn btn-sm btn-outline-secondary" aria-label="Next day">&rarr;</a>
+    {% if can_manage %}<a href="{% url 'calendar_event_create' %}?date={{ day|date:'Y-m-d' }}" class="btn btn-sm btn-primary">+ Add Event</a>{% endif %}
+  </div>
+</div>
+
+<h1 class="h4 mb-1">{{ day|date:"l, F j, Y" }}</h1>
+<div class="text-muted small mb-3">{{ count }} item{{ count|pluralize }} you are allowed to see</div>
+
+{% for group in groups %}
+  <section id="{{ group.kind }}" class="card shadow-sm border-0 mb-3">
+    <div class="card-header bg-white py-2 d-flex align-items-center gap-2">
+      <span class="cal-badge cal-legend {{ group.css }}"><strong>{{ group.prefix }}</strong></span>
+      <span class="fw-semibold">{{ group.items|length }} {{ group.plural }}</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 small">
+        <tbody>
+          {% for item in group.items %}
+            <tr>
+              <td>
+                {% if item.url %}<a href="{{ item.url }}" class="text-decoration-none">{{ item.full }}</a>{% else %}{{ item.full }}{% endif %}
+                {% if item.note %}<div class="text-muted">{{ item.note }}</div>{% endif %}
+              </td>
+              <td class="text-muted text-nowrap d-none d-md-table-cell">{{ item.office }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% empty %}
+  <div class="alert alert-light border">Nothing on this day for the selected filters.</div>
+{% endfor %}
+{% endblock %}

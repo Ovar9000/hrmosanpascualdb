@@ -1,6 +1,6 @@
 # Demo run sheet
 
-A 20–25 minute walkthrough of the San Pascual HR prototype for HRMO, with
+A 25-minute walkthrough of the San Pascual HR prototype for HRMO, with
 Planning / Budget, the DPO and IT if they attend. **Fake data only.** Every name,
 ID number and document in the demo database is generated.
 
@@ -15,11 +15,11 @@ ID number and document in the demo database is generated.
    ```
 
    The script asks you to type `RESET`, loads 25 offices and 420 fake people,
-   creates the demo accounts, and checks the site and the audit chain. It ends with `Ready`.
+   creates the demo accounts, fills the calendar around today, and checks the site and the audit chain. It ends with `Ready`.
 2. **Copy the demo passwords onto paper.** The script shows them once.
 3. **Log in once with each demo account and set its demo password** (10+ characters).
    Every account is forced to do this at first login. Keep one account untouched
-   if you want to show the first-login screen live (scene 4). Write the new
+   if you want to show the first-login screen live (scene 5). Write the new
    passwords on the same paper, never in the repo.
 4. **Pick your example people** while logged in as `demo_hrmo`:
    - someone with two or three appointments (filter **Type: Plantilla**, open a few
@@ -38,7 +38,7 @@ pwsh -File scripts\demo_setup.ps1
 ```
 
 Without `-Reset` the script keeps the data and the demo passwords you set. It only
-starts the stack and runs the checks. Wait for `Ready`.
+starts the stack and runs the checks. Wait for `Ready`. Each run also refreshes the sample calendar items around that day.
 
 **From a phone on the same Wi-Fi:** add `-Lan` and follow what it prints. This runs
 over plain HTTP, so it is only acceptable with demo accounts and fake data. Don't use
@@ -93,14 +93,28 @@ it on public Wi-Fi.
    (the server reads the file itself, not the name). **Replace** a scan → the old one is
    marked **Superseded** and kept.
 
-### 3. Two people editing at once (2 min) · `demo_hrmo`, two tabs
+### 3. The HR calendar (2 min) · `demo_hrmo`
+
+1. **Calendar:** this month's interviews, deadlines, meetings, holidays and staff leave.
+   Each entry starts with a word for its kind, so it reads without relying on colour.
+2. **Click a day number** → everything on that day, in full, grouped by kind.
+3. **Go to December** → Dec 31 shows one entry, **"314 contract ends"**, instead of 314
+   badges. Click it → the full list, sorted by office. *Point:* contract renewals can be
+   planned from here.
+4. **Filters:** untick everything except *Contract ends* and pick an office.
+5. **+ on any day** adds an event (interview, deadline, holiday, meeting).
+6. *Optional:* narrow the window or open it on a phone → the grid becomes a list.
+7. **`demo_head`** sees only the Treasurer's Office: its staff's leave, starts and ends, plus
+   events for everyone.
+
+### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.
 2. Change the mobile number in tab 1 and save.
 3. Change the address in tab 2 and save → *"This record was modified by another user
    while you were editing it."* Nothing was overwritten. Refresh and redo the change.
 
-### 4. Who sees what (4 min)
+### 5. Who sees what (4 min)
 
 1. **`demo_head`:** only Treasurer's Office staff. Contacts are visible; birthdate,
    address, IDs, salary grade and pay are hidden. Documents show status and cabinet
@@ -113,7 +127,7 @@ it on public Wi-Fi.
 3. **`demo_employee`** (the account you left untouched): first login forces a new
    password, then the employee sees only their own record, including their own IDs.
 
-### 5. Projects (3 min)
+### 6. Projects (3 min)
 
 1. **`demo_projects`** lands on **Projects**. There is no Personnel menu at all.
 2. **New Project:** "Coastal Road Phase 2", Ongoing, dates this year, funding reference
@@ -125,22 +139,22 @@ it on public Wi-Fi.
 5. *Point:* defining and funding a project can sit with a different office from hiring
    into it. Ask the Planning / Budget questions below.
 
-### 6. Audit trail (3 min) · `demo_auditor`
+### 7. Audit trail (3 min) · `demo_auditor`
 
-1. **Audit Trail**, filter user `demo_hrmo`: every change from scenes 2–5 with
+1. **Audit Trail**, filter user `demo_hrmo`: every change from scenes 2–6 with
    before/after values. Government IDs and pay show `[REDACTED]`, never the value.
 2. **Re-verify all** → the hash chain is intact.
 3. **Export CSV.**
 4. *Point:* rows can only be added, never edited or deleted, not even by IT. The DPO
    keeps a short anchor code off the server, so tampering can be proven later.
 
-### 7. IT administrator limits (1 min) · `demo_admin`
+### 8. IT administrator limits (1 min) · `demo_admin`
 
 1. `/admin/`: user accounts are there; personnel records are not.
 2. Edit a user: HRMO Staff, Auditor and the other HR roles aren't in the role list.
    Only the emergency superuser can assign them.
 
-### 8. Employee accounts in bulk (1 min, terminal)
+### 9. Employee accounts in bulk (1 min, terminal)
 
 ```powershell
 docker compose run --rm manage python manage.py provision_accounts --dry-run --office MTO
@@ -150,7 +164,7 @@ The dry run lists who would get an account (18 in the Treasurer's Office) and cr
 nothing. Explain the real run: one printed slip per person with a one-time password,
 forced change at first login, expires after 14 days unused.
 
-### 9. Close (2 min)
+### 10. Close (2 min)
 
 - **Next on the roadmap:** reports (Step 7), leave filing and approval (Step 8),
   Excel import (Step 9), employee phone self-service (Step 10).
@@ -192,9 +206,9 @@ forced change at first login, expires after 14 days unused.
 | Where is leave filing? | Step 8, after HRMO confirms the approval order. |
 | Can it read our Excel files? | Step 9. We need sample sheets with the personal data blanked out. |
 | Can employees use their phones? | Step 10, and only once HTTPS is set up. |
-| What if two HR staff edit the same record? | Scene 3: the second save is stopped, and nothing is lost. |
+| What if two HR staff edit the same record? | Scene 4: the second save is stopped, and nothing is lost. |
 | Can someone get in using Inspect Element? | Every request is checked on the server, and the test suite replays those attacks. Before go-live, a penetration test is still recommended. |
-| Can IT see our records? | No. IT manages accounts only (scene 7), and everything they do is logged. |
+| Can IT see our records? | No. IT manages accounts only (scene 8), and everything they do is logged. |
 
 ---
 

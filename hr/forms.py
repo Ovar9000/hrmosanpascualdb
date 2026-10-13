@@ -7,7 +7,7 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from .models import FAKE_ID_FIELDS, Document, Engagement, Person, Project
+from .models import FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, Person, Project
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -577,3 +577,21 @@ class DocumentReplaceForm(forms.Form):
             validate_uploaded_document_file(f)
         return f
 
+
+
+class CalendarEventForm(forms.ModelForm):
+    """Create / edit a calendar event: interview, deadline, holiday, meeting (HRMO, DECISIONS C1)."""
+
+    class Meta:
+        model = CalendarEvent
+        fields = ["title", "kind", "start_date", "end_date", "time", "office", "notes"]
+        widgets = {
+            "title": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Interview: Admin Aide I applicants"}),
+            "kind": forms.Select(attrs={"class": "form-select"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"),
+            "time": forms.TimeInput(attrs={"type": "time", "class": "form-control"}, format="%H:%M"),
+            "office": forms.Select(attrs={"class": "form-select"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+        }
+        labels = {"start_date": "Date", "end_date": "Until (optional)", "office": "Office"}

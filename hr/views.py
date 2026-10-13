@@ -1,6 +1,8 @@
 import csv
 import json
 import os
+from calendar import Calendar
+from urllib.parse import urlencode
 from datetime import date, timedelta
 from django.conf import settings
 from django.contrib import messages
@@ -12,11 +14,13 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
+    CalendarEventForm,
     DocumentEditForm,
     DocumentForm,
     DocumentReplaceForm,
@@ -29,9 +33,11 @@ from .forms import (
 from .models import (
     AuditChainStatus,
     AuditLog,
+    CalendarEvent,
     Document,
     Engagement,
     LeaveCredit,
+    LeaveRequest,
     LeaveType,
     Office,
     Person,
@@ -51,11 +57,14 @@ from .permissions import (
     can_approve_leave,
     can_view_project_roster,
     can_view_projects,
+    get_user_office,
     get_visible_offices,
     get_visible_people,
     has_all_office_scope,
     is_auditor,
     is_hrmo,
+    is_office_head,
+    is_office_staff,
     is_sysadmin,
 )
 from .sequences import get_next_employee_no
@@ -898,6 +907,317 @@ def project_edit(request, pk):
         form = ProjectForm(instance=project)
 
     return render(request, "hr/project_form.html", {"form": form, "project": project, "is_edit": True})
+
+
+# --- Calendar (DECISIONS C1-C3) -------------------------------------------------
+
+# Every item kind, in the order a day lists them: (text prefix, CSS class, plural for a
+# collapsed group). The prefix makes the kind readable without colour (C3).
+CALENDAR_KINDS = {
+    CalendarEvent.Kind.HOLIDAY: ("Holiday", "cal-holiday", "holidays"),
+    CalendarEvent.Kind.DEADLINE: ("Due", "cal-deadline", "deadlines"),
+    CalendarEvent.Kind.INTERVIEW: ("Interview", "cal-interview", "interviews"),
+    CalendarEvent.Kind.MEETING: ("Meeting", "cal-meeting", "meetings"),
+    CalendarEvent.Kind.OTHER: ("Event", "cal-other", "events"),
+    "leave": ("Leave", "cal-leave", "people on leave"),
+    "hire": ("Start", "cal-hire", "contract starts"),
+    "contract_end": ("End", "cal-end", "contract ends"),
+    "project": ("Project", "cal-project", "project dates"),
+}
+CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
+
+# Filter groups shown as checkboxes; "events" covers every CalendarEvent kind.
+CALENDAR_FILTERS = [
+    ("events", "HR events"),
+    ("leave", "Leave"),
+    ("hire", "Contract starts"),
+    ("contract_end", "Contract ends"),
+    ("project", "Project dates"),
+]
+CALENDAR_LEGEND = [
+    (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
+] + [
+    ("Leave", "Leave", "cal-leave"),
+    ("Contract start", "Start", "cal-hire"),
+    ("Contract end", "End", "cal-end"),
+    ("Project start / end", "Project", "cal-project"),
+]
+
+# A day shows at most this many entries; a kind with more items than this collapses into
+# one "N contract ends" entry that opens the day page (C3).
+CALENDAR_CELL_LIMIT = 3
+
+
+def _short_name(person):
+    return f"{person.last_name}, {person.first_name[:1]}."
+
+
+def _calendar_filters(request):
+    """Validated filter choices from the query string: (kinds shown, office or None, querystring)."""
+    groups = {value for value, _ in CALENDAR_FILTERS}
+    if request.GET.get("filtered"):
+        shown = {value for value in request.GET.getlist("show") if value in groups}
+    else:
+        shown = set(groups)
+    office = None
+    office_id = request.GET.get("office", "")
+    if office_id.isdigit():
+        # Only an office this role can already see; anything else is ignored (R9).
+        office = get_visible_offices(request.user).filter(pk=int(office_id)).first()
+
+    params = [("filtered", "1")] + [("show", value) for value, _ in CALENDAR_FILTERS if value in shown]
+    if office:
+        params.append(("office", office.pk))
+    is_default = shown == groups and not office
+    return shown, office, "" if is_default else "&" + urlencode(params)
+
+
+def _calendar_items(user, first, last, shown, office=None):
+    """Returns {day: [item, ...]} of everything this role may see between first and last (C2).
+
+    Each item: kind, prefix, css, short (for a grid cell), full (complete text), url, note, office.
+    """
+    days = {}
+    can_manage = can_manage_hr_records(user)
+
+    def add(day, kind, short, full, url=None, note="", office_name=""):
+        if first <= day <= last:
+            prefix, css, _ = CALENDAR_KINDS[kind]
+            days.setdefault(day, []).append({
+                "kind": kind, "prefix": prefix, "css": css, "short": short, "full": full,
+                "url": url, "note": note, "office": office_name,
+            })
+
+    def span(start, end):
+        day = max(start, first)
+        while day <= min(end, last):
+            yield day
+            day += timedelta(days=1)
+
+    # Events: municipality-wide, plus those for an office the user oversees or works in.
+    if "events" in shown:
+        events = CalendarEvent.objects.filter(start_date__lte=last).filter(
+            Q(end_date__gte=first) | Q(end_date__isnull=True, start_date__gte=first)
+        ).select_related("office")
+        if not has_all_office_scope(user):
+            office_ids = list(get_visible_offices(user).values_list("pk", flat=True))
+            own_office = get_user_office(user)
+            if own_office:
+                office_ids.append(own_office.pk)
+            events = events.filter(Q(office__isnull=True) | Q(office__in=office_ids))
+        if office:
+            events = events.filter(Q(office__isnull=True) | Q(office=office))
+        for event in events:
+            # The prefix already names the kind: "Interview: Clerk applicants" shows as "Interview Clerk applicants".
+            title = event.title
+            kind_word = CALENDAR_KINDS[event.kind][0].lower() + ":"
+            if title.lower().startswith(kind_word):
+                title = title[len(kind_word):].strip() or event.title
+            short = f"{event.time:%H:%M} {title}" if event.time else title
+            full = event.title + (f" at {event.time:%H:%M}" if event.time else "")
+            url = reverse("calendar_event_edit", args=[event.pk]) if can_manage else None
+            office_name = event.office.name if event.office else "All offices"
+            for day in span(event.start_date, event.end_date or event.start_date):
+                add(day, event.kind, short, full, url, event.notes, office_name)
+
+    people = get_visible_people(user)
+
+    # Leave: approvers, HRMO and Auditor see everyone they can see; others only their own (R4).
+    if "leave" in shown:
+        leave_people = people
+        if not (can_approve_leave(user) or can_view_personal_details(user)):
+            leave_people = people.filter(user_profile__user=user)
+        if office:
+            leave_people = leave_people.filter(
+                engagements__office=office, engagements__status=Engagement.Status.ACTIVE
+            )
+        leaves = LeaveRequest.objects.filter(
+            person__in=leave_people,
+            status__in=[LeaveRequest.Status.PENDING, LeaveRequest.Status.APPROVED],
+            start_date__lte=last,
+            end_date__gte=first,
+        ).select_related("person")
+        for leave in leaves:
+            pending = " (pending)" if leave.status == LeaveRequest.Status.PENDING else ""
+            full = f"{leave.person.full_name} · {leave.get_leave_type_display()}{pending}"
+            url = reverse("person_detail", args=[leave.person_id])
+            for day in span(leave.start_date, leave.end_date):
+                add(day, "leave", _short_name(leave.person) + pending, full, url)
+
+    # Contract starts and ends. Office roles see only their own office's engagements (R5).
+    if "hire" in shown or "contract_end" in shown:
+        engagements = Engagement.objects.filter(person__in=people).select_related("person", "office")
+        if not has_all_office_scope(user) and (is_office_head(user) or is_office_staff(user)):
+            engagements = engagements.filter(office__in=get_visible_offices(user))
+        if office:
+            engagements = engagements.filter(office=office)
+        for eng in engagements.filter(Q(start_date__range=(first, last)) | Q(end_date__range=(first, last))):
+            who = f"{eng.person.full_name}, {eng.position_title}"
+            url = reverse("person_detail", args=[eng.person_id])
+            if "hire" in shown:
+                add(eng.start_date, "hire", _short_name(eng.person), f"Starts: {who}", url, office_name=eng.office.name)
+            if eng.end_date and "contract_end" in shown:
+                add(eng.end_date, "contract_end", _short_name(eng.person), f"Contract ends: {who}", url,
+                    office_name=eng.office.name)
+
+    if "project" in shown and can_view_projects(user):
+        projects = Project.objects.filter(Q(start_date__range=(first, last)) | Q(end_date__range=(first, last)))
+        if office:
+            projects = projects.filter(office=office)
+        for project in projects.select_related("office"):
+            url = reverse("project_detail", args=[project.pk])
+            add(project.start_date, "project", f"{project.name} (start)", f"Project starts: {project.name}", url,
+                office_name=project.office.name)
+            if project.end_date:
+                add(project.end_date, "project", f"{project.name} (end)", f"Project ends: {project.name}", url,
+                    office_name=project.office.name)
+
+    for items in days.values():
+        items.sort(key=lambda item: (CALENDAR_KIND_ORDER.index(item["kind"]), item["full"]))
+    return days
+
+
+def _compact_day(day, items, filter_qs):
+    """Collapses any kind with more than CALENDAR_CELL_LIMIT items into one summary entry (C3)."""
+    day_url = reverse("calendar_day", args=[day.isoformat()])
+    compact, by_kind = [], {}
+    for item in items:
+        by_kind.setdefault(item["kind"], []).append(item)
+    for kind, group in by_kind.items():
+        if len(group) > CALENDAR_CELL_LIMIT:
+            prefix, css, plural = CALENDAR_KINDS[kind]
+            compact.append({
+                "kind": kind, "prefix": prefix, "css": css, "summary": True,
+                "short": f"{len(group)} {plural}", "full": f"{len(group)} {plural}: open the day for the full list",
+                "url": f"{day_url}?{filter_qs.lstrip('&')}#{kind}" if filter_qs else f"{day_url}#{kind}",
+            })
+        else:
+            compact.extend(group)
+    return compact
+
+
+def _calendar_redirect(day):
+    return redirect(f"{reverse('calendar')}?month={day:%Y-%m}")
+
+
+@login_required
+def calendar_month(request):
+    """Month grid (wide screens) and agenda list (phones) of role-scoped items (C1-C3)."""
+    user = request.user
+    if is_sysadmin(user) and not user.is_superuser:
+        return redirect("admin:index")
+
+    today = timezone.localdate()
+    month = _parse_date_param(request.GET.get("month", "") + "-01")
+    if not month or not 1900 <= month.year <= 2200:  # bad input falls back, never a 500
+        month = today.replace(day=1)
+    shown, office, filter_qs = _calendar_filters(request)
+    weeks = Calendar(firstweekday=6).monthdatescalendar(month.year, month.month)  # Sunday first
+    items = _calendar_items(user, weeks[0][0], weeks[-1][-1], shown, office)
+
+    grid, agenda = [], []
+    for week in weeks:
+        row = []
+        for day in week:
+            compact = _compact_day(day, items.get(day, []), filter_qs)
+            row.append({
+                "date": day,
+                "items": compact[:CALENDAR_CELL_LIMIT],
+                "more": len(compact) - CALENDAR_CELL_LIMIT,
+                "url": reverse("calendar_day", args=[day.isoformat()]),
+            })
+            if day.month == month.month and compact:
+                agenda.append({"date": day, "items": compact})
+        grid.append(row)
+
+    visible_offices = get_visible_offices(user)
+    return render(
+        request,
+        "hr/calendar.html",
+        {
+            "month": month,
+            "today": today,
+            "weeks": grid,
+            "agenda": agenda,
+            "prev_month": (month - timedelta(days=1)).replace(day=1),
+            "next_month": (month + timedelta(days=31)).replace(day=1),
+            "legend": CALENDAR_LEGEND,
+            "filters": [(value, label, value in shown) for value, label in CALENDAR_FILTERS],
+            "offices": visible_offices if visible_offices.count() > 1 else None,
+            "selected_office": office,
+            "filter_qs": filter_qs,
+            "can_manage": can_manage_hr_records(user),
+        },
+    )
+
+
+@login_required
+def calendar_day(request, day):
+    """Everything on one day, in full, grouped by kind (C3). Same scoping and filters as the month."""
+    user = request.user
+    if is_sysadmin(user) and not user.is_superuser:
+        return redirect("admin:index")
+    date_value = _parse_date_param(day)
+    if not date_value or not 1900 <= date_value.year <= 2200:
+        raise Http404("Not a valid date.")
+
+    shown, office, filter_qs = _calendar_filters(request)
+    items = _calendar_items(user, date_value, date_value, shown, office).get(date_value, [])
+    groups = []
+    for item in items:
+        if not groups or groups[-1]["kind"] != item["kind"]:
+            prefix, css, plural = CALENDAR_KINDS[item["kind"]]
+            groups.append({"kind": item["kind"], "prefix": prefix, "css": css, "plural": plural, "items": []})
+        groups[-1]["items"].append(item)
+    for group in groups:
+        group["items"].sort(key=lambda item: (item["office"], item["full"]))
+
+    return render(
+        request,
+        "hr/calendar_day.html",
+        {
+            "day": date_value,
+            "groups": groups,
+            "count": len(items),
+            "month_url": f"{reverse('calendar')}?month={date_value:%Y-%m}{filter_qs}",
+            "prev_url": reverse("calendar_day", args=[(date_value - timedelta(days=1)).isoformat()]) + (
+                f"?{filter_qs.lstrip('&')}" if filter_qs else ""),
+            "next_url": reverse("calendar_day", args=[(date_value + timedelta(days=1)).isoformat()]) + (
+                f"?{filter_qs.lstrip('&')}" if filter_qs else ""),
+            "can_manage": can_manage_hr_records(user),
+        },
+    )
+
+
+@login_required
+def calendar_event_form(request, pk=None):
+    """Add, edit or delete a calendar event (HRMO only, C1). Deletions are audit-logged."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to manage calendar events.")
+
+    event = get_object_or_404(CalendarEvent, pk=pk) if pk else None
+    if request.method == "POST" and event and "delete" in request.POST:
+        with transaction.atomic():
+            event.delete()
+        messages.success(request, f"Removed '{event.title}' from the calendar.")
+        return _calendar_redirect(event.start_date)
+
+    form = CalendarEventForm(
+        request.POST or None,
+        instance=event,
+        initial=None if event else {"start_date": _parse_date_param(request.GET.get("date", ""))},
+    )
+    if request.method == "POST" and form.is_valid():
+        # No version check (S2) on events yet; add one if two HRMO staff start editing the same event.
+        with transaction.atomic():
+            saved = form.save(commit=False)
+            if not event:
+                saved.created_by = request.user
+            saved.save()
+        messages.success(request, f"Saved '{saved.title}' on the calendar.")
+        return _calendar_redirect(saved.start_date)
+
+    return render(request, "hr/calendar_event_form.html", {"form": form, "event": event})
 
 
 def _parse_date_param(value):

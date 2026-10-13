@@ -108,3 +108,4 @@ and add the PC's LAN IP to `DJANGO_ALLOWED_HOSTS`.
 
 - [`DECISIONS.md`](DECISIONS.md): every assumption, and which ones the HRMO survey may change.
 - [`docs/DEMO.md`](docs/DEMO.md): presentation run sheet (rehearsal, walkthrough, questions to ask).
+- [`docs/HANDOVER.md`](docs/HANDOVER.md): scope, what production needs, and who should own it.
