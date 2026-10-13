@@ -113,6 +113,15 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 ---
 
+## Calendar
+
+| # | Decision | Survey? |
+|---|---|---|
+| C1 | **One calendar, built in, no external service.** `/calendar/` is a server-rendered month grid (Python `calendar` + Bootstrap); nothing is sent to Google or any cloud calendar. Leave requests (pending and approved), engagement start dates ("hire / contract start"), engagement end dates ("contract end") and project start/end dates are read from their own tables, never copied. Everything else (hiring interviews, deadlines, holidays, meetings) is a `CalendarEvent` row that HRMO (`manage_hr_records`) adds, edits or deletes. Events are scheduling notes, not personnel records, so unlike S3 they can be deleted from the screen; creates, edits and deletes are audit-logged. Events have no S2 version check. *Proven by* `CalendarTestCase`. | Maybe |
+| C2 | **Same visibility as the rest of the app.** People-based items use `get_visible_people`; office roles see hires and contract ends only for their own office (R5). Leave items (which show the leave type) are shown to leave approvers, HRMO and Auditor for everyone they can see, and to everyone else for their own leave only. Project dates follow `can_view_projects`. An event with an office is shown to that office and all-office roles; an event without one is shown to every signed-in user, so applicant names in interview titles should go on office-scoped events. *Proven by* `CalendarTestCase`. | Maybe |
+
+---
+
 ## Import / export
 
 | # | Decision | Survey? |

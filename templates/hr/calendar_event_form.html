@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{% if event %}Edit Event{% else %}Add Event{% endif %} · Calendar{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'calendar' %}{% if event %}?month={{ event.start_date|date:'Y-m' }}{% endif %}" class="btn btn-sm btn-outline-secondary">Back to Calendar</a>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3">
+    <h1 class="h4 mb-0">{% if event %}Edit Event: {{ event.title }}{% else %}Add a Calendar Event{% endif %}</h1>
+  </div>
+  <div class="card-body p-4">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger shadow-sm mb-4">
+        {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <div class="row g-3">
+        {% for field in form %}
+          <div class="col-12 {% if field.name != 'notes' %}col-md-6{% endif %}">
+            <label for="{{ field.id_for_label }}" class="form-label fw-semibold">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>
+            {{ field }}
+            {% if field.errors %}<div class="invalid-feedback d-block">{{ field.errors|first }}</div>{% endif %}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <div class="d-flex gap-2 mt-4">
+        <button type="submit" class="btn btn-primary">{% if event %}Save Changes{% else %}Add Event{% endif %}</button>
+        <a href="{% url 'calendar' %}" class="btn btn-outline-secondary">Cancel</a>
+        {% if event %}
+          <button type="submit" name="delete" value="1" class="btn btn-outline-danger ms-auto"
+                  onclick="return confirm('Remove this event from the calendar?');">Delete</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

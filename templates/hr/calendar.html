@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Calendar · {{ month|date:"F Y" }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+  <div>
+    <h1 class="h4 mb-0">{{ month|date:"F Y" }}</h1>
+    <div class="text-muted small">Leave, hires, contract ends, projects and HR events you are allowed to see</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="?month={{ prev_month|date:'Y-m' }}" class="btn btn-sm btn-outline-secondary">&larr; {{ prev_month|date:"M" }}</a>
+    <a href="{% url 'calendar' %}" class="btn btn-sm btn-outline-secondary">Today</a>
+    <a href="?month={{ next_month|date:'Y-m' }}" class="btn btn-sm btn-outline-secondary">{{ next_month|date:"M" }} &rarr;</a>
+    {% if can_manage %}<a href="{% url 'calendar_event_create' %}" class="btn btn-sm btn-primary">+ Add Event</a>{% endif %}
+  </div>
+</div>
+
+<div class="d-flex flex-wrap gap-1 mb-2 small">
+  {% for label, css in legend %}<span class="badge fw-normal {{ css }}">{{ label }}</span>{% endfor %}
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="table-responsive">
+    <table class="table table-bordered mb-0" style="table-layout: fixed; min-width: 56rem;">
+      <thead class="table-light text-center small">
+        <tr><th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr>
+      </thead>
+      <tbody>
+        {% for week in weeks %}
+          <tr>
+            {% for day, items in week %}
+              <td class="p-1 {% if day.month != month.month %}bg-body-tertiary opacity-75{% endif %}" style="height: 7rem;">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="{% if day == today %}badge rounded-pill text-bg-primary{% else %}fw-semibold{% endif %}">{{ day.day }}</span>
+                  {% if can_manage %}<a href="{% url 'calendar_event_create' %}?date={{ day|date:'Y-m-d' }}" class="text-decoration-none" title="Add event on {{ day|date:'M d' }}">+</a>{% endif %}
+                </div>
+                {% for item in items %}
+                  {% if forloop.counter == 4 %}<details><summary class="small text-primary">+{{ items|length|add:"-3" }} more</summary>{% endif %}
+                  <div class="badge fw-normal d-block text-start text-truncate mb-1 {{ item.css }}" title="{{ item.label }}{% if item.note %} · {{ item.note }}{% endif %}">
+                    {% if item.url %}<a href="{{ item.url }}" class="text-reset text-decoration-none">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}
+                  </div>
+                  {% if forloop.last and forloop.counter > 3 %}</details>{% endif %}
+                {% endfor %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

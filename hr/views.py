@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from calendar import Calendar
 from datetime import date, timedelta
 from django.conf import settings
 from django.contrib import messages
@@ -12,11 +13,13 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
+    CalendarEventForm,
     DocumentEditForm,
     DocumentForm,
     DocumentReplaceForm,
@@ -29,9 +32,11 @@ from .forms import (
 from .models import (
     AuditChainStatus,
     AuditLog,
+    CalendarEvent,
     Document,
     Engagement,
     LeaveCredit,
+    LeaveRequest,
     LeaveType,
     Office,
     Person,
@@ -51,11 +56,14 @@ from .permissions import (
     can_approve_leave,
     can_view_project_roster,
     can_view_projects,
+    get_user_office,
     get_visible_offices,
     get_visible_people,
     has_all_office_scope,
     is_auditor,
     is_hrmo,
+    is_office_head,
+    is_office_staff,
     is_sysadmin,
 )
 from .sequences import get_next_employee_no
@@ -898,6 +906,158 @@ def project_edit(request, pk):
         form = ProjectForm(instance=project)
 
     return render(request, "hr/project_form.html", {"form": form, "project": project, "is_edit": True})
+
+
+# --- Calendar (DECISIONS C1-C2) -------------------------------------------------
+
+# Badge colour per item kind. Leave, hires, contract ends and projects come from their own
+# tables; the rest are CalendarEvent.Kind values.
+CALENDAR_BADGES = {
+    "leave": "text-bg-warning",
+    "hire": "text-bg-success",
+    "contract_end": "text-bg-dark",
+    "project": "text-bg-info",
+    CalendarEvent.Kind.INTERVIEW: "text-bg-primary",
+    CalendarEvent.Kind.DEADLINE: "text-bg-danger",
+    CalendarEvent.Kind.HOLIDAY: "text-bg-secondary",
+    CalendarEvent.Kind.MEETING: "text-bg-light border",
+    CalendarEvent.Kind.OTHER: "text-bg-light border",
+}
+CALENDAR_LEGEND = [
+    ("Leave", CALENDAR_BADGES["leave"]),
+    ("Hire / contract start", CALENDAR_BADGES["hire"]),
+    ("Contract end", CALENDAR_BADGES["contract_end"]),
+    ("Project start / end", CALENDAR_BADGES["project"]),
+] + [(label, CALENDAR_BADGES[value]) for value, label in CalendarEvent.Kind.choices]
+
+
+def _calendar_redirect(day):
+    return redirect(f"{reverse('calendar')}?month={day:%Y-%m}")
+
+
+@login_required
+def calendar_month(request):
+    """One month of leave, hires, contract ends, project dates and events, scoped to the role (C2)."""
+    user = request.user
+    if is_sysadmin(user) and not user.is_superuser:
+        return redirect("admin:index")
+
+    today = timezone.localdate()
+    month = _parse_date_param(request.GET.get("month", "") + "-01")
+    if not month or not 1900 <= month.year <= 2200:  # bad input falls back, never a 500
+        month = today.replace(day=1)
+    weeks = Calendar(firstweekday=6).monthdatescalendar(month.year, month.month)  # Sunday first
+    first, last = weeks[0][0], weeks[-1][-1]
+    days = {d: [] for week in weeks for d in week}
+    can_manage = can_manage_hr_records(user)
+
+    def add(day, kind, label, url=None, note=""):
+        if day in days:
+            days[day].append({"label": label, "css": CALENDAR_BADGES[kind], "url": url, "note": note})
+
+    def span(start, end):
+        day = max(start, first)
+        while day <= min(end, last):
+            yield day
+            day += timedelta(days=1)
+
+    # Events: municipality-wide, plus those for an office the user oversees or works in.
+    events = CalendarEvent.objects.filter(start_date__lte=last).filter(
+        Q(end_date__gte=first) | Q(end_date__isnull=True, start_date__gte=first)
+    )
+    if not has_all_office_scope(user):
+        office_ids = list(get_visible_offices(user).values_list("pk", flat=True))
+        own_office = get_user_office(user)
+        if own_office:
+            office_ids.append(own_office.pk)
+        events = events.filter(Q(office__isnull=True) | Q(office__in=office_ids))
+    for event in events:
+        label = f"{event.time:%H:%M} {event.title}" if event.time else event.title
+        url = reverse("calendar_event_edit", args=[event.pk]) if can_manage else None
+        for day in span(event.start_date, event.end_date or event.start_date):
+            add(day, event.kind, label, url, event.notes)
+
+    people = get_visible_people(user)
+
+    # Leave: approvers, HRMO and Auditor see everyone they can see; others only their own (R4).
+    leave_people = people
+    if not (can_approve_leave(user) or can_view_personal_details(user)):
+        leave_people = people.filter(user_profile__user=user)
+    leaves = LeaveRequest.objects.filter(
+        person__in=leave_people,
+        status__in=[LeaveRequest.Status.PENDING, LeaveRequest.Status.APPROVED],
+        start_date__lte=last,
+        end_date__gte=first,
+    ).select_related("person")
+    for leave in leaves:
+        label = f"{leave.person.full_name}: {leave.get_leave_type_display()}"
+        if leave.status == LeaveRequest.Status.PENDING:
+            label += " (pending)"
+        for day in span(leave.start_date, leave.end_date):
+            add(day, "leave", label, reverse("person_detail", args=[leave.person_id]))
+
+    # Hires and contract ends. Office roles see only their own office's engagements (R5).
+    engagements = Engagement.objects.filter(person__in=people).select_related("person")
+    if not has_all_office_scope(user) and (is_office_head(user) or is_office_staff(user)):
+        engagements = engagements.filter(office__in=get_visible_offices(user))
+    for eng in engagements.filter(Q(start_date__range=(first, last)) | Q(end_date__range=(first, last))):
+        who = f"{eng.person.full_name} ({eng.position_title})"
+        url = reverse("person_detail", args=[eng.person_id])
+        add(eng.start_date, "hire", f"Starts: {who}", url)
+        if eng.end_date:
+            add(eng.end_date, "contract_end", f"Ends: {who}", url)
+
+    if can_view_projects(user):
+        for project in Project.objects.filter(Q(start_date__range=(first, last)) | Q(end_date__range=(first, last))):
+            url = reverse("project_detail", args=[project.pk])
+            add(project.start_date, "project", f"Project starts: {project.name}", url)
+            if project.end_date:
+                add(project.end_date, "project", f"Project ends: {project.name}", url)
+
+    return render(
+        request,
+        "hr/calendar.html",
+        {
+            "month": month,
+            "today": today,
+            "weeks": [[(day, days[day]) for day in week] for week in weeks],
+            "prev_month": (month - timedelta(days=1)).replace(day=1),
+            "next_month": (month + timedelta(days=31)).replace(day=1),
+            "legend": CALENDAR_LEGEND,
+            "can_manage": can_manage,
+        },
+    )
+
+
+@login_required
+def calendar_event_form(request, pk=None):
+    """Add, edit or delete a calendar event (HRMO only, C1). Deletions are audit-logged."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to manage calendar events.")
+
+    event = get_object_or_404(CalendarEvent, pk=pk) if pk else None
+    if request.method == "POST" and event and "delete" in request.POST:
+        with transaction.atomic():
+            event.delete()
+        messages.success(request, f"Removed '{event.title}' from the calendar.")
+        return _calendar_redirect(event.start_date)
+
+    form = CalendarEventForm(
+        request.POST or None,
+        instance=event,
+        initial=None if event else {"start_date": _parse_date_param(request.GET.get("date", ""))},
+    )
+    if request.method == "POST" and form.is_valid():
+        # ponytail: no version check (S2) on events; add one if two HRMO staff edit the same event.
+        with transaction.atomic():
+            saved = form.save(commit=False)
+            if not event:
+                saved.created_by = request.user
+            saved.save()
+        messages.success(request, f"Saved '{saved.title}' on the calendar.")
+        return _calendar_redirect(saved.start_date)
+
+    return render(request, "hr/calendar_event_form.html", {"form": form, "event": event})
 
 
 def _parse_date_param(value):

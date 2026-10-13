@@ -17,6 +17,7 @@ from .audit import (
 )
 from .models import (
     AuditLog,
+    CalendarEvent,
     Delegate,
     Document,
     Engagement,
@@ -40,6 +41,7 @@ AUDITED_MODELS = (
     UserProfile,
     Office,
     Project,
+    CalendarEvent,
     User,
     Group,
 )

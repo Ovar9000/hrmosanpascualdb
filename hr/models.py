@@ -512,6 +512,51 @@ class LeaveCredit(models.Model):
             raise ValidationError("Only people with an active leave-eligible engagement have leave credits (DECISIONS L3).")
 
 
+# --- Calendar (DECISIONS C1-C2) ------------------------------------------------
+
+
+class CalendarEvent(models.Model):
+    """A dated item with no record of its own: interview, deadline, holiday, meeting.
+
+    Leave, hires, contract ends and project dates are read from their own tables by the
+    calendar view, never copied here.
+    """
+
+    class Kind(models.TextChoices):
+        INTERVIEW = "interview", "Hiring interview"
+        DEADLINE = "deadline", "Deadline"
+        HOLIDAY = "holiday", "Holiday / no work"
+        MEETING = "meeting", "Meeting / activity"
+        OTHER = "other", "Other"
+
+    title = models.CharField(max_length=200)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True, help_text="Leave blank for a one-day event.")
+    time = models.TimeField(null=True, blank=True)
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="calendar_events",
+        help_text="Only this office (and all-office roles) see it. Leave blank to show to everyone.",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        ordering = ["start_date", "time"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_date__isnull=True) | Q(end_date__gte=F("start_date")),
+                name="calendarevent_end_after_start",
+                violation_error_message="End date cannot be before start date.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()}: {self.title} ({self.start_date})"
+
+
 # --- User Profile -----------------------------------------------------------
 
 

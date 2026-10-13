@@ -25,6 +25,7 @@ from hr.forms import (
 )
 from hr.models import (
     AuditLog,
+    CalendarEvent,
     Delegate,
     Document,
     EmployeeSequence,
@@ -3518,3 +3519,88 @@ class TamperingTestCase(TestCase):
         })
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(resp.url.startswith("https://evil.example"))
+
+
+class CalendarTestCase(TestCase):
+    """DECISIONS C1-C2: one calendar, every source scoped by the existing role rules."""
+
+    def setUp(self):
+        User = get_user_model()
+        call_command("seed_offices")
+        call_command("setup_roles")
+        self.office_a = Office.objects.get(name="Office of the Municipal Mayor")
+        self.office_b = Office.objects.get(name="Office of the Municipal Treasurer")
+
+        self.hrmo = User.objects.create_user("cal_hrmo", password="pass123")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+        def person(no, last, office, start):
+            p = Person.objects.create(employee_no=no, last_name=last, first_name="X", birthdate=date(1990, 1, 1))
+            Engagement.objects.create(
+                person=p, office=office, type=Engagement.Type.JOB_ORDER, position_title="Aide",
+                start_date=start, end_date=date(2026, 12, 31),
+            )
+            LeaveRequest.objects.create(
+                person=p, leave_type=LeaveType.SICK, start_date=date(2026, 10, 20),
+                end_date=date(2026, 10, 21), days=Decimal("2"), status=LeaveRequest.Status.APPROVED,
+            )
+            return p
+
+        self.coworker = person("SP-09001", "Coworker", self.office_a, date(2026, 10, 5))
+        self.me = person("SP-09002", "Myself", self.office_a, date(2025, 1, 1))
+        self.outsider = person("SP-09003", "Outsider", self.office_b, date(2026, 10, 6))
+
+        # Office Staff in Office A, linked to their own person record.
+        self.staff = User.objects.create_user("cal_staff", password="pass123")
+        self.staff.groups.add(Group.objects.get(name=ROLE_OFFICE_STAFF))
+        UserProfile.objects.create(user=self.staff, office=self.office_a, person=self.me)
+
+        CalendarEvent.objects.create(title="Town fiesta", kind="holiday", start_date=date(2026, 10, 9))
+        CalendarEvent.objects.create(title="Treasury interview", kind="interview",
+                                     start_date=date(2026, 10, 14), office=self.office_b)
+
+    def get_month(self, user):
+        self.client.force_login(user)
+        resp = self.client.get("/calendar/?month=2026-10")
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode()
+
+    def test_hrmo_sees_every_source(self):
+        html = self.get_month(self.hrmo)
+        for text in ["Town fiesta", "Treasury interview", "Starts: Coworker", "Starts: Outsider",
+                     "Coworker, X: Sick leave", "Outsider, X: Sick leave"]:
+            self.assertIn(text, html)
+
+    def test_office_staff_sees_own_office_and_own_leave_only(self):
+        html = self.get_month(self.staff)
+        self.assertIn("Town fiesta", html)                 # municipality-wide event
+        self.assertIn("Starts: Coworker", html)            # hire in own office
+        self.assertIn("Myself, X: Sick leave", html)       # own leave
+        self.assertNotIn("Coworker, X: Sick leave", html)  # coworker's leave type is not theirs to see
+        self.assertNotIn("Treasury interview", html)       # other office's event
+        self.assertNotIn("Outsider", html)                 # other office's people
+
+    def test_only_hrmo_manages_events_and_changes_are_audited(self):
+        data = {"title": "CSC report due", "kind": "deadline", "start_date": "2026-10-30"}
+        self.client.force_login(self.staff)
+        self.assertEqual(self.client.post("/calendar/events/new/", data).status_code, 403)
+        self.assertFalse(CalendarEvent.objects.filter(title="CSC report due").exists())
+
+        self.client.force_login(self.hrmo)
+        resp = self.client.post("/calendar/events/new/", data)
+        self.assertRedirects(resp, "/calendar/?month=2026-10")
+        event = CalendarEvent.objects.get(title="CSC report due")
+        self.assertEqual(event.created_by, self.hrmo)
+
+        bad = self.client.post(f"/calendar/events/{event.pk}/", {**data, "end_date": "2026-10-01"})
+        self.assertContains(bad, "End date cannot be before start date.")
+
+        self.client.post(f"/calendar/events/{event.pk}/", {"delete": "1"})
+        self.assertFalse(CalendarEvent.objects.filter(pk=event.pk).exists())
+        actions = set(AuditLog.objects.filter(model_name="CalendarEvent").values_list("action", flat=True))
+        self.assertEqual(actions, {"create", "delete"})
+
+    def test_bad_month_falls_back_instead_of_500(self):
+        self.client.force_login(self.hrmo)
+        for month in ["junk", "9999-12", "2026-13"]:
+            self.assertEqual(self.client.get(f"/calendar/?month={month}").status_code, 200)
