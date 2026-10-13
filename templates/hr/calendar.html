@@ -2,51 +2,103 @@
 {% block title %}Calendar · {{ month|date:"F Y" }}{% endblock %}
 
 {% block content %}
+{% include "hr/_calendar_styles.html" %}
+
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
   <div>
     <h1 class="h4 mb-0">{{ month|date:"F Y" }}</h1>
-    <div class="text-muted small">Leave, hires, contract ends, projects and HR events you are allowed to see</div>
+    <div class="text-muted small">Leave, contract starts and ends, projects and HR events you are allowed to see</div>
   </div>
-  <div class="d-flex gap-2">
-    <a href="?month={{ prev_month|date:'Y-m' }}" class="btn btn-sm btn-outline-secondary">&larr; {{ prev_month|date:"M" }}</a>
-    <a href="{% url 'calendar' %}" class="btn btn-sm btn-outline-secondary">Today</a>
-    <a href="?month={{ next_month|date:'Y-m' }}" class="btn btn-sm btn-outline-secondary">{{ next_month|date:"M" }} &rarr;</a>
+  <div class="d-flex flex-wrap gap-2">
+    <a href="?month={{ prev_month|date:'Y-m' }}{{ filter_qs }}" class="btn btn-sm btn-outline-secondary" aria-label="Previous month">&larr; {{ prev_month|date:"M" }}</a>
+    <a href="?{{ filter_qs|slice:'1:' }}" class="btn btn-sm btn-outline-secondary">Today</a>
+    <a href="?month={{ next_month|date:'Y-m' }}{{ filter_qs }}" class="btn btn-sm btn-outline-secondary" aria-label="Next month">{{ next_month|date:"M" }} &rarr;</a>
     {% if can_manage %}<a href="{% url 'calendar_event_create' %}" class="btn btn-sm btn-primary">+ Add Event</a>{% endif %}
   </div>
 </div>
 
-<div class="d-flex flex-wrap gap-1 mb-2 small">
-  {% for label, css in legend %}<span class="badge fw-normal {{ css }}">{{ label }}</span>{% endfor %}
+<!-- Filters -->
+<div class="card shadow-sm border-0 mb-2">
+  <div class="card-body p-2">
+    <form method="get" class="d-flex flex-wrap align-items-center gap-3 small">
+      <input type="hidden" name="month" value="{{ month|date:'Y-m' }}">
+      <input type="hidden" name="filtered" value="1">
+      <span class="fw-semibold text-muted">Show</span>
+      {% for value, label, checked in filters %}
+        <div class="form-check form-check-inline m-0">
+          <input class="form-check-input" type="checkbox" name="show" value="{{ value }}" id="show-{{ value }}" {% if checked %}checked{% endif %}>
+          <label class="form-check-label" for="show-{{ value }}">{{ label }}</label>
+        </div>
+      {% endfor %}
+      {% if offices %}
+        <label for="office-filter" class="visually-hidden">Office</label>
+        <select id="office-filter" name="office" class="form-select form-select-sm w-auto">
+          <option value="">All offices</option>
+          {% for off in offices %}
+            <option value="{{ off.pk }}" {% if selected_office and selected_office.pk == off.pk %}selected{% endif %}>{{ off.acronym|default:off.name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+      <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+      {% if filter_qs %}<a href="?month={{ month|date:'Y-m' }}" class="btn btn-sm btn-outline-secondary">Show everything</a>{% endif %}
+    </form>
+  </div>
 </div>
 
-<div class="card shadow-sm border-0">
-  <div class="table-responsive">
-    <table class="table table-bordered mb-0" style="table-layout: fixed; min-width: 56rem;">
-      <thead class="table-light text-center small">
-        <tr><th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr>
-      </thead>
-      <tbody>
-        {% for week in weeks %}
-          <tr>
-            {% for day, items in week %}
-              <td class="p-1 {% if day.month != month.month %}bg-body-tertiary opacity-75{% endif %}" style="height: 7rem;">
-                <div class="d-flex justify-content-between small mb-1">
-                  <span class="{% if day == today %}badge rounded-pill text-bg-primary{% else %}fw-semibold{% endif %}">{{ day.day }}</span>
-                  {% if can_manage %}<a href="{% url 'calendar_event_create' %}?date={{ day|date:'Y-m-d' }}" class="text-decoration-none" title="Add event on {{ day|date:'M d' }}">+</a>{% endif %}
-                </div>
-                {% for item in items %}
-                  {% if forloop.counter == 4 %}<details><summary class="small text-primary">+{{ items|length|add:"-3" }} more</summary>{% endif %}
-                  <div class="badge fw-normal d-block text-start text-truncate mb-1 {{ item.css }}" title="{{ item.label }}{% if item.note %} · {{ item.note }}{% endif %}">
-                    {% if item.url %}<a href="{{ item.url }}" class="text-reset text-decoration-none">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}
-                  </div>
-                  {% if forloop.last and forloop.counter > 3 %}</details>{% endif %}
-                {% endfor %}
-              </td>
-            {% endfor %}
-          </tr>
+<div class="d-flex flex-wrap gap-1 mb-2" aria-label="Legend">
+  {% for label, prefix, css in legend %}
+    <span class="cal-badge cal-legend {{ css }}"><strong>{{ prefix }}</strong>{% if label != prefix %} {{ label }}{% endif %}</span>
+  {% endfor %}
+</div>
+
+<!-- Month grid: wide screens -->
+<div class="card shadow-sm border-0 d-none d-lg-block">
+  <table class="table table-bordered mb-0 cal-grid">
+    <thead class="table-light text-center small">
+      <tr><th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr>
+    </thead>
+    <tbody>
+      {% for week in weeks %}
+        <tr>
+          {% for cell in week %}
+            <td class="p-1 {% if cell.date.month != month.month %}cal-outside{% endif %}">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <a href="{{ cell.url }}{% if filter_qs %}?{{ filter_qs|slice:'1:' }}{% endif %}"
+                   class="cal-daynum {% if cell.date == today %}cal-today{% endif %}"
+                   aria-label="Open {{ cell.date|date:'l, F j' }}">{{ cell.date.day }}</a>
+                {% if can_manage %}<a href="{% url 'calendar_event_create' %}?date={{ cell.date|date:'Y-m-d' }}" class="cal-add" title="Add event on {{ cell.date|date:'M j' }}" aria-label="Add event on {{ cell.date|date:'M j' }}">+</a>{% endif %}
+              </div>
+              {% for item in cell.items %}
+                {% include "hr/_calendar_badge.html" %}
+              {% endfor %}
+              {% if cell.more > 0 %}
+                <a href="{{ cell.url }}{% if filter_qs %}?{{ filter_qs|slice:'1:' }}{% endif %}" class="small">+{{ cell.more }} more</a>
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Agenda list: phones and tablets -->
+<div class="d-lg-none cal-agenda">
+  {% for entry in agenda %}
+    <div class="card shadow-sm border-0 mb-2">
+      <a href="{% url 'calendar_day' entry.date|date:'Y-m-d' %}{% if filter_qs %}?{{ filter_qs|slice:'1:' }}{% endif %}"
+         class="card-header bg-white fw-semibold py-2 text-decoration-none text-body d-flex justify-content-between">
+        <span>{{ entry.date|date:"D, M j" }}</span>
+        {% if entry.date == today %}<span class="badge text-bg-primary">Today</span>{% endif %}
+      </a>
+      <div class="card-body p-2">
+        {% for item in entry.items %}
+          {% include "hr/_calendar_badge.html" with wrap=True %}
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      </div>
+    </div>
+  {% empty %}
+    <div class="alert alert-light border">Nothing scheduled in {{ month|date:"F" }} for the selected filters.</div>
+  {% endfor %}
 </div>
 {% endblock %}

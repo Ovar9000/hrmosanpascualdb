@@ -1,0 +1,6 @@
+{% comment %}One calendar entry. In the grid it is one truncated line (full text in the title and on the day page); with wrap=True (agenda) the full text wraps.{% endcomment %}
+{% if item.url %}<a href="{{ item.url }}"{% else %}<span{% endif %}
+  class="cal-badge {{ item.css }}{% if item.summary %} cal-summary{% endif %}{% if wrap %} cal-wrap{% endif %}"
+  title="{{ item.full }}{% if item.note %} · {{ item.note }}{% endif %}">
+  <strong>{{ item.prefix }}</strong> {% if wrap and not item.summary %}{{ item.full }}{% else %}{{ item.short }}{% endif %}
+{% if item.url %}</a>{% else %}</span>{% endif %}

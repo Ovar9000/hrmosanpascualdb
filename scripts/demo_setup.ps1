@@ -6,7 +6,8 @@
     1. Checks Docker and .env.
     2. With -Reset: deletes the database and uploaded files, then starts clean (asks first).
     3. Starts the stack (migrations run automatically) and loads offices, roles and ~420 fake people.
-    4. Creates the demo accounts once and prints their one-time passwords (shown once).
+    4. Creates the demo accounts once and prints their one-time passwords (shown once),
+       and fills the calendar with sample events, holidays and leave around today.
        Later runs keep the passwords you set while rehearsing, unless -NewDemoPasswords.
     5. Writes sample upload files to demo_files\ for the document upload demo.
     6. Checks the site, the stylesheet, Django's system check and the audit chain.
@@ -124,6 +125,10 @@ if ($demoAccounts -eq 0 -or $NewDemoPasswords) {
     Write-Step "Demo accounts"
     Write-Ok "$demoAccounts demo accounts already exist; their passwords are unchanged (use -NewDemoPasswords to reissue)"
 }
+
+Write-Step "Filling the calendar around today"
+$calendar = Invoke-Manage seed_demo_calendar
+Write-Ok (($calendar | Select-Object -Last 1) -replace '^Calendar demo data: ', '')
 
 # --- 5. Sample upload files -----------------------------------------------------------
 Write-Step "Writing sample upload files to demo_files\"

@@ -3568,15 +3568,15 @@ class CalendarTestCase(TestCase):
     def test_hrmo_sees_every_source(self):
         html = self.get_month(self.hrmo)
         for text in ["Town fiesta", "Treasury interview", "Starts: Coworker", "Starts: Outsider",
-                     "Coworker, X: Sick leave", "Outsider, X: Sick leave"]:
+                     "Coworker, X · Sick leave", "Outsider, X · Sick leave"]:
             self.assertIn(text, html)
 
     def test_office_staff_sees_own_office_and_own_leave_only(self):
         html = self.get_month(self.staff)
         self.assertIn("Town fiesta", html)                 # municipality-wide event
         self.assertIn("Starts: Coworker", html)            # hire in own office
-        self.assertIn("Myself, X: Sick leave", html)       # own leave
-        self.assertNotIn("Coworker, X: Sick leave", html)  # coworker's leave type is not theirs to see
+        self.assertIn("Myself, X · Sick leave", html)       # own leave
+        self.assertNotIn("Coworker, X · Sick leave", html)  # coworker's leave type is not theirs to see
         self.assertNotIn("Treasury interview", html)       # other office's event
         self.assertNotIn("Outsider", html)                 # other office's people
 
@@ -3604,3 +3604,155 @@ class CalendarTestCase(TestCase):
         self.client.force_login(self.hrmo)
         for month in ["junk", "9999-12", "2026-13"]:
             self.assertEqual(self.client.get(f"/calendar/?month={month}").status_code, 200)
+
+
+class CalendarVisualsTestCase(TestCase):
+    """DECISIONS C3-C4: busy days collapse, day page, filters, text prefixes, agenda, demo data."""
+
+    def setUp(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        User = get_user_model()
+        call_command("seed_offices")
+        call_command("setup_roles")
+        self.office_a = Office.objects.get(name="Office of the Municipal Mayor")
+        self.office_b = Office.objects.get(name="Office of the Municipal Treasurer")
+        self.year_end = date(2026, 12, 31)
+
+        self.hrmo = User.objects.create_user("vis_hrmo", password="pass123")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.head_a = User.objects.create_user("vis_head", password="pass123")
+        self.head_a.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+        UserProfile.objects.create(user=self.head_a, office=self.office_a)
+        self.mayor = User.objects.create_user("vis_mayor", password="pass123")
+        self.mayor.groups.add(Group.objects.get(name=ROLE_EXECUTIVE))
+        self.maintainer = User.objects.create_user("vis_projects", password="pass123")
+        self.maintainer.groups.add(Group.objects.get(name=ROLE_PROJECT_MAINTAINER))
+
+        # Six contracts in Office A and one in Office B all end on Dec 31.
+        self.people = []
+        for i in range(7):
+            office = self.office_a if i < 6 else self.office_b
+            p = Person.objects.create(employee_no=f"SP-0950{i}", last_name=f"Endsoon{i}", first_name="Ana",
+                                      birthdate=date(1990, 1, 1))
+            Engagement.objects.create(person=p, office=office, type=Engagement.Type.JOB_ORDER,
+                                      position_title="Utility Worker", start_date=date(2026, 1, 1),
+                                      end_date=self.year_end)
+            self.people.append(p)
+        self.employee = User.objects.create_user("vis_employee", password="pass123")
+        UserProfile.objects.create(user=self.employee, person=self.people[0])
+        CalendarEvent.objects.create(title="Rizal Day", kind="holiday", start_date=date(2026, 12, 30))
+        CalendarEvent.objects.create(title="MTO year-end meeting", kind="meeting",
+                                     start_date=date(2026, 12, 31), office=self.office_b)
+        Project.objects.create(name="Seawall Phase 1", office=self.office_a, status=Project.Status.ONGOING,
+                               start_date=date(2026, 1, 1), end_date=self.year_end, funding_reference="FAKE-1")
+
+    def page(self, user, url):
+        self.client.force_login(user)
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode()
+
+    def test_busy_day_collapses_into_one_summary_entry(self):
+        html = self.page(self.hrmo, "/calendar/?month=2026-12")
+        self.assertIn("7 contract ends", html)
+        self.assertIn("/calendar/day/2026-12-31/#contract_end", html)
+        self.assertNotIn("Endsoon3", html)  # individual names live on the day page, not the month
+
+    def test_small_groups_show_short_labels_with_text_prefix(self):
+        html = self.page(self.head_a, "/calendar/?month=2026-12")  # 6 ends in Office A: still collapsed
+        self.assertIn("6 contract ends", html)
+        Engagement.objects.filter(person__in=self.people[1:6]).update(end_date=date(2026, 12, 15))
+        html = self.page(self.head_a, "/calendar/?month=2026-12")
+        self.assertIn("<strong>End</strong> Endsoon0, A.", html)
+        self.assertIn("Contract ends: Endsoon0, Ana, Utility Worker", html)  # full text in the title
+        self.assertIn("<strong>Holiday</strong> Rizal Day", html)
+
+    def test_day_page_lists_everything_with_the_same_scoping(self):
+        html = self.page(self.hrmo, "/calendar/day/2026-12-31/")
+        for p in self.people:
+            self.assertIn(p.last_name, html)
+        self.assertIn("MTO year-end meeting", html)
+        self.assertIn("Project ends: Seawall Phase 1", html)
+
+        html = self.page(self.head_a, "/calendar/day/2026-12-31/")
+        self.assertIn("Endsoon0", html)
+        self.assertNotIn("Endsoon6", html)              # Office B's person
+        self.assertNotIn("MTO year-end meeting", html)  # Office B's event
+        self.assertNotIn("Seawall", html)               # Office Heads do not see projects
+
+        self.client.force_login(self.hrmo)
+        for bad in ("2026-02-31", "junk", "9999-01-01"):
+            self.assertEqual(self.client.get(f"/calendar/day/{bad}/").status_code, 404, bad)
+
+    def test_filters_by_kind_and_office(self):
+        html = self.page(self.hrmo, "/calendar/?month=2026-12&filtered=1&show=events")
+        self.assertIn("Rizal Day", html)
+        self.assertNotIn("contract ends", html)
+
+        html = self.page(self.hrmo, f"/calendar/day/2026-12-31/?filtered=1&show=contract_end&office={self.office_b.pk}")
+        self.assertIn("Endsoon6", html)
+        self.assertNotIn("Endsoon0", html)
+
+        # Month navigation keeps the filters.
+        html = self.page(self.hrmo, "/calendar/?month=2026-12&filtered=1&show=leave")
+        self.assertIn("month=2027-01&amp;filtered=1&amp;show=leave", html)
+
+    def test_office_filter_cannot_reach_another_office(self):
+        html = self.page(self.head_a, f"/calendar/day/2026-12-31/?office={self.office_b.pk}")
+        self.assertNotIn("Endsoon6", html)
+        self.assertIn("Endsoon0", html)  # tampered office ignored, own office still shown
+
+    def test_agenda_list_for_small_screens(self):
+        html = self.page(self.hrmo, "/calendar/?month=2026-12")
+        self.assertIn("cal-agenda", html)
+        self.assertIn("Wed, Dec 30", html)
+        self.assertIn("<strong>Holiday</strong> Rizal Day", html)
+
+    def test_other_roles(self):
+        html = self.page(self.mayor, "/calendar/day/2026-12-31/")
+        self.assertIn("Endsoon6", html)          # executives see across offices
+        html = self.page(self.employee, "/calendar/day/2026-12-31/")
+        self.assertIn("Endsoon0", html)          # own contract end
+        self.assertNotIn("Endsoon1", html)
+        self.assertNotIn("MTO year-end meeting", html)
+        html = self.page(self.maintainer, "/calendar/day/2026-12-31/")
+        self.assertIn("Seawall Phase 1", html)   # projects
+        self.assertNotIn("Endsoon", html)        # no personnel
+
+    def test_only_hrmo_can_open_or_delete_an_event(self):
+        event = CalendarEvent.objects.get(title="Rizal Day")
+        self.client.force_login(self.head_a)
+        self.assertEqual(self.client.get(f"/calendar/events/{event.pk}/").status_code, 403)
+        self.assertEqual(self.client.post(f"/calendar/events/{event.pk}/", {"delete": "1"}).status_code, 403)
+        self.assertTrue(CalendarEvent.objects.filter(pk=event.pk).exists())
+
+    def test_cell_label_drops_a_repeated_kind_word(self):
+        CalendarEvent.objects.create(title="Interview: Clerk applicants", kind="interview", start_date=date(2026, 12, 10))
+        html = self.page(self.hrmo, "/calendar/?month=2026-12")
+        self.assertIn("<strong>Interview</strong> Clerk applicants", html)
+        self.assertIn('title="Interview: Clerk applicants"', html)  # full title kept
+
+    def test_seed_demo_calendar_fills_the_weeks_around_today(self):
+        from io import StringIO
+        from django.test import override_settings
+        from django.utils import timezone
+
+        with self.assertRaises(CommandError):
+            call_command("seed_demo_calendar", stdout=StringIO())
+
+        # Sample leave goes only to leave-eligible people.
+        Engagement.objects.filter(person__in=self.people[:4]).update(leave_eligible=True)
+        with override_settings(DEBUG=True):
+            call_command("seed_demo_calendar", stdout=StringIO())
+            first_counts = (CalendarEvent.objects.count(), LeaveRequest.objects.count())
+            call_command("seed_demo_calendar", stdout=StringIO())  # replaces, never duplicates
+        self.assertEqual((CalendarEvent.objects.count(), LeaveRequest.objects.count()), first_counts)
+
+        today = timezone.localdate()
+        demo_events = CalendarEvent.objects.filter(notes__startswith="[demo]")
+        self.assertGreaterEqual(demo_events.count(), 9)
+        for event in demo_events:
+            self.assertLessEqual(abs((event.start_date - today).days), 60)
+        self.assertEqual(LeaveRequest.objects.filter(reason__startswith="[demo]").count(), 4)
+        self.assertEqual(CalendarEvent.objects.filter(title="Rizal Day").count(), 1)  # real events untouched

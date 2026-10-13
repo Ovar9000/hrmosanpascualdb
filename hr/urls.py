@@ -22,6 +22,7 @@ urlpatterns = [
     path("projects/<int:pk>/", views.project_detail, name="project_detail"),
     path("projects/<int:pk>/edit/", views.project_edit, name="project_edit"),
     path("calendar/", views.calendar_month, name="calendar"),
+    path("calendar/day/<str:day>/", views.calendar_day, name="calendar_day"),
     path("calendar/events/new/", views.calendar_event_form, name="calendar_event_create"),
     path("calendar/events/<int:pk>/", views.calendar_event_form, name="calendar_event_edit"),
     path("audit/", views.audit_list, name="audit_list"),
