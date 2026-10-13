@@ -6,28 +6,50 @@
   <div>
     <h1 class="h3 mb-0">System Audit Trail</h1>
     <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
-      {% if chain_verified %}
-        {% if anchor_verified %}
+      {% if not verification %}
+        <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">
+          Not verified yet
+        </span>
+      {% elif verification.is_valid %}
+        {% if verification.anchor_status == "verified" %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Anchor verified ({{ verified_count }} records intact, tamper-evident)
+            ✓ Anchor verified ({{ verification.record_count }} records intact, tamper-evident)
           </span>
         {% else %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Chain consistent ({{ verified_count }} records intact)
+            ✓ Chain consistent ({{ verification.record_count }} records intact)
           </span>
         {% endif %}
       {% else %}
         <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-          ⚠ Chain verification unconfirmed (broken link at record #{{ broken_id|default:"?" }})
+          ⚠ Chain verification unconfirmed (failed at record #{{ verification.broken_id|default:"?" }})
         </span>
       {% endif %}
       <span class="text-muted small">Immutable append-only audit trail (DECISIONS U1-U6).</span>
     </div>
+    <div class="text-muted small mt-1">
+      {% if verification %}
+        Last verified {{ verification.verified_at|date:"Y-m-d H:i:s" }}
+        ({% if verification.source == "web" %}Re-verify all by {{ verification.verified_by }}{% else %}management command{% endif %}).
+        {% if entries_since %}{{ entries_since }} newer entr{{ entries_since|pluralize:"y,ies" }} not covered by this result.{% endif %}
+        {% if not verification.is_valid and verification.error %}<br><span class="text-danger">{{ verification.error }}</span>{% endif %}
+      {% else %}
+        The hash chain has not been verified. Use “Re-verify all” or run <code>manage.py verify_audit_chain</code>.
+      {% endif %}
+      <br>This is the result stored by the application. For an authoritative check, the DPO or
+      auditor runs <code>manage.py verify_audit_chain --anchor ID:HASH</code> with the anchor they keep off the server.
+    </div>
   </div>
-  <div class="d-flex flex-wrap gap-2">
-    <a href="{% url 'audit_list' %}?reverify=1{% if anchor %}&anchor={{ anchor }}{% endif %}" class="btn btn-outline-secondary btn-sm" title="Bypass verification cache and re-verify full chain from genesis">
-      🔄 Re-verify all
-    </a>
+  <div class="d-flex flex-wrap gap-2 align-items-start">
+    <form method="post" action="{% url 'audit_reverify' %}" class="d-flex gap-1">
+      {% csrf_token %}
+      <input type="text" name="anchor" value="{{ default_anchor }}" class="form-control form-control-sm"
+             placeholder="Anchor ID:HASH (optional)" aria-label="Anchor ID:HASH (optional)">
+      <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap"
+              title="Full scan of the hash chain from the first record. At most once per minute.">
+        🔄 Re-verify all
+      </button>
+    </form>
     <a href="{% url 'audit_export_csv' %}" class="btn btn-outline-success btn-sm">
       📥 Export Audit Log (CSV)
     </a>

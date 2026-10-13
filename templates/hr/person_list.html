@@ -114,8 +114,12 @@
               {% endwith %}
             </td>
             <td class="d-none d-lg-table-cell small text-muted">
-              <div>{{ p.mobile|default:"—" }}</div>
-              <div>{{ p.email|default:"" }}</div>
+              {% if can_view_contacts %}
+                <div>{{ p.mobile|default:"—" }}</div>
+                <div>{{ p.email|default:"" }}</div>
+              {% else %}
+                <span title="Contacts are restricted (DECISIONS R4)">🔒</span>
+              {% endif %}
             </td>
             <td class="text-end">
               <a href="{% url 'person_detail' p.pk %}" class="btn btn-sm btn-outline-primary">View</a>

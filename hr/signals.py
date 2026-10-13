@@ -196,15 +196,23 @@ def log_user_logout(sender, request, user, **kwargs):
         )
 
 
+def mask_attempted_username(raw_username):
+    """Keeps an attempted username only if it is a real account; otherwise "[unknown]".
+
+    The audit log can never be purged, so a password typed into the username field
+    must not be written to it (DECISIONS S9).
+    """
+    raw_username = str(raw_username or "")[:150]
+    if raw_username and "\x00" not in raw_username and User.objects.filter(username=raw_username).exists():
+        return raw_username
+    return "[unknown]"
+
+
 @receiver(user_login_failed)
 def log_failed_login(sender, credentials, request, **kwargs):
     if is_audit_disabled():
         return
-    raw_username = credentials.get("username", "") if credentials else ""
-    if raw_username and User.objects.filter(username=raw_username).exists():
-        safe_username = raw_username
-    else:
-        safe_username = "[unknown]"
+    safe_username = mask_attempted_username(credentials.get("username", "") if credentials else "")
 
     log_audit_event(
         action=AuditLog.Action.FAILED_LOGIN,
@@ -224,13 +232,14 @@ try:
     def log_axes_lockout(sender, request, username, ip_address, **kwargs):
         if is_audit_disabled():
             return
+        safe_username = mask_attempted_username(username)
         log_audit_event(
             action=AuditLog.Action.ACCOUNT_LOCKOUT,
             model_name="User",
-            username=username,
+            username=safe_username,
             ip_address=ip_address,
-            object_repr=f"Account lockout triggered for '{username}' from {ip_address}",
-            changes={"username": username, "ip_address": ip_address},
+            object_repr=f"Account lockout triggered for '{safe_username}' from {ip_address}",
+            changes={"username": safe_username, "ip_address": ip_address},
             request=request,
         )
 except ImportError:

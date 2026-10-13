@@ -5,6 +5,12 @@ HR records system prototype for the Municipal Human Resource Management Office
 
 > **Fake data only.** Never load real personal data into this prototype. Fake ID
 > numbers always start with zeros (e.g. `00-0000000-0`).
+>
+> This is enforced by database constraints, not just the form. Setting
+> `PROTOTYPE_FAKE_DATA_ONLY=0` only turns off the form check; the database still
+> rejects every ID that doesn't start with `00`. Accepting real IDs needs DPO
+> approval, real-ID format validation, and a deliberate migration that removes the
+> constraints. See item 1 of the Go-Live Checklist in `DECISIONS.md`.
 
 Stack: Django 5.2 LTS · PostgreSQL 17 · Bootstrap 5 (stored in the repo, no CDN) · Docker Compose · openpyxl.
 
@@ -44,8 +50,10 @@ docker compose run --rm manage python manage.py createsuperuser
 | Task | Command |
 |---|---|
 | Start / stop | `docker compose up` / `docker compose down` |
+| Prepare a demo (clean fake data, demo accounts, checks) | `pwsh -File scripts\demo_setup.ps1 -Reset` |
 | Run tests | `docker compose run --rm manage python manage.py test` |
 | Any management command | `docker compose run --rm manage python manage.py <command>` |
+| Create employee accounts (preview first) | `docker compose run --rm manage python manage.py provision_accounts --dry-run` |
 | Django deploy checklist | `docker compose run --rm manage python manage.py check --deploy` |
 | Wipe the database (fake data only!) | `docker compose down -v` |
 
@@ -59,12 +67,12 @@ If you change `APP_DB_USER` / `APP_DB_PASSWORD` after the first start, run
 |---|---|---|
 | Secrets | All in `.env` (git-ignored). The app refuses to start without `DJANGO_SECRET_KEY`. | No credentials in the repo. |
 | Passwords | Django's default PBKDF2-SHA256 hashing (salted, ~1M iterations). Minimum 10 characters; common and all-numeric passwords are rejected. | Vetted default; Django upgrades stored hashes automatically when it raises the iteration count. |
-| Login rate limiting | `django-axes`: 5 failed attempts for the same username + IP → locked for 15 minutes. Attempts are recorded and visible in the admin. | Stops password guessing without letting an attacker lock out a real user from every device. |
+| Login rate limiting | `django-axes`: 5 failed attempts for the same username + IP → locked for 15 minutes. Attempts are recorded and visible in the admin. Behind a reverse proxy this needs `TRUSTED_PROXIES` (lockouts use the same client-IP resolver as the audit log). | Stops password guessing without letting an attacker lock out a real user from every device. |
 | Session timeout | 30 minutes idle (the timer resets on every request), and the session also ends when the browser closes. | Shared office PCs and phones left on desks. |
 | Database roles | The website connects as `APP_DB_USER`, which can read and write data but cannot change tables. Migrations and tests run as the owner role in the one-shot `manage` container. The DB port is not published to the host. | Limits damage if the web app is compromised, and lets the audit table be made append-only (step 5). |
 | Uploaded files | Stored in a private volume, never at a public URL; served only through permission-checked views. | HR documents are sensitive. |
 | HTTPS | One switch: `DJANGO_HTTPS=1` turns on secure cookies, HTTP→HTTPS redirect, HSTS, and trusts `X-Forwarded-Proto` from the reverse proxy. | Ready for a TLS proxy without code changes. |
-| Reverse proxy IP | `TRUSTED_PROXIES` in `.env` (comma-separated IPs/subnets). `X-Forwarded-For` is inspected ONLY when `REMOTE_ADDR` matches a trusted proxy. | Prevents IP spoofing in audit logs and rate-limiting while capturing the real client IP behind Caddy/Nginx. |
+| Reverse proxy IP | `TRUSTED_PROXIES` in `.env` (comma-separated IPs/subnets). `X-Forwarded-For` is inspected ONLY when `REMOTE_ADDR` matches a trusted proxy, and read right to left so entries the client wrote itself are ignored. | Prevents IP spoofing in audit logs and rate-limiting while capturing the real client IP behind Caddy/Nginx. |
 | Other defaults kept on | CSRF protection, clickjacking protection (`X-Frame-Options: DENY`), `nosniff`, HTML auto-escaping, parameterised SQL (Django ORM). | |
 
 ### HTTPS is required for phone self-service
@@ -86,7 +94,7 @@ On a local office server, the simplest route is a reverse proxy such as
 When Caddy sits in front of the application, client connections terminate at Caddy, and requests reach Django from Caddy's IP (e.g., `127.0.0.1` or a Docker network bridge IP like `172.18.0.x`).
 
 - Configure `TRUSTED_PROXIES` in `.env` with Caddy's IP address or Docker subnet (e.g. `TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12`). Defaults to localhost (`127.0.0.1,::1`).
-- Django inspects `REMOTE_ADDR`: if and only if it matches an entry or CIDR block in `TRUSTED_PROXIES`, the true client IP is resolved from the `X-Forwarded-For` header for audit logs and rate-limiting. Direct or untrusted connections ignore spoofed proxy headers.
+- Django inspects `REMOTE_ADDR`: if and only if it matches an entry or CIDR block in `TRUSTED_PROXIES`, the true client IP is resolved from the `X-Forwarded-For` header for audit logs and rate-limiting, taking the rightmost address that is not itself a trusted proxy. Direct or untrusted connections ignore spoofed proxy headers.
 
 Then in `.env`: `DJANGO_HTTPS=1`, add the hostname to `DJANGO_ALLOWED_HOSTS`, and
 add `https://<hostname>` to `DJANGO_CSRF_TRUSTED_ORIGINS`. Also replace `runserver`
@@ -99,3 +107,4 @@ and add the PC's LAN IP to `DJANGO_ALLOWED_HOSTS`.
 ## Project docs
 
 - [`DECISIONS.md`](DECISIONS.md): every assumption, and which ones the HRMO survey may change.
+- [`docs/DEMO.md`](docs/DEMO.md): presentation run sheet (rehearsal, walkthrough, questions to ask).

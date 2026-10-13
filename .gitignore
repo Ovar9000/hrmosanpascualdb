@@ -27,3 +27,9 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Printed one-time password slips (provision_accounts --slips): never commit or ship
+account_slips*.html
+
+# Sample upload files written by scripts/demo_setup.ps1
+demo_files/

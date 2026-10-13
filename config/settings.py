@@ -43,6 +43,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "hr.middleware.AuditMiddleware",
+    "hr.middleware.MustChangePasswordMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Must be last: turns locked-out logins into a lockout response.
@@ -52,10 +53,11 @@ MIDDLEWARE = [
 # Trusted reverse proxies for client IP extraction from X-Forwarded-For (DECISIONS U5)
 TRUSTED_PROXIES = env_list("TRUSTED_PROXIES", "127.0.0.1,::1")
 
-# Prototype data guard (DECISIONS D1): Enforce fake ID numbers starting with 00
+# Prototype data guard (DECISIONS D1): form-level check that ID numbers start with 00.
+# Turning this off does NOT allow real IDs: the person_*_fake_only DB constraints remain.
 PROTOTYPE_FAKE_DATA_ONLY = env_bool("PROTOTYPE_FAKE_DATA_ONLY", "1")
 
-# Employee age constraints (DECISIONS A3)
+# Employee age constraints (DECISIONS S10)
 MIN_EMPLOYEE_AGE = int(os.environ.get("MIN_EMPLOYEE_AGE", "18"))
 MAX_EMPLOYEE_AGE = int(os.environ.get("MAX_EMPLOYEE_AGE", "90"))
 
@@ -107,8 +109,12 @@ AUTH_PASSWORD_VALIDATORS = [
 # Axes first so locked-out users are rejected before the password is even checked.
 AUTHENTICATION_BACKENDS = [
     "axes.backends.AxesStandaloneBackend",
-    "django.contrib.auth.backends.ModelBackend",
+    # ModelBackend that also refuses expired one-time passwords (DECISIONS A4).
+    "hr.backends.OneTimePasswordBackend",
 ]
+
+# Days an unused one-time password stays valid (provision_accounts, admin resets).
+ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.
@@ -116,9 +122,10 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_RESET_ON_SUCCESS = True
-# Client IP = REMOTE_ADDR (axes default). Behind a reverse proxy, set
-# AXES_IPWARE_PROXY_COUNT / AXES_IPWARE_META_PRECEDENCE_ORDER, or every user
-# shares the proxy's IP.
+# Same client-IP resolver as the audit log: behind a proxy listed in TRUSTED_PROXIES each
+# client is keyed on its own address, not the proxy's. Otherwise every user would share the
+# proxy IP and 5 bad guesses would lock a username out everywhere (DECISIONS U5).
+AXES_CLIENT_IP_CALLABLE = "hr.audit.get_client_ip"
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"

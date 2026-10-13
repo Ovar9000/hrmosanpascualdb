@@ -1,5 +1,7 @@
 import ast
 import hashlib
+import threading
+import time
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -10,8 +12,8 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import DatabaseError, IntegrityError, transaction
-from django.test import RequestFactory, TestCase
+from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from hr.audit import SENSITIVE_AUDIT_FIELDS, get_client_ip, is_ip_trusted, log_audit_event, verify_chain
 from hr.forms import (
     DocumentEditForm,
@@ -245,7 +247,7 @@ class DocumentAndLeaveTestCase(TestCase):
         with self.assertRaises(ValidationError):
             credit.clean()
 
-        # Add casual engagement -> clean() passes
+        # Add leave-eligible casual engagement -> clean() passes
         Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -253,6 +255,7 @@ class DocumentAndLeaveTestCase(TestCase):
             position_title="Utility Worker",
             start_date=date(2026, 1, 1),
             status=Engagement.Status.ACTIVE,
+            leave_eligible=True,
         )
         credit.clean()  # should not raise
 
@@ -382,7 +385,12 @@ class Step4AModelAndAdminTestCase(TestCase):
         )
 
     def test_engagement_leave_eligible_defaults_and_toggle(self):
-        # Plantilla defaults leave_eligible=True
+        # The type default (True for Plantilla/Casual) is a suggestion for entry screens;
+        # the model stores exactly what it is given (DECISIONS L3, LeaveEligibleDefaultTestCase).
+        self.assertTrue(Engagement.default_leave_eligible(Engagement.Type.PLANTILLA))
+        self.assertTrue(Engagement.default_leave_eligible(Engagement.Type.CASUAL))
+        self.assertFalse(Engagement.default_leave_eligible(Engagement.Type.JOB_ORDER))
+
         plantilla = Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -392,11 +400,12 @@ class Step4AModelAndAdminTestCase(TestCase):
             step=1,
             item_number="SP-MO-099",
             start_date=date(2025, 1, 1),
+            leave_eligible=True,
         )
         self.assertTrue(plantilla.leave_eligible)
         self.assertTrue(self.person.earns_leave_credits())
 
-        # Casual defaults leave_eligible=True
+        # Casual saved without the flag is not forced to True
         casual = Engagement.objects.create(
             person=self.person,
             office=self.office,
@@ -404,7 +413,7 @@ class Step4AModelAndAdminTestCase(TestCase):
             position_title="Legal Aide",
             start_date=date(2025, 1, 1),
         )
-        self.assertTrue(casual.leave_eligible)
+        self.assertFalse(casual.leave_eligible)
 
         # Job order defaults leave_eligible=False
         jo = Engagement.objects.create(
@@ -906,9 +915,24 @@ class Step5AuditLogTestCase(TestCase):
         req_untrusted = rf.get("/people/", REMOTE_ADDR="198.51.100.42", HTTP_X_FORWARDED_FOR="1.1.1.1")
         self.assertEqual(get_client_ip(req_untrusted), "198.51.100.42")
 
-        # Trusted remote address: X-Forwarded-For must be extracted
+        # Trusted proxy: the rightmost hop that is not a trusted proxy is the client.
+        # "203.0.113.195" was supplied by the client itself and must not be believed.
         req_trusted = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="203.0.113.195, 10.0.0.1")
-        self.assertEqual(get_client_ip(req_trusted), "203.0.113.195")
+        self.assertEqual(get_client_ip(req_trusted), "10.0.0.1")
+
+        # When the next hop is itself a trusted proxy, keep walking left.
+        with override_settings(TRUSTED_PROXIES=["127.0.0.1", "10.0.0.0/8"]):
+            self.assertEqual(get_client_ip(req_trusted), "203.0.113.195")
+
+        # A malformed hop stops the walk at the last trustworthy address.
+        req_garbage = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="<script>")
+        self.assertEqual(get_client_ip(req_garbage), "127.0.0.1")
+
+        # IPv6 is stored in PostgreSQL's canonical form, so the row hash survives a round trip.
+        req_v6 = rf.get("/people/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="2001:DB8:0:0:0:0:0:1")
+        self.assertEqual(get_client_ip(req_v6), "2001:db8::1")
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Ip", request=req_v6)
+        self.assertTrue(verify_chain().is_valid)
 
     def test_selective_view_logging(self):
         self.client.force_login(self.hrmo)
@@ -1394,6 +1418,7 @@ class Step6BEngagementEntryTestCase(TestCase):
             name="San Pascual Digital Portal",
             office=self.office,
             start_date=date(2025, 1, 1),
+            funding_reference="FAKE-CAF-2025-900",  # required to hire against it (DECISIONS P2)
         )
 
     def test_non_hrmo_roles_cannot_access_engagement_actions(self):
@@ -2181,26 +2206,28 @@ class AuditHardeningTestCase(TestCase):
 
     def test_audit_list_chain_consistent_badge_without_anchor(self):
         self.client.force_login(self.auditor_user)
+        self.client.post("/audit/reverify/")
         resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.context["chain_verified"])
-        self.assertFalse(resp.context["anchor_verified"])
+        self.assertTrue(resp.context["verification"].is_valid)
+        self.assertEqual(resp.context["verification"].anchor_status, "none")
         # Badge must display "Chain consistent" and NOT "tamper-evident"
         self.assertContains(resp, "Chain consistent")
         self.assertNotContains(resp, "tamper-evident")
-        # Must include "Re-verify all" link
+        # Must include the "Re-verify all" form
         self.assertContains(resp, "Re-verify all")
-        self.assertContains(resp, "reverify=1")
+        self.assertContains(resp, 'action="/audit/reverify/"')
 
     def test_audit_list_tamper_evident_badge_with_anchor(self):
         latest = AuditLog.objects.order_by("-id").first()
         valid_anchor = f"{latest.id}:{latest.row_hash}"
 
         self.client.force_login(self.auditor_user)
-        resp = self.client.get(f"/audit/?anchor={valid_anchor}")
+        self.client.post("/audit/reverify/", {"anchor": valid_anchor})
+        resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.context["chain_verified"])
-        self.assertTrue(resp.context["anchor_verified"])
+        self.assertTrue(resp.context["verification"].is_valid)
+        self.assertEqual(resp.context["verification"].anchor_status, "verified")
         # With anchor verified, it displays "tamper-evident"
         self.assertContains(resp, "Anchor verified")
         self.assertContains(resp, "tamper-evident")
@@ -2219,9 +2246,10 @@ class AuditHardeningTestCase(TestCase):
         bad_entry.save()
 
         self.client.force_login(self.auditor_user)
-        resp = self.client.get("/audit/?reverify=1")
+        self.client.post("/audit/reverify/")
+        resp = self.client.get("/audit/")
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.context["chain_verified"])
+        self.assertFalse(resp.context["verification"].is_valid)
         self.assertContains(resp, "Chain verification unconfirmed")
         self.assertNotContains(resp, "tamper-evident")
 
@@ -2311,36 +2339,1182 @@ class AuditHardeningTestCase(TestCase):
             call_command("verify_audit_chain", f"--anchor={wrong_anchor}")
         self.assertIn("Anchor hash mismatch", str(ctx_mismatch.exception))
 
-    def test_incremental_and_cached_verification(self):
-        from hr.audit import CACHE_KEY_AUDIT_CHAIN
+
+class MustChangePasswordTestCase(TestCase):
+    """B4: UserProfile.must_change_password is enforced by middleware (DECISIONS A1)."""
+
+    NEW_PASSWORD = "Fresh-Pass-2026-xyz"
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.user = User.objects.create_user(username="otp_user", password="Password123!")
+        self.user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.profile = UserProfile.objects.create(user=self.user, must_change_password=True)
+
+    def _assert_redirects_to_password_change(self, resp):
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"], "/accounts/password/")
+
+    def test_flagged_user_is_redirected_from_every_page(self):
+        self.client.force_login(self.user)
+        for url in ["/people/", "/offices/", "/audit/", "/admin/", "/does-not-exist/"]:
+            with self.subTest(url=url):
+                self._assert_redirects_to_password_change(self.client.get(url))
+        # POSTs are blocked too, not just page views
+        self._assert_redirects_to_password_change(self.client.post("/people/new/", {}))
+
+    def test_flagged_user_can_reach_password_change_logout_and_static(self):
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get("/accounts/password/").status_code, 200)
+        static_resp = self.client.get("/static/does-not-matter.css")
+        self.assertNotEqual(static_resp.get("Location"), "/accounts/password/")
+        logout_resp = self.client.post("/accounts/logout/")
+        self.assertEqual(logout_resp.status_code, 302)
+        self.assertEqual(logout_resp["Location"], "/accounts/login/")
+
+    def test_successful_change_clears_flag_and_unblocks(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/accounts/password/",
+            {
+                "old_password": "Password123!",
+                "new_password1": self.NEW_PASSWORD,
+                "new_password2": self.NEW_PASSWORD,
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.must_change_password)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+    def test_failed_change_keeps_flag(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/accounts/password/",
+            {"old_password": "wrong-password", "new_password1": self.NEW_PASSWORD, "new_password2": self.NEW_PASSWORD},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.must_change_password)
+        self._assert_redirects_to_password_change(self.client.get("/people/"))
+
+    def test_unflagged_users_and_users_without_profile_are_not_redirected(self):
+        self.profile.must_change_password = False
+        self.profile.save()
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+        User = get_user_model()
+        no_profile = User.objects.create_user(username="no_profile_user", password="Password123!")
+        no_profile.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.client.force_login(no_profile)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+    def test_anonymous_users_go_to_login_not_password_change(self):
+        resp = self.client.get("/people/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp["Location"].startswith("/accounts/login/"))
+
+
+class FakeIdGuardTestCase(TestCase):
+    """B3: PROTOTYPE_FAKE_DATA_ONLY=0 only skips the form check; the DB constraint still rejects real IDs."""
+
+    def setUp(self):
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="fake_id_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+    def test_every_id_field_has_a_fake_only_db_constraint(self):
+        from hr.models import FAKE_ID_FIELDS
+
+        names = {c.name for c in Person._meta.constraints}
+        for f in FAKE_ID_FIELDS:
+            self.assertIn(f"person_{f}_fake_only", names)
+
+    def test_flag_off_still_rejects_real_ids_in_form_and_database(self):
+        from django.test import override_settings
+
+        data = {"last_name": "Real", "first_name": "Id", "birthdate": "1990-01-01", "tin": "123-456-789-000"}
+        with override_settings(PROTOTYPE_FAKE_DATA_ONLY=False):
+            form = PersonForm(data=data, user=self.hrmo_user)
+            self.assertFalse(form.is_valid())
+            self.assertIn("must start with 00", str(form.errors))
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Person.objects.create(
+                employee_no="SP-99999", last_name="Real", first_name="Id",
+                birthdate=date(1990, 1, 1), tin="123-456-789-000",
+            )
+
+
+class AuditVerificationStatusTestCase(TestCase):
+    """B1 + B7: /audit/ shows the stored result of the last full scan and never verifies on page load."""
+
+    def setUp(self):
         from django.core.cache import cache
 
-        # Clear cache and run full verification
-        cache.delete(CACHE_KEY_AUDIT_CHAIN)
-        res1 = verify_chain(reverify=True)
-        self.assertTrue(res1.is_valid)
-        cached_data = cache.get(CACHE_KEY_AUDIT_CHAIN)
-        self.assertIsNotNone(cached_data)
-        self.assertEqual(cached_data["last_verified_id"], AuditLog.objects.order_by("-id").first().pk)
+        cache.clear()
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor = User.objects.create_user(username="verify_auditor", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+        self.hrmo = User.objects.create_user(username="verify_hrmo", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        log_audit_event(action=AuditLog.Action.CREATE, model_name="VerifyTest", object_id="1")
 
-        # Append a new record and test incremental verification
-        new_entry = log_audit_event(
-            action=AuditLog.Action.CREATE,
-            model_name="IncrementalTest",
-            object_id="555",
+    def _status(self):
+        from hr.models import AuditChainStatus
+
+        return AuditChainStatus.objects.filter(pk=1).first()
+
+    def _verify_log_count(self):
+        return AuditLog.objects.filter(action="verify_chain").count()
+
+    def _age_status(self, seconds=61):
+        from datetime import timedelta
+        from hr.models import AuditChainStatus
+
+        AuditChainStatus.objects.filter(pk=1).update(
+            verified_at=self._status().verified_at - timedelta(seconds=seconds)
         )
-        res2 = verify_chain(reverify=False)
-        self.assertTrue(res2.is_valid)
-        self.assertEqual(res2.count, res1.count + 1)
-        cached_updated = cache.get(CACHE_KEY_AUDIT_CHAIN)
-        self.assertEqual(cached_updated["last_verified_id"], new_entry.pk)
+
+    def test_page_load_never_runs_the_hash_scan(self):
+        from unittest import mock
+
+        self.client.force_login(self.auditor)
+        real = AuditLog.calculate_row_hash
+        with mock.patch.object(AuditLog, "calculate_row_hash", autospec=True, side_effect=real) as spy:
+            self.assertEqual(self.client.get("/audit/").status_code, 200)
+            self.assertEqual(self.client.get("/audit/?reverify=1").status_code, 200)
+        self.assertEqual(spy.call_count, 0)
+
+    def test_stale_cached_checkpoint_does_not_crash(self):
+        """Old code raised UnboundLocalError when the cached checkpoint row no longer matched."""
+        from django.core.cache import cache
+
+        cache.set(
+            "audit_chain_verification_state",
+            {"is_valid": True, "last_verified_id": 999999, "last_verified_hash": "f" * 64, "count": 3},
+        )
+        is_valid, count, error_msg, broken_id = verify_chain()
+        self.assertTrue(is_valid, error_msg)
+        self.assertEqual(count, AuditLog.objects.count())
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/").status_code, 200)
+
+    def test_missing_result_shows_not_verified_yet(self):
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context["verification"])
+        self.assertContains(resp, "Not verified yet")
+        self.assertNotContains(resp, "tamper-evident")
+
+    def test_stale_result_shows_timestamp_and_unverified_newer_entries(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from hr.models import AuditChainStatus
+
+        AuditChainStatus.objects.create(
+            pk=1,
+            verified_at=timezone.now() - timedelta(days=3),
+            is_valid=True,
+            record_count=1,
+            last_record_id=1,
+            source="command",
+        )
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Last verified")
+        self.assertGreater(resp.context["entries_since"], 0)
+
+        # A result pointing past the end of the table (e.g. after a restore) must not crash either.
+        AuditChainStatus.objects.filter(pk=1).update(last_record_id=10**9)
+        resp = self.client.get("/audit/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["entries_since"], 0)
+
+    def test_reverify_runs_full_scan_stores_result_and_is_logged(self):
+        self.client.force_login(self.auditor)
+        rows_before = AuditLog.objects.count()
+        resp = self.client.post("/audit/reverify/")
+        self.assertRedirects(resp, "/audit/", fetch_redirect_response=False)
+
+        status = self._status()
+        self.assertTrue(status.is_valid)
+        self.assertEqual(status.record_count, rows_before)
+        self.assertEqual(status.source, "web")
+        self.assertEqual(status.verified_by, "verify_auditor")
+        self.assertEqual(status.anchor_status, "none")
+        log = AuditLog.objects.get(action="verify_chain")
+        self.assertEqual(log.username, "verify_auditor")
+        self.assertEqual(log.changes["is_valid"], True)
+
+        page = self.client.get("/audit/")
+        self.assertContains(page, "Chain consistent")
+        self.assertNotContains(page, "tamper-evident")
+
+    def test_reverify_limited_to_once_per_minute(self):
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/")
+        resp = self.client.post("/audit/reverify/", follow=True)
+        self.assertContains(resp, "once per minute")
+        self.assertEqual(self._verify_log_count(), 1)
+
+        self._age_status()
+        self.client.post("/audit/reverify/")
+        self.assertEqual(self._verify_log_count(), 2)
+
+    def test_reverify_with_valid_and_wrong_anchor(self):
+        latest = AuditLog.objects.order_by("-id").first()
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/", {"anchor": f"{latest.id}:{latest.row_hash}"})
+        self.assertEqual(self._status().anchor_status, "verified")
+        self.assertContains(self.client.get("/audit/"), "tamper-evident")
+
+        self._age_status()
+        self.client.post("/audit/reverify/", {"anchor": f"{latest.id}:" + "0" * 64})
+        status = self._status()
+        self.assertFalse(status.is_valid)
+        self.assertEqual(status.anchor_status, "not_verified")
+        page = self.client.get("/audit/")
+        self.assertContains(page, "Chain verification unconfirmed")
+        self.assertNotContains(page, "tamper-evident")
+
+    def test_broken_chain_is_stored_as_broken(self):
+        from django.utils import timezone
+
+        bad = AuditLog(
+            timestamp=timezone.now(),
+            action=AuditLog.Action.CREATE,
+            model_name="Broken",
+            prev_hash="bad_prev",
+            row_hash="bad_row",
+        )
+        bad.save()
+        self.client.force_login(self.auditor)
+        self.client.post("/audit/reverify/")
+        status = self._status()
+        self.assertFalse(status.is_valid)
+        self.assertEqual(status.broken_id, bad.pk)
+        self.assertContains(self.client.get("/audit/"), "Chain verification unconfirmed")
+
+    def test_reverify_requires_auditor_and_post(self):
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.post("/audit/reverify/").status_code, 403)
+        self.assertIsNone(self._status())
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/reverify/").status_code, 405)
+        self.assertIsNone(self._status())
+
+    def test_management_command_stores_result(self):
+        from io import StringIO
+        from django.utils import timezone
+
+        call_command("verify_audit_chain", stdout=StringIO())
+        status = self._status()
+        self.assertTrue(status.is_valid)
+        self.assertEqual(status.source, "command")
+        self.assertEqual(status.record_count, AuditLog.objects.count())
+
+        AuditLog(timestamp=timezone.now(), action=AuditLog.Action.CREATE, prev_hash="x", row_hash="y").save()
+        with self.assertRaises(CommandError):
+            call_command("verify_audit_chain", stdout=StringIO(), stderr=StringIO())
+        self.assertFalse(self._status().is_valid)
+
+
+class DocumentMissingVersionTestCase(TestCase):
+    """B6: a missing version on document edit/replace is a conflict, like Person and Engagement."""
+
+    def setUp(self):
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="doc_version_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.person = Person.objects.create(
+            employee_no="SP-00077", last_name="Version", first_name="Check", birthdate=date(1985, 3, 3)
+        )
+        self.doc = Document.objects.create(
+            person=self.person,
+            doc_type=Document.Type.APPOINTMENT,
+            physical_location="Cab 1",
+            version=3,
+        )
+        self.client.force_login(self.hrmo_user)
+
+    def test_edit_without_version_is_rejected(self):
+        resp = self.client.post(
+            f"/documents/{self.doc.pk}/edit/",
+            {"doc_type": Document.Type.CLEARANCE, "status": Document.Status.FILED, "physical_location": "Cab 9"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 3)
+        self.assertEqual(self.doc.doc_type, Document.Type.APPOINTMENT)
+        self.assertEqual(self.doc.physical_location, "Cab 1")
+
+    def test_replace_without_version_is_rejected(self):
+        new_file = SimpleUploadedFile("New.pdf", b"%PDF-1.4 replacement", content_type="application/pdf")
+        resp = self.client.post(f"/documents/{self.doc.pk}/replace/", {"file": new_file})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 3)
+        self.assertFalse(self.doc.is_replaced)
+        self.assertIsNone(self.doc.replaced_by)
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_edit_with_current_version_still_saves(self):
+        resp = self.client.post(
+            f"/documents/{self.doc.pk}/edit/",
+            {"doc_type": Document.Type.CLEARANCE, "status": Document.Status.FILED, "physical_location": "Cab 9", "version": 3},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.version, 4)
+
+
+class LeaveEligibleDefaultTestCase(TestCase):
+    """B2: leave_eligible is editable by HRMO for every type; the type default is only a form initial value."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.hrmo_user = User.objects.create_user(username="leave_hrmo", password="Password123!")
+        self.hrmo_user.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.office = Office.objects.get(acronym="MTO")
+        self.person = Person.objects.create(
+            employee_no="SP-00088", last_name="Leave", first_name="Flag", birthdate=date(1980, 2, 2)
+        )
+
+    def _payload(self, eng_type, **extra):
+        payload = {
+            "office": self.office.pk,
+            "type": eng_type,
+            "position_title": "Clerk",
+            "start_date": "2026-01-01",
+            "end_date": "",
+            "status": Engagement.Status.ACTIVE,
+            # leave_eligible omitted = checkbox left unticked
+        }
+        if eng_type == Engagement.Type.PLANTILLA:
+            payload.update({"salary_grade": 8, "step": 1, "item_number": "SP-MTO-008"})
+        payload.update(extra)
+        return payload
+
+    def test_model_save_keeps_explicit_false_for_plantilla_and_casual(self):
+        plantilla = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PLANTILLA, position_title="Clerk",
+            salary_grade=8, step=1, item_number="SP-MTO-001", start_date=date(2026, 1, 1), leave_eligible=False,
+        )
+        casual = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.CASUAL, position_title="Aide",
+            start_date=date(2026, 1, 1), leave_eligible=False,
+        )
+        plantilla.refresh_from_db()
+        casual.refresh_from_db()
+        self.assertFalse(plantilla.leave_eligible)
+        self.assertFalse(casual.leave_eligible)
+
+    def test_hrmo_can_create_plantilla_and_casual_without_leave_via_form(self):
+        self.client.force_login(self.hrmo_user)
+        for eng_type in (Engagement.Type.PLANTILLA, Engagement.Type.CASUAL):
+            with self.subTest(type=eng_type):
+                resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", self._payload(eng_type))
+                self.assertEqual(resp.status_code, 302)
+                eng = Engagement.objects.filter(person=self.person, type=eng_type).latest("pk")
+                self.assertFalse(eng.leave_eligible)
+
+    def test_hrmo_can_untick_leave_on_existing_plantilla(self):
+        eng = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PLANTILLA, position_title="Clerk",
+            salary_grade=8, step=1, item_number="SP-MTO-008", start_date=date(2026, 1, 1), leave_eligible=True,
+        )
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(
+            f"/engagements/{eng.pk}/edit/", self._payload(Engagement.Type.PLANTILLA, version=eng.version)
+        )
+        self.assertEqual(resp.status_code, 302)
+        eng.refresh_from_db()
+        self.assertFalse(eng.leave_eligible)
+
+    def test_type_default_is_applied_as_form_initial_value(self):
+        for eng_type, expected in [
+            (Engagement.Type.PLANTILLA, True),
+            (Engagement.Type.CASUAL, True),
+            (Engagement.Type.JOB_ORDER, False),
+            (Engagement.Type.CONTRACT_OF_SERVICE, False),
+        ]:
+            with self.subTest(type=eng_type):
+                self.assertEqual(Engagement.default_leave_eligible(eng_type), expected)
+                form = EngagementForm(initial={"type": eng_type}, user=self.hrmo_user, person=self.person)
+                self.assertEqual(bool(form["leave_eligible"].initial), expected)
+
+
+class SetupRolesAuditTestCase(TestCase):
+    """B5: setup_roles runs entirely inside disable_audit(), including group creation."""
+
+    def test_setup_roles_writes_no_audit_rows(self):
+        self.assertFalse(Group.objects.exists())
+        before = AuditLog.objects.count()
+        call_command("setup_roles")
+        self.assertTrue(Group.objects.filter(name=ROLE_HRMO).exists())
+        self.assertEqual(AuditLog.objects.count(), before)
+
+        # Re-running (idempotent) also writes nothing.
+        call_command("setup_roles")
+        self.assertEqual(AuditLog.objects.count(), before)
+
+
+class AuditChainConcurrencyTestCase(TransactionTestCase):
+    """Concurrent audit writes must append to one linear chain, never fork it."""
+
+    def _fixture_teardown(self):
+        # TransactionTestCase flushes with TRUNCATE, which the append-only trigger blocks.
+        # The test database runs as the owner role, so lift that trigger for the flush only.
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE hr_auditlog DISABLE TRIGGER trg_hr_auditlog_no_truncate")
+        try:
+            super()._fixture_teardown()
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE hr_auditlog ENABLE TRIGGER trg_hr_auditlog_no_truncate")
+
+    def _writer(self, label, errors, logged=None, release=None):
+        def run():
+            try:
+                with transaction.atomic():
+                    log_audit_event(action=AuditLog.Action.VIEW, model_name="Race", object_repr=label)
+                    if logged:
+                        logged.set()
+                    if release:
+                        release.wait(5)
+            except Exception as exc:  # surfaced by the assertion in _race()
+                errors.append(exc)
+            finally:
+                connection.close()
+
+        return threading.Thread(target=run)
+
+    def _race(self):
+        """Writer A appends and holds its transaction open while writer B tries to append."""
+        errors = []
+        a_logged, release_a = threading.Event(), threading.Event()
+        writer_a = self._writer("A", errors, logged=a_logged, release=release_a)
+        writer_b = self._writer("B", errors)
+        writer_a.start()
+        self.assertTrue(a_logged.wait(5))
+        writer_b.start()
+        time.sleep(0.5)  # B is now waiting on A (or, without serialization, already done)
+        release_a.set()
+        writer_a.join(10)
+        writer_b.join(10)
+        self.assertEqual(errors, [])
+
+    def test_concurrent_first_writes_share_one_chain(self):
+        self._race()
+        self.assertEqual(AuditLog.objects.count(), 2)
+        result = verify_chain()
+        self.assertTrue(result.is_valid, result.error_msg)
+
+    def test_concurrent_writes_after_existing_rows_share_one_chain(self):
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Seed", object_repr="seed")
+        self._race()
+        self.assertEqual(AuditLog.objects.count(), 3)
+        result = verify_chain()
+        self.assertTrue(result.is_valid, result.error_msg)
 
 
 
+class DataMinimizationTestCase(TestCase):
+    """R4/R5/R6: each role sees only the person fields its row in DECISIONS allows."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    BIRTHDATE = "June 19, 1980"
+
+    def setUp(self):
+        self.setUp_roles()
+        self.person_a.mobile = "0917-555-0101"
+        self.person_a.address = "12 Mabini St, Poblacion"
+        self.person_a.save()
+        self.eng_a.notes = "Confidential HR note"
+        self.eng_a.save()
+        self.doc_a.display_name = "Rizal_Medical_Certificate.pdf"
+        self.doc_a.notes = "Signed copy pending"
+        self.doc_a.save()
+        # Person B used to work in Office A (ended), now in Office B.
+        Engagement.objects.create(
+            person=self.person_b, office=self.office_a, type=Engagement.Type.JOB_ORDER,
+            position_title="Former Clerk", start_date=date(2023, 1, 1), end_date=date(2024, 12, 31),
+            status=Engagement.Status.ENDED,
+        )
+
+    def _person_page(self, user):
+        self.client.force_login(user)
+        resp = self.client.get(f"/people/{self.person_a.pk}/")
+        self.assertEqual(resp.status_code, 200)
+        return resp
+
+    def test_office_staff_sees_contacts_but_no_personal_details_documents_or_pay(self):
+        resp = self._person_page(self.staff_a)
+        self.assertContains(resp, "0917-555-0101")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "SG 22", "Cabinet A, Drawer 1",
+                       "Rizal_Medical_Certificate.pdf", "Signed copy pending", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+        self.assertContains(self.client.get("/people/"), "0917-555-0101")
+
+    def test_office_head_sees_document_status_but_not_file_names_or_notes(self):
+        resp = self._person_page(self.head_a)
+        self.assertContains(resp, "0917-555-0101")
+        self.assertContains(resp, "Cabinet A, Drawer 1")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "SG 22", "Rizal_Medical_Certificate.pdf",
+                       "Signed copy pending", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+
+    def test_executive_sees_name_position_office_type_only(self):
+        resp = self._person_page(self.mayor)
+        self.assertContains(resp, "Executive Assistant IV")
+        for hidden in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "SG 22", "Cabinet A, Drawer 1",
+                       "Rizal_Medical_Certificate.pdf", "Confidential HR note"):
+            self.assertNotContains(resp, hidden)
+        self.assertNotContains(self.client.get("/people/"), "0917-555-0101")
+
+    def test_hrmo_and_auditor_see_everything(self):
+        for user in (self.hrmo_user, self.auditor_user):
+            resp = self._person_page(user)
+            for shown in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "SG 22",
+                          "Rizal_Medical_Certificate.pdf", "Signed copy pending", "Confidential HR note"):
+                self.assertContains(resp, shown)
+
+    def test_employee_sees_own_details_and_documents_but_not_salary_grade(self):
+        resp = self._person_page(self.emp_a_user)
+        for shown in (self.BIRTHDATE, "12 Mabini St", "0917-555-0101", "Rizal_Medical_Certificate.pdf"):
+            self.assertContains(resp, shown)
+        self.assertNotContains(resp, "SG 22")
+
+    def test_employee_can_open_documents_attached_to_own_engagement(self):
+        from hr.permissions import can_view_document_content
+
+        eng_doc = Document.objects.create(engagement=self.eng_a, doc_type=Document.Type.APPOINTMENT)
+        self.assertTrue(can_view_document_content(self.emp_a_user, eng_doc))
+        self.assertFalse(can_view_document_content(self.head_a, eng_doc))
+
+    def test_office_page_hides_salary_grade_and_past_staff_from_office_roles(self):
+        for user in (self.head_a, self.staff_a):
+            self.client.force_login(user)
+            resp = self.client.get(f"/offices/{self.office_a.pk}/")
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotContains(resp, "SG 22")
+            self.assertNotContains(resp, "Bonifacio")  # transferred out (R5)
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/offices/{self.office_a.pk}/")
+        self.assertContains(resp, "SG 22")
+        self.assertContains(resp, "Bonifacio")
 
 
+class SysadminEscalationTestCase(TestCase):
+    """R3/A1: System Admin cannot reach office roles, and admin-set passwords are one-time."""
+
+    setUp = Step4CSecurityAndRolesTestCase.setUp
+
+    def test_office_roles_are_protected(self):
+        self.assertIn(ROLE_OFFICE_HEAD, PROTECTED_ROLES)
+        self.assertIn(ROLE_OFFICE_STAFF, PROTECTED_ROLES)
+        self.client.force_login(self.sysadmin)
+        resp = self.client.get(f"/admin/auth/user/{self.head_a.pk}/change/")
+        self.assertNotEqual(resp.status_code, 200)
+        resp = self.client.get(f"/admin/auth/user/{self.head_a.pk}/password/")
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_admin_password_reset_forces_change_at_next_login(self):
+        self.client.force_login(self.sysadmin)
+        new_pw = "Rq7!fresh-one-time-pass"
+        resp = self.client.post(
+            f"/admin/auth/user/{self.emp_a_user.pk}/password/",
+            {"password1": new_pw, "password2": new_pw, "usable_password": "true"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.emp_a_user.profile.refresh_from_db()
+        self.assertTrue(self.emp_a_user.profile.must_change_password)
+
+    def test_admin_created_account_must_change_password(self):
+        self.client.force_login(self.sysadmin)
+        pw = "Kp4!brand-new-account"
+        resp = self.client.post(
+            "/admin/auth/user/add/",
+            {"username": "new_clerk", "usable_password": "true", "password1": pw, "password2": pw, "_save": "Save"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        new_user = get_user_model().objects.get(username="new_clerk")
+        self.assertTrue(UserProfile.objects.get(user=new_user).must_change_password)
 
 
+class LoginLockoutAuditTestCase(TestCase):
+    """U5/S9: lockouts are per real client behind a proxy and never store unknown usernames."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("clerk", password="Correct-Horse-91")
+
+    def _fail(self, username, client_ip, times=5):
+        for _ in range(times):
+            self.client.post(
+                "/accounts/login/", {"username": username, "password": "wrong-password"},
+                HTTP_X_FORWARDED_FOR=client_ip,
+            )
+
+    def test_lockout_behind_proxy_is_per_client_ip(self):
+        self._fail("clerk", "198.51.100.1")
+        locked = self.client.post(
+            "/accounts/login/", {"username": "clerk", "password": "Correct-Horse-91"},
+            HTTP_X_FORWARDED_FOR="198.51.100.1",
+        )
+        self.assertNotEqual(locked.status_code, 302)
+        other_client = self.client.post(
+            "/accounts/login/", {"username": "clerk", "password": "Correct-Horse-91"},
+            HTTP_X_FORWARDED_FOR="198.51.100.2",
+        )
+        self.assertEqual(other_client.status_code, 302)
+
+    def test_lockout_does_not_store_unknown_username(self):
+        secret = "MyActualPassword!2026"
+        self._fail(secret, "198.51.100.9")
+        lockouts = AuditLog.objects.filter(action=AuditLog.Action.ACCOUNT_LOCKOUT)
+        self.assertTrue(lockouts.exists())
+        self.assertEqual(lockouts.first().username, "[unknown]")
+        self.assertEqual(lockouts.first().ip_address, "198.51.100.9")
+        for row in AuditLog.objects.all():
+            self.assertNotIn(secret, f"{row.username} {row.object_repr} {row.changes}")
+
+    def test_lockout_keeps_real_username(self):
+        self._fail("clerk", "198.51.100.3")
+        self.assertEqual(
+            AuditLog.objects.filter(action=AuditLog.Action.ACCOUNT_LOCKOUT).first().username, "clerk"
+        )
 
 
+class AuditExportAndInputHardeningTestCase(TestCase):
+    """CSV formula escaping, malformed filters, superseded scans, and app-role privileges."""
 
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor = User.objects.create_user("aud_csv", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+        self.hrmo = User.objects.create_user("hrmo_csv", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+
+    def test_csv_safe_escapes_formula_prefixes(self):
+        from hr.views import csv_safe
+
+        for value in ("=1+1", "+1", "-1", "@SUM(A1)", "\t=x", "\r=x"):
+            self.assertTrue(csv_safe(value).startswith("'"), value)
+        self.assertEqual(csv_safe("Rizal, Jose"), "Rizal, Jose")
+        self.assertEqual(csv_safe(None), "")
+
+    def test_audit_export_neutralizes_formula_cells(self):
+        log_audit_event(action=AuditLog.Action.VIEW, model_name="Person",
+                        object_repr='=HYPERLINK("http://evil.example","x")')
+        self.client.force_login(self.auditor)
+        content = self.client.get("/audit/export/csv/").content.decode()
+        self.assertIn("'=HYPERLINK", content)
+        self.assertNotIn(",=HYPERLINK", content)
+        self.assertNotIn('"=HYPERLINK', content)
+
+    def test_malformed_filters_do_not_500(self):
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get("/people/?office=abc&type=nope&status=zzz").status_code, 200)
+        self.client.force_login(self.auditor)
+        self.assertEqual(self.client.get("/audit/?start_date=junk&end_date=2026-02-31").status_code, 200)
+
+    def test_superseded_document_cannot_be_replaced_again(self):
+        person = Person.objects.create(employee_no="SP-00555", last_name="Luna", first_name="Juan",
+                                       birthdate=date(1985, 1, 1))
+        current = Document.objects.create(person=person, doc_type=Document.Type.PDS)
+        old = Document.objects.create(person=person, doc_type=Document.Type.PDS,
+                                      is_replaced=True, replaced_by=current)
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get(f"/documents/{old.pk}/replace/").status_code, 302)
+        pdf = SimpleUploadedFile("scan.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+        before = Document.objects.count()
+        resp = self.client.post(f"/documents/{old.pk}/replace/", {"version": old.version, "file": pdf})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Document.objects.count(), before)
+        old.refresh_from_db()
+        self.assertEqual(old.replaced_by_id, current.pk)
+
+    def test_privilege_migration_uses_configured_role(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        migration = importlib.import_module("hr.migrations.0011_reapply_app_role_audit_privileges")
+        with mock.patch.dict(os.environ, {"APP_DB_USER": "no_such_role_xyz"}):
+            with connection.schema_editor() as editor, self.assertRaises(RuntimeError):
+                migration.restrict_app_role(None, editor)
+
+        role = os.environ.get("APP_DB_USER") or "hr_app"
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [role])
+            if cursor.fetchone() is None:
+                self.skipTest(f"role {role} not present in this cluster")
+        with connection.schema_editor() as editor:
+            migration.restrict_app_role(None, editor)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT has_table_privilege(%s, 'hr_auditlog', 'UPDATE'),"
+                " has_table_privilege(%s, 'hr_auditlog', 'DELETE'),"
+                " has_column_privilege(%s, 'hr_auditlog', 'id', 'UPDATE')",
+                [role, role, role],
+            )
+            self.assertEqual(cursor.fetchone(), (False, False, False))
+
+
+class ProjectManagementTestCase(TestCase):
+    """P1-P3: Project Maintainer role, funding reference, and contract-within-project rules."""
+
+    def setUp(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.office = Office.objects.get(name="Office of the Municipal Engineer")
+
+        self.maintainer = User.objects.create_user("planning_officer", password="Password123!")
+        self.maintainer.groups.add(Group.objects.get(name=ROLE_PROJECT_MAINTAINER))
+        self.hrmo = User.objects.create_user("hrmo_proj", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.sysadmin = User.objects.create_user("sysadmin_proj", password="Password123!", is_staff=True)
+        self.sysadmin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+
+        self.project = Project.objects.create(
+            name="Coastal Road Concreting", office=self.office, status=Project.Status.ONGOING,
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), funding_reference="FAKE-CAF-2026-001",
+        )
+        self.person = Person.objects.create(
+            employee_no="SP-00901", last_name="Dagohoy", first_name="Francisco", birthdate=date(1990, 4, 4)
+        )
+
+    def _project_payload(self, **overrides):
+        payload = {
+            "name": "Evacuation Center Phase 3", "office": self.office.pk, "status": Project.Status.PLANNED,
+            "start_date": "2026-03-01", "end_date": "2027-02-28", "funding_reference": "FAKE-CAF-2026-077",
+            "notes": "",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _contract_payload(self, **overrides):
+        payload = {
+            "office": self.office.pk, "type": Engagement.Type.PROJECT_BASED, "position_title": "Site Inspector",
+            "start_date": "2026-02-01", "end_date": "2026-11-30", "status": Engagement.Status.ACTIVE,
+            "project": self.project.pk,
+        }
+        payload.update(overrides)
+        return payload
+
+    # --- Role and access --------------------------------------------------------
+
+    def test_setup_roles_creates_project_maintainer_group(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        perms = set(Group.objects.get(name=ROLE_PROJECT_MAINTAINER).permissions.values_list("codename", flat=True))
+        self.assertIn("manage_projects", perms)
+        self.assertFalse({"view_person", "view_hr_records", "manage_hr_records"} & perms)
+        hrmo_perms = set(Group.objects.get(name=ROLE_HRMO).permissions.values_list("codename", flat=True))
+        self.assertIn("view_project", hrmo_perms)
+        self.assertNotIn("manage_projects", hrmo_perms)
+
+    def test_maintainer_creates_project_and_it_is_audited(self):
+        self.client.force_login(self.maintainer)
+        resp = self.client.post("/projects/new/", self._project_payload())
+        self.assertEqual(resp.status_code, 302)
+        created = Project.objects.get(name="Evacuation Center Phase 3")
+        self.assertEqual(created.funding_reference, "FAKE-CAF-2026-077")
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.CREATE, model_name="Project", object_id=str(created.pk)
+        ).exists())
+
+    def test_funding_reference_is_required(self):
+        self.client.force_login(self.maintainer)
+        resp = self.client.post("/projects/new/", self._project_payload(funding_reference="  "))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Project.objects.filter(name="Evacuation Center Phase 3").exists())
+
+    def test_maintainer_has_no_personnel_access(self):
+        self.client.force_login(self.maintainer)
+        self.assertRedirects(self.client.get("/"), "/projects/")
+        self.assertEqual(self.client.get("/people/").status_code, 403)
+        self.assertEqual(self.client.get(f"/people/{self.person.pk}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/people/{self.person.pk}/engagements/new/").status_code, 403)
+
+    def test_maintainer_sees_headcount_but_not_names(self):
+        Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.client.force_login(self.maintainer)
+        resp = self.client.get(f"/projects/{self.project.pk}/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["active_count"], 1)
+        self.assertNotContains(resp, "Dagohoy")
+        self.client.force_login(self.hrmo)
+        self.assertContains(self.client.get(f"/projects/{self.project.pk}/"), "Dagohoy")
+
+    def test_hrmo_cannot_create_or_edit_projects_without_the_role(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get("/projects/").status_code, 200)
+        self.assertEqual(self.client.post("/projects/new/", self._project_payload()).status_code, 403)
+        self.assertEqual(self.client.get(f"/projects/{self.project.pk}/edit/").status_code, 403)
+
+        # Roles stack: an HRMO staffer added to Project Maintainer can do both (LGU decision, P1).
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_PROJECT_MAINTAINER))
+        self.assertEqual(self.client.post("/projects/new/", self._project_payload()).status_code, 302)
+
+    def test_sysadmin_cannot_assign_project_maintainer(self):
+        from hr.permissions import ROLE_PROJECT_MAINTAINER
+
+        self.assertIn(ROLE_PROJECT_MAINTAINER, PROTECTED_ROLES)
+
+    def test_project_edit_rejects_stale_version(self):
+        self.client.force_login(self.maintainer)
+        payload = self._project_payload(
+            name=self.project.name, status=Project.Status.ONGOING, start_date="2026-01-01",
+            end_date="2026-12-31", version=self.project.version,
+        )
+        self.assertEqual(self.client.post(f"/projects/{self.project.pk}/edit/", payload).status_code, 302)
+        resp = self.client.post(f"/projects/{self.project.pk}/edit/", payload)  # same, now stale version
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "modified by another user")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.version, 2)
+
+    def test_project_end_cannot_cut_active_contracts(self):
+        Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.client.force_login(self.maintainer)
+        payload = self._project_payload(
+            name=self.project.name, status=Project.Status.ONGOING, start_date="2026-01-01",
+            end_date="2026-06-30", version=self.project.version,
+        )
+        resp = self.client.post(f"/projects/{self.project.pk}/edit/", payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "run past this date")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.end_date, date(2026, 12, 31))
+
+    # --- Hiring against projects --------------------------------------------------
+
+    def test_hrmo_hires_onto_open_funded_project(self):
+        self.client.force_login(self.hrmo)
+        resp = self.client.post(f"/people/{self.person.pk}/engagements/new/", self._contract_payload())
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Engagement.objects.filter(person=self.person, project=self.project).exists())
+
+    def test_unfunded_or_closed_projects_are_not_offered(self):
+        unfunded = Project.objects.create(
+            name="Unfunded Idea", office=self.office, status=Project.Status.PLANNED, start_date=date(2026, 1, 1),
+        )
+        completed = Project.objects.create(
+            name="Finished Bridge", office=self.office, status=Project.Status.COMPLETED,
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31), funding_reference="FAKE-CAF-2025-050",
+        )
+        form = EngagementForm(user=self.hrmo, person=self.person)
+        offered = set(form.fields["project"].queryset)
+        self.assertIn(self.project, offered)
+        self.assertNotIn(unfunded, offered)
+        self.assertNotIn(completed, offered)
+
+        self.client.force_login(self.hrmo)
+        resp = self.client.post(
+            f"/people/{self.person.pk}/engagements/new/", self._contract_payload(project=unfunded.pk)
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Engagement.objects.filter(project=unfunded).exists())
+
+    def test_existing_contract_keeps_its_closed_project_on_edit(self):
+        eng = Engagement.objects.create(
+            person=self.person, office=self.office, type=Engagement.Type.PROJECT_BASED,
+            position_title="Site Inspector", start_date=date(2026, 2, 1), end_date=date(2026, 11, 30),
+            project=self.project,
+        )
+        self.project.status = Project.Status.COMPLETED
+        self.project.save()
+        form = EngagementForm(instance=eng, user=self.hrmo, person=self.person)
+        self.assertIn(self.project, set(form.fields["project"].queryset))
+
+    def test_contract_must_fit_inside_project_dates(self):
+        self.client.force_login(self.hrmo)
+        url = f"/people/{self.person.pk}/engagements/new/"
+        too_late = self.client.post(url, self._contract_payload(end_date="2027-03-31"))
+        self.assertContains(too_late, "Contract must end by the project end date")
+        open_ended = self.client.post(url, self._contract_payload(end_date=""))
+        self.assertContains(open_ended, "Contract must end by the project end date")
+        too_early = self.client.post(url, self._contract_payload(start_date="2025-12-01"))
+        self.assertContains(too_early, "cannot start before the project")
+        self.assertFalse(Engagement.objects.filter(person=self.person).exists())
+
+
+class ProvisionAccountsTestCase(TestCase):
+    """A1/A4/D9: bulk employee accounts with expiring one-time passwords and no roles."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        self.mto = Office.objects.get(acronym="MTO")
+        self.hrmo_office = Office.objects.get(acronym="HRMO")
+        self.active_mto = self._person("SP-00011", "Aquino", self.mto)
+        self.active_hrmo = self._person("SP-00012", "Bautista", self.hrmo_office)
+        self.ended_only = self._person("SP-00013", "Cruz", self.mto, status=Engagement.Status.ENDED)
+        self.linked = self._person("SP-00014", "Diaz", self.mto)
+        linked_user = get_user_model().objects.create_user("SP-00014", password="Existing-Pass-91")
+        UserProfile.objects.create(user=linked_user, person=self.linked)
+        self.conflict = self._person("SP-00015", "Estrada", self.mto)
+        get_user_model().objects.create_user("SP-00015", password="Someone-Else-91")  # not linked
+
+    def _person(self, emp_no, last_name, office, status=Engagement.Status.ACTIVE):
+        person = Person.objects.create(
+            employee_no=emp_no, last_name=last_name, first_name="Test", birthdate=date(1990, 1, 1)
+        )
+        Engagement.objects.create(
+            person=person, office=office, type=Engagement.Type.JOB_ORDER, position_title="Clerk",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31) if status != Engagement.Status.ACTIVE else None,
+            status=status,
+        )
+        return person
+
+    def _provision(self, *args):
+        from io import StringIO
+
+        out = StringIO()
+        call_command("provision_accounts", *args, stdout=out)
+        text = out.getvalue()
+        import re
+
+        passwords = dict(re.findall(r"^(SP-\d{5})\s+.*\s(\S+)$", text, flags=re.M))
+        return text, passwords
+
+    def test_dry_run_creates_nothing(self):
+        text, _ = self._provision("--dry-run")
+        self.assertIn("2 account(s) to create", text)
+        self.assertIn("Skipped SP-00015", text)
+        self.assertFalse(get_user_model().objects.filter(username__in=["SP-00011", "SP-00012"]).exists())
+
+    def test_creates_accounts_only_for_active_unlinked_people(self):
+        _, passwords = self._provision()
+        self.assertEqual(set(passwords), {"SP-00011", "SP-00012"})
+        User = get_user_model()
+        self.assertFalse(User.objects.filter(username="SP-00013").exists())  # no active appointment
+        self.assertFalse(UserProfile.objects.filter(person=self.conflict).exists())  # conflict untouched
+        self.assertTrue(User.objects.get(username="SP-00014").check_password("Existing-Pass-91"))
+
+    def test_office_filter(self):
+        _, passwords = self._provision("--office", "mto")
+        self.assertEqual(set(passwords), {"SP-00011"})
+
+    def test_provisioned_account_is_a_plain_employee_account(self):
+        from django.utils import timezone
+        from hr.permissions import can_view_ids, get_visible_people
+
+        _, passwords = self._provision()
+        user = get_user_model().objects.get(username="SP-00011")
+        self.assertTrue(user.check_password(passwords["SP-00011"]))
+        self.assertFalse(user.is_superuser)
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.groups.exists())
+        self.assertEqual(user.get_all_permissions(), set())
+        self.assertEqual(list(get_visible_people(user)), [self.active_mto])
+        self.assertTrue(can_view_ids(user, self.active_mto))
+        self.assertFalse(can_view_ids(user, self.active_hrmo))
+        profile = user.profile
+        self.assertTrue(profile.must_change_password)
+        remaining = profile.password_expires_at - timezone.now()
+        self.assertGreater(remaining.days, 12)
+        self.assertLessEqual(remaining.days, 14)
+
+    def test_first_login_forces_password_change_and_clears_expiry(self):
+        _, passwords = self._provision()
+        resp = self.client.post("/accounts/login/", {"username": "SP-00011", "password": passwords["SP-00011"]})
+        self.assertEqual(resp.status_code, 302)
+        self.assertRedirects(self.client.get(f"/people/{self.active_mto.pk}/"), "/accounts/password/")
+        new_pw = "My-Own-Strong-Pass-2026"
+        resp = self.client.post("/accounts/password/", {
+            "old_password": passwords["SP-00011"], "new_password1": new_pw, "new_password2": new_pw,
+        })
+        self.assertEqual(resp.status_code, 302)
+        profile = UserProfile.objects.get(user__username="SP-00011")
+        self.assertFalse(profile.must_change_password)
+        self.assertIsNone(profile.password_expires_at)
+        self.assertEqual(self.client.get(f"/people/{self.active_mto.pk}/").status_code, 200)
+
+    def test_expired_one_time_password_is_refused(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        _, passwords = self._provision()
+        UserProfile.objects.filter(user__username="SP-00011").update(
+            password_expires_at=timezone.now() - timedelta(minutes=1)
+        )
+        resp = self.client.post("/accounts/login/", {"username": "SP-00011", "password": passwords["SP-00011"]})
+        self.assertEqual(resp.status_code, 200)  # login form again, generic error
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_passwords_never_reach_the_audit_log(self):
+        _, passwords = self._provision()
+        created = AuditLog.objects.filter(action=AuditLog.Action.CREATE, model_name="User",
+                                          object_repr__in=["SP-00011", "SP-00012"])
+        self.assertEqual(created.count(), 2)
+        for row in AuditLog.objects.all():
+            for password in passwords.values():
+                self.assertNotIn(password, f"{row.object_repr} {row.changes}")
+        self.assertEqual(created.first().changes["password"], "[REDACTED]")
+        self.assertTrue(verify_chain().is_valid)
+
+    def test_slips_page_lists_each_account(self):
+        import os
+        import tempfile
+
+        path = os.path.join(tempfile.mkdtemp(), "account_slips_test.html")
+        _, passwords = self._provision("--slips", path)
+        page = open(path, encoding="utf-8").read()
+        for emp_no, password in passwords.items():
+            self.assertIn(emp_no, page)
+            self.assertIn(password, page)
+        os.remove(path)
+
+    def test_admin_reset_password_also_expires(self):
+        from hr.accounts import require_password_change
+
+        user = get_user_model().objects.create_user("reset_me", password="Old-Pass-2026x")
+        profile = require_password_change(user)
+        self.assertTrue(profile.must_change_password)
+        self.assertIsNotNone(profile.password_expires_at)
+
+    def test_one_time_passwords_avoid_look_alike_characters(self):
+        from hr.accounts import generate_one_time_password
+
+        for _ in range(200):
+            pwd = generate_one_time_password()
+            self.assertEqual(len(pwd), 12)
+            self.assertFalse(set(pwd) & set("0O1lI"))
+
+
+class TamperingTestCase(TestCase):
+    """Inspect-element and forged-request attacks: the server must ignore or refuse them all.
+
+    Each test sends what a user could produce by editing the page in the browser's developer
+    tools (or replaying it with curl/Burp): extra fields, removed fields, other people's IDs,
+    pages their role never shows, or a changed redirect.
+    """
+
+    setUp = Step4CSecurityAndRolesTestCase.setUp
+
+    def _person_payload(self, **extra):
+        payload = {
+            "last_name": "Rizal", "first_name": "Jose", "birthdate": "1980-06-19",
+            "tin": "000-111-222-000", "version": Person.objects.get(pk=self.person_a.pk).version,
+        }
+        payload.update(extra)
+        return payload
+
+    def _engagement_payload(self, **extra):
+        payload = {
+            "office": self.office_a.pk, "type": Engagement.Type.PLANTILLA, "position_title": "Executive Assistant IV",
+            "rate": "50000.00", "rate_basis": Engagement.RateBasis.MONTHLY, "start_date": "2025-01-01",
+            "status": Engagement.Status.ACTIVE, "salary_grade": 22, "step": 1, "item_number": "SP-MO-001",
+            "version": Engagement.objects.get(pk=self.eng_a.pk).version,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_extra_field_cannot_change_employee_number(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/people/{self.person_a.pk}/edit/", self._person_payload(employee_no="SP-99999"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Person.objects.get(pk=self.person_a.pk).employee_no, "SP-00101")
+
+    def test_extra_field_cannot_move_engagement_to_another_person(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/engagements/{self.eng_a.pk}/edit/", self._engagement_payload(person=self.person_b.pk))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).person_id, self.person_a.pk)
+
+    def test_fields_hidden_from_a_role_are_ignored_when_posted_anyway(self):
+        # A records clerk with manage_hr_records but no view_pay / view_ids: the rate and ID
+        # inputs are not on their page, so they add them back with developer tools.
+        from django.contrib.auth.models import Permission
+
+        clerk = get_user_model().objects.create_user("records_clerk", password="Password123!")
+        clerk.user_permissions.add(Permission.objects.get(codename="manage_hr_records"))
+        self.client.force_login(clerk)
+
+        payload = self._engagement_payload(rate="999999.00")
+        payload.pop("rate_basis")
+        self.assertEqual(self.client.post(f"/engagements/{self.eng_a.pk}/edit/", payload).status_code, 302)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).rate, Decimal("50000.00"))
+
+        resp = self.client.post(f"/people/{self.person_a.pk}/edit/", self._person_payload(tin="00-TAMPERED"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Person.objects.get(pk=self.person_a.pk).tin, "000-111-222-000")
+
+    def test_guessing_other_ids_is_refused(self):
+        doc_b = Document.objects.create(person=self.person_b, doc_type=Document.Type.PDS)
+        self.client.force_login(self.emp_a_user)
+        self.assertEqual(self.client.get(f"/people/{self.person_b.pk}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/documents/{doc_b.pk}/download/").status_code, 403)
+        self.client.force_login(self.head_a)
+        resp = self.client.get(f"/people/?office={self.office_b.pk}")
+        self.assertNotContains(resp, self.person_b.last_name)
+        self.assertEqual(self.client.get(f"/offices/{self.office_b.pk}/").status_code, 404)
+
+    def test_pages_a_role_never_sees_are_refused(self):
+        self.client.force_login(self.emp_a_user)
+        for url in ("/people/new/", f"/people/{self.person_a.pk}/edit/", f"/engagements/{self.eng_a.pk}/end/",
+                    "/projects/new/", "/audit/", "/audit/export/csv/"):
+            self.assertEqual(self.client.post(url, {}).status_code, 403, url)
+        self.client.force_login(self.staff_a)
+        resp = self.client.post(f"/engagements/{self.eng_a.pk}/end/", {"end_date": "2026-01-31", "version": 1})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(Engagement.objects.get(pk=self.eng_a.pk).status, Engagement.Status.ACTIVE)
+
+    def test_sysadmin_cannot_tick_is_superuser(self):
+        target = get_user_model().objects.create_user("plain_clerk", password="Password123!")
+        self.client.force_login(self.sysadmin)
+        resp = self.client.post(f"/admin/auth/user/{target.pk}/change/", {
+            "username": "plain_clerk", "first_name": "", "last_name": "", "email": "",
+            "is_active": "on", "is_superuser": "on",
+            "date_joined_0": "2026-10-11", "date_joined_1": "09:00:00",
+            "last_login_0": "", "last_login_1": "", "_save": "Save",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(get_user_model().objects.get(pk=target.pk).is_superuser)
+
+    def test_cross_site_post_without_csrf_token_is_refused(self):
+        from django.test import Client
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.hrmo_user)
+        resp = client.post("/people/new/", {"last_name": "X", "first_name": "Y", "birthdate": "1990-01-01"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_login_redirect_cannot_point_off_site(self):
+        resp = self.client.post("/accounts/login/?next=https://evil.example/", {
+            "username": "hrmo", "password": "hrmopass123", "next": "https://evil.example/",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(resp.url.startswith("https://evil.example"))

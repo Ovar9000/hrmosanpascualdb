@@ -5,9 +5,9 @@ Features:
 - Transaction-bound writes: if audit logging fails, the action transaction fails (DECISIONS U3).
 - Data minimization: Sensitive fields (rate, fake IDs, passwords) log field names only, never values (DECISIONS U4).
 - No foreign keys: snapshot user_id, username, office_id, office_name to allow clean user deletions.
-- Client IP resolution: reads X-Forwarded-For strictly when REMOTE_ADDR is in TRUSTED_PROXIES (DECISIONS U5).
+- Client IP resolution: walks X-Forwarded-For right to left, only past TRUSTED_PROXIES hops (DECISIONS U5).
 - Suppressible for data seeders (seed_fake, seed_offices) via disable_audit() context manager.
-- Optional cryptographic SHA-256 hash chaining (prev_hash, row_hash).
+- SHA-256 hash chaining (prev_hash, row_hash), appends serialized by an advisory lock.
 """
 
 import contextvars
@@ -20,12 +20,15 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from django.conf import settings
-from django.core.cache import cache
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
+from django.utils.ipv6 import clean_ipv6_address
 
 # Request ID validation: only accepted from trusted proxy if matching ^[A-Za-z0-9-]{8,64}$
 REQUEST_ID_REGEX = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+# Key of the transaction-scoped advisory lock that serializes audit chain appends.
+AUDIT_CHAIN_LOCK_KEY = 0x53504155  # "SPAU"
 
 # Thread-safe context variables
 _audit_disabled_var = contextvars.ContextVar("audit_disabled", default=False)
@@ -64,6 +67,25 @@ def get_current_request():
     return _audit_request_var.get()
 
 
+def normalize_ip(value):
+    """Returns the IP in the exact text form PostgreSQL stores and returns, or None if invalid.
+
+    The row hash is computed before the INSERT and re-checked after reading the row back,
+    so a non-canonical spelling (e.g. upper-case IPv6) would break the chain.
+    """
+    if not value:
+        return None
+    try:
+        ip = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return None
+    if ip.version == 6:
+        if ip.scope_id:
+            return None  # zone IDs ("%eth0") are not valid in an inet column
+        return clean_ipv6_address(str(ip))
+    return str(ip)
+
+
 def is_ip_trusted(ip_str):
     """Verifies whether an IP matches the configured TRUSTED_PROXIES."""
     if not ip_str:
@@ -87,20 +109,28 @@ def is_ip_trusted(ip_str):
 
 
 def get_client_ip(request):
-    """Extracts client IP. Inspects X-Forwarded-For ONLY if REMOTE_ADDR is a trusted proxy."""
+    """Returns the client IP (also used by django-axes via AXES_CLIENT_IP_CALLABLE).
+
+    X-Forwarded-For is read only when REMOTE_ADDR is a trusted proxy, and right to left:
+    each proxy appends the address it received the request from, so the first hop that is
+    not a trusted proxy is the client. Entries left of it were sent by the client and can
+    be forged. A malformed hop stops the walk at the last address we could trust.
+    """
     if not request:
         return None
-    remote_addr = request.META.get("REMOTE_ADDR")
-    if not remote_addr:
-        return None
+    client_ip = normalize_ip(request.META.get("REMOTE_ADDR"))
+    if not client_ip or not is_ip_trusted(client_ip):
+        return client_ip
 
-    if is_ip_trusted(remote_addr):
-        xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        if xff:
-            ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
-            if ips:
-                return ips[0]
-    return remote_addr
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    for hop in reversed([h for h in xff.split(",") if h.strip()]):
+        hop_ip = normalize_ip(hop)
+        if hop_ip is None:
+            break
+        client_ip = hop_ip
+        if not is_ip_trusted(hop_ip):
+            break
+    return client_ip
 
 
 def resolve_request_id(request):
@@ -178,6 +208,7 @@ def log_audit_event(
 
     if not ip_address and req:
         ip_address = get_client_ip(req)
+    ip_address = normalize_ip(ip_address)
 
     # Request ID and Session Key Hash (Requirement 3)
     request_id = ""
@@ -205,9 +236,14 @@ def log_audit_event(
     # Circular import guard
     from .models import AuditLog
 
-    # Lock latest row and compute row_hash with last row locked in active transaction
     with transaction.atomic():
-        last_entry = AuditLog.objects.select_for_update().order_by("-id").first()
+        # Serialize appends, then read the chain head in a new statement so READ COMMITTED
+        # sees the row the previous lock holder committed. Locking the last row with
+        # SELECT ... FOR UPDATE is not enough: a waiter gets the old head back and both
+        # writers link to it (and on an empty table there is no row to lock).
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [AUDIT_CHAIN_LOCK_KEY])
+        last_entry = AuditLog.objects.order_by("-id").only("row_hash").first()
         prev_hash = last_entry.row_hash if (last_entry and last_entry.row_hash) else ("0" * 64)
 
         now = timezone.now()
@@ -249,19 +285,17 @@ def log_audit_event(
 
 
 class VerificationResult(tuple):
-    """Result tuple (is_valid, count, error_msg, broken_id) with extra attribute anchor_verified."""
+    """Result tuple (is_valid, count, error_msg, broken_id) with extra attributes anchor_verified and last_id."""
 
-    def __new__(cls, is_valid, count, error_msg, broken_id, anchor_verified=False):
+    def __new__(cls, is_valid, count, error_msg, broken_id, anchor_verified=False, last_id=None):
         instance = super().__new__(cls, (is_valid, count, error_msg, broken_id))
         instance.is_valid = is_valid
         instance.count = count
         instance.error_msg = error_msg
         instance.broken_id = broken_id
         instance.anchor_verified = anchor_verified
+        instance.last_id = last_id
         return instance
-
-
-CACHE_KEY_AUDIT_CHAIN = "audit_chain_verification_state"
 
 
 def parse_anchor(anchor):
@@ -286,17 +320,16 @@ def parse_anchor(anchor):
     return None, None
 
 
-def verify_chain(anchor=None, reverify=False):
-    """Verifies the integrity of the cryptographic SHA-256 hash chain across AuditLog entries.
+def verify_chain(anchor=None):
+    """Verifies the SHA-256 hash chain across all AuditLog entries with a full scan from genesis.
 
-    Features:
-    - Incremental verification using Django cache (stores last verified id and hash).
-    - Anchor verification: if anchor 'ID:HASH' is supplied, fails if missing or mismatched.
-    - reverify=True forces full scan from genesis (used by auditors 'Re-verify all').
+    If anchor 'ID:HASH' is supplied, verification fails when that row is missing or its hash differs.
+    This is expensive on a large table: call it from the management command or the rate-limited
+    "Re-verify all" action, never on page load.
 
     Returns:
         VerificationResult: (is_valid: bool, count: int, error_msg: str, broken_id: int | None)
-        with attribute .anchor_verified: bool
+        with attributes .anchor_verified: bool and .last_id: int | None
     """
     from .models import AuditLog
 
@@ -307,192 +340,88 @@ def verify_chain(anchor=None, reverify=False):
             0,
             f"Invalid anchor format '{anchor}'. Expected format ID:HASH (e.g. 10:abc123...)",
             None,
-            False,
         )
 
-    # 1. Try incremental verification if not forcing reverify
-    if not reverify:
-        cached = cache.get(CACHE_KEY_AUDIT_CHAIN)
-        if cached and cached.get("is_valid") is True:
-            last_id = cached.get("last_verified_id", 0)
-            last_hash = cached.get("last_verified_hash", "0" * 64)
-            cached_count = cached.get("count", 0)
-
-            # Validate cache checkpoint against database to handle rollbacks or stale cache
-            is_cache_valid = True
-            if last_id > 0:
-                checkpoint = AuditLog.objects.filter(pk=last_id).first()
-                if not checkpoint or checkpoint.row_hash != last_hash:
-                    is_cache_valid = False
-            elif cached_count > 0 and AuditLog.objects.exists():
-                is_cache_valid = False
-
-            if not is_cache_valid:
-                cache.delete(CACHE_KEY_AUDIT_CHAIN)
-            else:
-                # Check if new records have been appended since last check
-                new_records = list(AuditLog.objects.filter(id__gt=last_id).order_by("id"))
-            if not new_records:
-                # No new records. Validate anchor if requested.
-                anchor_verified = False
-                if expected_anchor_id is not None:
-                    anchor_row = AuditLog.objects.filter(pk=expected_anchor_id).first()
-                    if not anchor_row:
-                        return VerificationResult(
-                            False,
-                            cached_count,
-                            f"Anchor row #{expected_anchor_id} not found in audit log.",
-                            expected_anchor_id,
-                            False,
-                        )
-                    if anchor_row.row_hash != expected_anchor_hash:
-                        return VerificationResult(
-                            False,
-                            cached_count,
-                            f"Anchor hash mismatch at row #{expected_anchor_id}: "
-                            f"expected '{expected_anchor_hash}', found '{anchor_row.row_hash}'.",
-                            expected_anchor_id,
-                            False,
-                        )
-                    anchor_verified = True
-
-                return VerificationResult(True, cached_count, "", None, anchor_verified)
-
-            # Incrementally verify only the new records
-            prev_expected = last_hash
-            current_count = cached_count
-            new_last_id = last_id
-            new_last_hash = last_hash
-
-            for entry in new_records:
-                current_count += 1
-                if entry.prev_hash != prev_expected:
-                    err = (
-                        f"Broken link at record #{entry.pk}: prev_hash mismatch. "
-                        f"Expected '{prev_expected}', found '{entry.prev_hash}'."
-                    )
-                    cache.delete(CACHE_KEY_AUDIT_CHAIN)
-                    return VerificationResult(False, current_count, err, entry.pk, False)
-
-                expected_row_hash = entry.calculate_row_hash(prev_hash=entry.prev_hash)
-                if entry.row_hash != expected_row_hash:
-                    err = (
-                        f"Tampered record at #{entry.pk}: row_hash mismatch. "
-                        f"Expected '{expected_row_hash}', found '{entry.row_hash}'."
-                    )
-                    cache.delete(CACHE_KEY_AUDIT_CHAIN)
-                    return VerificationResult(False, current_count, err, entry.pk, False)
-
-                prev_expected = entry.row_hash
-                new_last_id = entry.pk
-                new_last_hash = entry.row_hash
-
-            # Anchor check
-            anchor_verified = False
-            if expected_anchor_id is not None:
-                anchor_row = AuditLog.objects.filter(pk=expected_anchor_id).first()
-                if not anchor_row:
-                    return VerificationResult(
-                        False,
-                        current_count,
-                        f"Anchor row #{expected_anchor_id} not found in audit log.",
-                        expected_anchor_id,
-                        False,
-                    )
-                if anchor_row.row_hash != expected_anchor_hash:
-                    return VerificationResult(
-                        False,
-                        current_count,
-                        f"Anchor hash mismatch at row #{expected_anchor_id}: "
-                        f"expected '{expected_anchor_hash}', found '{anchor_row.row_hash}'.",
-                        expected_anchor_id,
-                        False,
-                    )
-                anchor_verified = True
-
-            cache.set(
-                CACHE_KEY_AUDIT_CHAIN,
-                {
-                    "is_valid": True,
-                    "last_verified_id": new_last_id,
-                    "last_verified_hash": new_last_hash,
-                    "count": current_count,
-                },
-                timeout=86400,
-            )
-            return VerificationResult(True, current_count, "", None, anchor_verified)
-
-    # 2. Full verification from genesis (reverify=True or no cache)
     count = 0
     prev_expected = "0" * 64
-    last_id = 0
-    last_hash = "0" * 64
+    last_id = None
     anchor_found = False
 
     for entry in AuditLog.objects.order_by("id").iterator():
         count += 1
         if entry.prev_hash != prev_expected:
-            cache.delete(CACHE_KEY_AUDIT_CHAIN)
             return VerificationResult(
                 False,
                 count,
                 f"Broken link at record #{entry.pk}: prev_hash mismatch. "
                 f"Expected '{prev_expected}', found '{entry.prev_hash}'.",
                 entry.pk,
-                False,
+                last_id=last_id,
             )
 
         expected_row_hash = entry.calculate_row_hash(prev_hash=entry.prev_hash)
         if entry.row_hash != expected_row_hash:
-            cache.delete(CACHE_KEY_AUDIT_CHAIN)
             return VerificationResult(
                 False,
                 count,
                 f"Tampered record at #{entry.pk}: row_hash mismatch. "
                 f"Expected '{expected_row_hash}', found '{entry.row_hash}'.",
                 entry.pk,
-                False,
+                last_id=last_id,
             )
 
         if expected_anchor_id is not None and entry.pk == expected_anchor_id:
             if entry.row_hash != expected_anchor_hash:
-                cache.delete(CACHE_KEY_AUDIT_CHAIN)
                 return VerificationResult(
                     False,
                     count,
                     f"Anchor hash mismatch at row #{entry.pk}: "
                     f"expected '{expected_anchor_hash}', found '{entry.row_hash}'.",
                     entry.pk,
-                    False,
+                    last_id=last_id,
                 )
             anchor_found = True
 
         prev_expected = entry.row_hash
         last_id = entry.pk
-        last_hash = entry.row_hash
 
     if expected_anchor_id is not None and not anchor_found:
-        cache.delete(CACHE_KEY_AUDIT_CHAIN)
         return VerificationResult(
             False,
             count,
             f"Anchor row #{expected_anchor_id} not found in audit log.",
             expected_anchor_id,
-            False,
+            last_id=last_id,
         )
 
-    anchor_verified = bool(expected_anchor_id is not None and anchor_found)
+    return VerificationResult(True, count, "", None, anchor_found, last_id=last_id)
 
-    cache.set(
-        CACHE_KEY_AUDIT_CHAIN,
-        {
-            "is_valid": True,
-            "last_verified_id": last_id,
-            "last_verified_hash": last_hash,
-            "count": count,
+
+def run_and_record_verification(anchor=None, source="command", username=""):
+    """Runs a full verify_chain() scan and stores the result as the single AuditChainStatus row."""
+    from .models import AuditChainStatus
+
+    result = verify_chain(anchor=anchor)
+    if result.anchor_verified:
+        anchor_status = AuditChainStatus.AnchorStatus.VERIFIED
+    elif anchor:
+        anchor_status = AuditChainStatus.AnchorStatus.NOT_VERIFIED
+    else:
+        anchor_status = AuditChainStatus.AnchorStatus.NONE
+
+    AuditChainStatus.objects.update_or_create(
+        pk=1,
+        defaults={
+            "verified_at": timezone.now(),
+            "is_valid": result.is_valid,
+            "record_count": result.count,
+            "last_record_id": result.last_id,
+            "broken_id": result.broken_id,
+            "error": result.error_msg,
+            "anchor": str(anchor or "")[:100],
+            "anchor_status": anchor_status,
+            "source": source,
+            "verified_by": username or "",
         },
-        timeout=86400,
     )
-
-    return VerificationResult(True, count, "", None, anchor_verified)
-
+    return result

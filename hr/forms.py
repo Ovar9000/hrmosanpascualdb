@@ -6,7 +6,8 @@ from PIL import Image
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from .models import FAKE_ID_FIELDS, Document, Engagement, Person
+from django.db.models import Q
+from .models import FAKE_ID_FIELDS, Document, Engagement, Person, Project
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -201,11 +202,17 @@ class EngagementForm(forms.ModelForm):
             if not self.person:
                 self.person = self.instance.person
 
-        # Default leave_eligible based on engagement type if new form
-        if not self.instance.pk and "leave_eligible" in self.fields and not self.initial.get("leave_eligible"):
-            initial_type = self.initial.get("type")
-            if initial_type in [Engagement.Type.PLANTILLA, Engagement.Type.CASUAL]:
-                self.fields["leave_eligible"].initial = True
+        # Type-based leave_eligible default is only an initial value (DECISIONS L3); HRMO may untick it.
+        if not self.instance.pk and "leave_eligible" in self.fields and "leave_eligible" not in self.initial:
+            self.fields["leave_eligible"].initial = Engagement.default_leave_eligible(self.initial.get("type"))
+
+        # Only projects open for hiring (planned/ongoing, funding reference recorded) can take new
+        # contracts. An engagement already on a closed project keeps it when edited (DECISIONS P2/P3).
+        if "project" in self.fields:
+            open_projects = Q(status__in=Project.HIRING_STATUSES) & ~Q(funding_reference="")
+            if self.instance.pk and self.instance.project_id:
+                open_projects |= Q(pk=self.instance.project_id)
+            self.fields["project"].queryset = Project.objects.filter(open_projects).select_related("office")
 
         # Field-level permission gate: pay rate fields visible only with view_pay (DECISIONS R6)
         from .permissions import can_view_pay
@@ -256,6 +263,21 @@ class EngagementForm(forms.ModelForm):
         # Date chronological order
         if start_date and end_date and end_date < start_date:
             self.add_error("end_date", "End date cannot be earlier than start date.")
+
+        # A project-based contract must fit inside its project's dates. Extending a contract past
+        # the project end needs the Project Maintainer to extend the project first (DECISIONS P3).
+        if project and eng_type == Engagement.Type.PROJECT_BASED and start_date:
+            period = f"{project.start_date:%b %d, %Y} – " + (
+                f"{project.end_date:%b %d, %Y}" if project.end_date else "open-ended"
+            )
+            if start_date < project.start_date:
+                self.add_error("start_date", f"Contract cannot start before the project does ({period}).")
+            if project.end_date and (end_date is None or end_date > project.end_date):
+                self.add_error(
+                    "end_date",
+                    f"Contract must end by the project end date ({period}). "
+                    "Ask the Project Maintainer to extend the project first.",
+                )
 
         # Overlap check with existing active engagements of same type in same office
         if self.person and office and eng_type and start_date and status == Engagement.Status.ACTIVE:
@@ -316,6 +338,64 @@ class EndEngagementForm(forms.Form):
         if self.engagement and ed and ed < self.engagement.start_date:
             raise ValidationError("End date cannot be earlier than the start date of the appointment.")
         return ed
+
+
+class ProjectForm(forms.ModelForm):
+    """Create / edit an LGU project (Project Maintainer only, DECISIONS P1-P3)."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Project
+        fields = ["name", "office", "status", "start_date", "end_date", "funding_reference", "notes"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Coastal Road Rehabilitation"}),
+            "office": forms.Select(attrs={"class": "form-select"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "funding_reference": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. CAF-2026-0142"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        # Required on the form; the column stays blank-able for projects recorded before P2.
+        self.fields["funding_reference"].required = True
+
+    def clean_name(self):
+        return self.cleaned_data.get("name", "").strip()
+
+    def clean_funding_reference(self):
+        return self.cleaned_data.get("funding_reference", "").strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        end_date = cleaned_data.get("end_date")
+        start_date = cleaned_data.get("start_date")
+        if not self.instance.pk:
+            return cleaned_data
+
+        # Moving the project's dates must not strand contracts already hired on it (P3).
+        active = self.instance.engagements.filter(status=Engagement.Status.ACTIVE)
+        if end_date:
+            outside = active.filter(Q(end_date__isnull=True) | Q(end_date__gt=end_date)).count()
+            if outside:
+                self.add_error(
+                    "end_date",
+                    f"{outside} active contract(s) on this project run past this date. "
+                    "HRMO must end or shorten them first.",
+                )
+        if start_date:
+            early = active.filter(start_date__lt=start_date).count()
+            if early:
+                self.add_error(
+                    "start_date",
+                    f"{early} active contract(s) on this project start before this date.",
+                )
+        return cleaned_data
 
 
 def sanitize_filename(filename):

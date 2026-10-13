@@ -4,6 +4,7 @@ import os
 from datetime import date, timedelta
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -11,7 +12,10 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
-from .audit import log_audit_event, verify_chain
+from django.utils import timezone
+from django.utils.dateparse import parse_date
+from django.views.decorators.http import require_POST
+from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     DocumentEditForm,
     DocumentForm,
@@ -19,22 +23,63 @@ from .forms import (
     EndEngagementForm,
     EngagementForm,
     PersonForm,
+    ProjectForm,
     sanitize_filename,
 )
-from .models import AuditLog, Document, Engagement, LeaveCredit, LeaveType, Office, Person
+from .models import (
+    AuditChainStatus,
+    AuditLog,
+    Document,
+    Engagement,
+    LeaveCredit,
+    LeaveType,
+    Office,
+    Person,
+    Project,
+    UserProfile,
+)
 from .permissions import (
     can_manage_hr_records,
+    can_manage_projects,
+    can_view_contacts,
     can_view_document_content,
+    can_view_document_list,
+    can_view_hr_notes,
     can_view_ids,
     can_view_pay,
+    can_view_personal_details,
+    can_approve_leave,
+    can_view_project_roster,
+    can_view_projects,
     get_visible_offices,
     get_visible_people,
+    has_all_office_scope,
     is_auditor,
     is_hrmo,
     is_sysadmin,
 )
 from .sequences import get_next_employee_no
 
+
+class PasswordChangeView(auth_views.PasswordChangeView):
+    """Django's password change, plus clearing must_change_password on success (DECISIONS A1)."""
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        profile = UserProfile.objects.filter(user=self.request.user, must_change_password=True).first()
+        if profile:
+            profile.must_change_password = False
+            profile.password_expires_at = None
+            profile.save()
+        return response
+
+
+@login_required
+def home(request):
+    """Landing page: Project Maintainers with no personnel access go to Projects."""
+    if can_manage_projects(request.user) and not get_visible_people(request.user).exists():
+        return redirect("project_list")
+    return redirect("person_list")
 
 
 @login_required
@@ -94,11 +139,15 @@ def office_detail(request, pk):
         .select_related("person")
         .order_by("position_title", "person__last_name")
     )
-    ended_engagements = (
-        office.engagements.exclude(status=Engagement.Status.ACTIVE)
-        .select_related("person")
-        .order_by("-end_date")[:20]
-    )
+    # Past staff are hidden from office-scoped roles: transferred people are not visible
+    # to their former office (DECISIONS R5).
+    ended_engagements = Engagement.objects.none()
+    if has_all_office_scope(request.user):
+        ended_engagements = (
+            office.engagements.exclude(status=Engagement.Status.ACTIVE)
+            .select_related("person")
+            .order_by("-end_date")[:20]
+        )
 
     return render(
         request,
@@ -107,6 +156,7 @@ def office_detail(request, pk):
             "office": office,
             "active_engagements": active_engagements,
             "ended_engagements": ended_engagements,
+            "can_view_rates": can_view_pay(request.user),
         },
     )
 
@@ -125,6 +175,13 @@ def person_list(request):
     office_id = request.GET.get("office", "").strip()
     eng_type = request.GET.get("type", "").strip()
     status = request.GET.get("status", "").strip()
+    # Ignore malformed filter values instead of failing with a 500.
+    if not office_id.isdigit():
+        office_id = ""
+    if eng_type not in Engagement.Type.values:
+        eng_type = ""
+    if status not in Engagement.Status.values:
+        status = ""
 
     qs = visible_people.prefetch_related(
         "engagements__office"
@@ -166,6 +223,7 @@ def person_list(request):
             "engagement_types": Engagement.Type.choices,
             "engagement_statuses": Engagement.Status.choices,
             "can_manage_records": can_manage_hr_records(request.user),
+            "can_view_contacts": can_view_contacts(request.user),
         },
     )
 
@@ -191,9 +249,12 @@ def person_detail(request, pk):
     # Document file content inspection / download
     can_view_doc_content = can_view_document_content(request.user, person=person)
 
+    # Leave balances: HRMO, Auditor, self, and leave approvers (Office Head, Executive, Delegate)
+    can_view_leave = can_view_personal_details(request.user, person) or can_approve_leave(request.user)
+
     # Calculate leave credits summary if person earns them
     leave_balances = {}
-    if person.earns_leave_credits():
+    if can_view_leave and person.earns_leave_credits():
         for lt_code, lt_label in LeaveType.choices:
             total = (
                 LeaveCredit.objects.filter(person=person, leave_type=lt_code)
@@ -225,6 +286,10 @@ def person_detail(request, pk):
             "can_view_rates": can_view_rates,
             "can_view_id_numbers": can_view_id_numbers,
             "can_view_doc_content": can_view_doc_content,
+            "can_view_doc_list": can_view_document_list(request.user, person),
+            "can_view_personal": can_view_personal_details(request.user, person),
+            "can_view_contacts": can_view_contacts(request.user, person),
+            "can_view_notes": can_view_hr_notes(request.user),
             "leave_balances": leave_balances,
             "can_manage_records": can_manage_hr_records(request.user),
         },
@@ -595,7 +660,7 @@ def document_edit(request, pk):
             with transaction.atomic():
                 locked_doc = Document.objects.select_for_update().get(pk=doc.pk)
                 submitted_version = form.cleaned_data.get("version")
-                if submitted_version is not None and locked_doc.version != submitted_version:
+                if locked_doc.version != submitted_version:
                     form.add_error(
                         None,
                         "Conflict: This document record was modified by another user while you were editing it. "
@@ -632,13 +697,24 @@ def document_replace(request, pk):
     old_doc = get_object_or_404(Document, pk=pk)
     target_person = old_doc.person or (old_doc.engagement.person if old_doc.engagement else None)
 
+    # Only the current scan can be replaced; replacing a superseded one would fork the
+    # replacement history into two "current" documents.
+    superseded_msg = "This scan has already been superseded. Replace the current version instead."
+    if old_doc.is_replaced:
+        messages.error(request, superseded_msg)
+        if target_person:
+            return redirect("person_detail", pk=target_person.pk)
+        return redirect("person_list")
+
     if request.method == "POST":
         form = DocumentReplaceForm(request.POST, request.FILES, document=old_doc)
         if form.is_valid():
             with transaction.atomic():
                 locked_old = Document.objects.select_for_update().get(pk=old_doc.pk)
                 submitted_version = form.cleaned_data.get("version")
-                if submitted_version is not None and locked_old.version != submitted_version:
+                if locked_old.is_replaced:
+                    form.add_error(None, superseded_msg)
+                elif locked_old.version != submitted_version:
                     form.add_error(
                         None,
                         "Conflict: This document record was modified by another user. "
@@ -713,6 +789,125 @@ def document_download(request, pk):
     return response
 
 
+# --- Projects (DECISIONS P1-P4) ------------------------------------------------
+
+
+@login_required
+def project_list(request):
+    """LGU projects with active headcount. Visible to Project Maintainers and all-office roles."""
+    if not can_view_projects(request.user):
+        raise PermissionDenied("You do not have permission to view projects.")
+
+    status = request.GET.get("status", "").strip()
+    if status not in Project.Status.values:
+        status = ""
+    qs = Project.objects.select_related("office").annotate(
+        active_headcount=Count(
+            "engagements", filter=Q(engagements__status=Engagement.Status.ACTIVE), distinct=True
+        )
+    )
+    if status:
+        qs = qs.filter(status=status)
+
+    return render(
+        request,
+        "hr/project_list.html",
+        {
+            "projects": qs,
+            "statuses": Project.Status.choices,
+            "selected_status": status,
+            "can_manage": can_manage_projects(request.user),
+        },
+    )
+
+
+@login_required
+def project_detail(request, pk):
+    """Project details and headcount; the staff roster only for all-office HR roles."""
+    if not can_view_projects(request.user):
+        raise PermissionDenied("You do not have permission to view projects.")
+
+    project = get_object_or_404(Project.objects.select_related("office"), pk=pk)
+    active = project.engagements.filter(status=Engagement.Status.ACTIVE)
+    ending_soon_by = timezone.localdate() + timedelta(days=30)
+    show_roster = can_view_project_roster(request.user)
+
+    return render(
+        request,
+        "hr/project_detail.html",
+        {
+            "project": project,
+            "active_count": active.count(),
+            "ending_soon_count": active.filter(end_date__lte=ending_soon_by).count(),
+            "ended_count": project.engagements.exclude(status=Engagement.Status.ACTIVE).count(),
+            "roster": active.select_related("person").order_by("end_date", "person__last_name") if show_roster else None,
+            "show_roster": show_roster,
+            "can_manage": can_manage_projects(request.user),
+            "closed_with_active": project.status not in Project.HIRING_STATUSES and active.exists(),
+        },
+    )
+
+
+@login_required
+def project_create(request):
+    """Record a new LGU project (Project Maintainer only)."""
+    if not can_manage_projects(request.user):
+        raise PermissionDenied("You do not have permission to create projects.")
+
+    if request.method == "POST":
+        form = ProjectForm(request.POST)
+        if form.is_valid():
+            with transaction.atomic():
+                project = form.save(commit=False)
+                project.version = 1
+                project.save()
+            messages.success(request, f"Project '{project.name}' recorded.")
+            return redirect("project_detail", pk=project.pk)
+    else:
+        form = ProjectForm()
+
+    return render(request, "hr/project_form.html", {"form": form, "is_edit": False})
+
+
+@login_required
+def project_edit(request, pk):
+    """Edit a project's dates, status or funding reference, with lost-update protection."""
+    if not can_manage_projects(request.user):
+        raise PermissionDenied("You do not have permission to edit projects.")
+
+    project = get_object_or_404(Project, pk=pk)
+
+    if request.method == "POST":
+        form = ProjectForm(request.POST, instance=project)
+        if form.is_valid():
+            with transaction.atomic():
+                locked = Project.objects.select_for_update().get(pk=pk)
+                if locked.version != form.cleaned_data.get("version"):
+                    form.add_error(
+                        None,
+                        "This project was modified by another user while you were editing it. "
+                        "Please refresh the page and review the changes before saving.",
+                    )
+                else:
+                    saved = form.save(commit=False)
+                    saved.version = locked.version + 1
+                    saved.save()
+                    messages.success(request, f"Project '{saved.name}' updated.")
+                    return redirect("project_detail", pk=saved.pk)
+    else:
+        form = ProjectForm(instance=project)
+
+    return render(request, "hr/project_form.html", {"form": form, "project": project, "is_edit": True})
+
+
+def _parse_date_param(value):
+    """Returns a date for a YYYY-MM-DD query parameter, or None if missing or invalid."""
+    try:
+        return parse_date(value) if value else None
+    except ValueError:  # well-formed but impossible, e.g. 2026-02-31
+        return None
+
+
 @login_required
 def audit_list(request):
     """Auditor-only searchable audit trail (DECISIONS U1-U6)."""
@@ -737,24 +932,23 @@ def audit_list(request):
         qs = qs.filter(action=action)
     if user_filter:
         qs = qs.filter(username__icontains=user_filter)
-    if start_date:
-        qs = qs.filter(timestamp__date__gte=start_date)
-    if end_date:
-        qs = qs.filter(timestamp__date__lte=end_date)
+    # Malformed dates are ignored instead of failing with a 500.
+    start = _parse_date_param(start_date)
+    end = _parse_date_param(end_date)
+    if start:
+        qs = qs.filter(timestamp__date__gte=start)
+    if end:
+        qs = qs.filter(timestamp__date__lte=end)
 
     paginator = Paginator(qs, 50)
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
-    reverify = request.GET.get("reverify") == "1"
-    anchor = request.GET.get("anchor") or getattr(settings, "AUDIT_ANCHOR", None)
-
-    res = verify_chain(anchor=anchor, reverify=reverify)
-    chain_verified = res.is_valid
-    verified_count = res.count
-    chain_error = res.error_msg
-    broken_id = res.broken_id
-    anchor_verified = getattr(res, "anchor_verified", False)
+    # Show the stored result of the last full scan; never verify the chain on page load.
+    verification = AuditChainStatus.objects.filter(pk=1).first()
+    entries_since = 0
+    if verification:
+        entries_since = AuditLog.objects.filter(id__gt=verification.last_record_id or 0).count()
 
     return render(
         request,
@@ -767,14 +961,67 @@ def audit_list(request):
             "start_date": start_date,
             "end_date": end_date,
             "actions": AuditLog.Action.choices,
-            "chain_verified": chain_verified,
-            "verified_count": verified_count,
-            "chain_error": chain_error,
-            "broken_id": broken_id,
-            "anchor_verified": anchor_verified,
-            "anchor": anchor or "",
+            "verification": verification,
+            "entries_since": entries_since,
+            "default_anchor": getattr(settings, "AUDIT_ANCHOR", None) or "",
         },
     )
+
+
+REVERIFY_MIN_INTERVAL = timedelta(minutes=1)
+
+
+@login_required
+@require_POST
+def audit_reverify(request):
+    """Auditor-triggered full hash-chain scan, at most once per minute, logged in the audit trail."""
+    if not (request.user.is_superuser or is_auditor(request.user) or request.user.has_perm("hr.view_audit_log")):
+        return HttpResponseForbidden("You do not have permission to verify the audit log.")
+
+    anchor = request.POST.get("anchor", "").strip() or getattr(settings, "AUDIT_ANCHOR", None)
+
+    with transaction.atomic():
+        # Row lock serializes concurrent clicks so the rate limit cannot be raced.
+        last = AuditChainStatus.objects.select_for_update().filter(pk=1).first()
+        if last and timezone.now() - last.verified_at < REVERIFY_MIN_INTERVAL:
+            messages.warning(
+                request,
+                "The audit chain can be re-verified at most once per minute. "
+                f"It was last verified at {timezone.localtime(last.verified_at):%Y-%m-%d %H:%M:%S}.",
+            )
+            return redirect("audit_list")
+
+        result = run_and_record_verification(
+            anchor=anchor, source="web", username=request.user.get_username()
+        )
+        log_audit_event(
+            action=AuditLog.Action.VERIFY_CHAIN,
+            model_name="AuditLog",
+            object_repr="Re-verify all (full hash-chain scan)",
+            changes={
+                "is_valid": result.is_valid,
+                "record_count": result.count,
+                "broken_id": result.broken_id,
+                "anchor_verified": result.anchor_verified,
+            },
+            request=request,
+        )
+
+    if result.is_valid:
+        messages.success(request, f"Audit chain verified: {result.count} record(s) intact.")
+    else:
+        messages.error(request, f"Audit chain verification failed: {result.error_msg}")
+    return redirect("audit_list")
+
+
+# Leading characters that make Excel / LibreOffice treat a cell as a formula.
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value):
+    """Prefixes formula-like text with ' so a spreadsheet shows it instead of running it."""
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(CSV_FORMULA_PREFIXES) else text
 
 
 @login_required
@@ -803,7 +1050,7 @@ def audit_export_csv(request):
 
     qs = AuditLog.objects.all().order_by("-timestamp")[:5000]
     for row in qs:
-        writer.writerow([
+        writer.writerow([csv_safe(value) for value in (
             row.timestamp.isoformat(),
             row.action,
             row.user_id or "",
@@ -818,7 +1065,7 @@ def audit_export_csv(request):
             row.session_key_hash or "",
             row.prev_hash or "",
             row.row_hash or "",
-        ])
+        )])
 
     return response
 

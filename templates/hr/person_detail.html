@@ -38,22 +38,35 @@
     <div class="card shadow-sm border-0 h-100">
       <div class="card-header bg-white fw-bold py-2">Personal Information</div>
       <div class="card-body p-3">
+        {% if can_view_personal or can_view_contacts %}
         <dl class="row mb-0 small">
+          {% if can_view_personal %}
           <dt class="col-sm-4 text-muted">Birthdate</dt>
           <dd class="col-sm-8">{{ person.birthdate|date:"F d, Y" }}</dd>
 
           <dt class="col-sm-4 text-muted">Sex</dt>
           <dd class="col-sm-8">{{ person.get_sex_display|default:"—" }}</dd>
+          {% endif %}
 
+          {% if can_view_contacts %}
           <dt class="col-sm-4 text-muted">Mobile</dt>
           <dd class="col-sm-8">{{ person.mobile|default:"—" }}</dd>
 
           <dt class="col-sm-4 text-muted">Email</dt>
           <dd class="col-sm-8">{{ person.email|default:"—" }}</dd>
+          {% endif %}
 
+          {% if can_view_personal %}
           <dt class="col-sm-4 text-muted">Address</dt>
           <dd class="col-sm-8">{{ person.address|default:"—" }}</dd>
+          {% endif %}
         </dl>
+        {% endif %}
+        {% if not can_view_personal %}
+          <div class="text-muted small {% if can_view_contacts %}mt-2{% else %}py-2{% endif %}">
+            🔒 Birthdate and home address are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+          </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -146,7 +159,7 @@
             <td>
               <div class="fw-bold">{{ eng.position_title }}</div>
               <div class="text-muted"><a href="{% url 'office_detail' eng.office.pk %}" class="text-decoration-none">{{ eng.office.name }}</a></div>
-              {% if eng.notes %}<div class="text-muted fst-italic">{{ eng.notes }}</div>{% endif %}
+              {% if eng.notes and can_view_notes %}<div class="text-muted fst-italic">{{ eng.notes }}</div>{% endif %}
             </td>
             <td>
               <span class="badge 
@@ -168,7 +181,7 @@
             </td>
             <td>
               {% if eng.type == 'plantilla' %}
-                <div><strong>SG {{ eng.salary_grade }}</strong>, Step {{ eng.step }}</div>
+                {% if can_view_rates %}<div><strong>SG {{ eng.salary_grade }}</strong>, Step {{ eng.step }}</div>{% endif %}
                 <div class="font-monospace text-muted">{{ eng.item_number }}</div>
               {% elif eng.type == 'project' and eng.project %}
                 <div>Project: {{ eng.project.name }}</div>
@@ -207,12 +220,13 @@
   </div>
   {% if not can_view_rates %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Pay rates are restricted to HRMO and Auditor roles (DECISIONS R6).
+      🔒 Pay rates are restricted to HRMO and Auditor roles, and so are salary grades and steps (DECISIONS R6).
     </div>
   {% endif %}
 </div>
 
-<!-- Attached Documents / 201-Files -->
+<!-- Attached Documents / 201-Files: not shown to Office Staff, Executives or Delegates (DECISIONS R4) -->
+{% if can_view_doc_list %}
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
     <span>Attached Documents & 201-File Filing</span>
@@ -242,7 +256,7 @@
           <tr>
             <td class="fw-bold">
               <div>{{ doc.get_doc_type_display }}</div>
-              {% if doc.display_name %}
+              {% if doc.display_name and can_view_doc_content %}
                 <div class="small text-muted font-monospace">{{ doc.display_name }}</div>
               {% endif %}
               {% if doc.is_replaced %}
@@ -263,7 +277,7 @@
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}
-              {% if doc.notes %}<div class="text-muted small mt-1">{{ doc.notes }}</div>{% endif %}
+              {% if doc.notes and can_view_doc_content %}<div class="text-muted small mt-1">{{ doc.notes }}</div>{% endif %}
             </td>
             <td class="text-muted">{{ doc.uploaded_at|date:"M d, Y" }}</td>
             <td>
@@ -294,8 +308,9 @@
   </div>
   {% if not can_view_doc_content %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Document digital files are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
+      🔒 Document files, file names and notes are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
     </div>
   {% endif %}
 </div>
+{% endif %}
 {% endblock %}

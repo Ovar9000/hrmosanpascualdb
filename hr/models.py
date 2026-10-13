@@ -54,7 +54,8 @@ class Office(models.Model):
 # --- People ------------------------------------------------------------------
 
 # Prototype guard (DECISIONS D1): government ID fields only accept obviously fake
-# values starting with "00". Remove these constraints before go-live.
+# values starting with "00". PROTOTYPE_FAKE_DATA_ONLY does not affect these DB
+# constraints; removing them needs a deliberate migration (Go-Live Checklist item 1).
 FAKE_ID_FIELDS = ["tin", "gsis_no", "philhealth_no", "pagibig_no", "sss_no"]
 FAKE_ID_REGEX = r"^00[0-9-]*$"
 
@@ -155,15 +156,33 @@ class Project(models.Model):
         COMPLETED = "completed", "Completed"
         CANCELLED = "cancelled", "Cancelled"
 
+    # Statuses HRMO can still hire into (DECISIONS P3).
+    HIRING_STATUSES = [Status.PLANNED, Status.ONGOING]
+
     name = models.CharField(max_length=200)
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="projects")
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
+    # Reference to the Budget/Accounting document certifying the project is funded, so
+    # contracts are tied to an independent sign-off, not only HR's word (DECISIONS P2).
+    funding_reference = models.CharField(
+        "Funding reference",
+        max_length=100,
+        blank=True,
+        help_text="Certificate or obligation number from Budget / Accounting.",
+    )
     notes = models.TextField(blank=True)
+
+    # Concurrency control & audit timestamp (DECISIONS S2)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-start_date", "name"]
+        permissions = [
+            ("manage_projects", "Can create and edit LGU projects"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(end_date__isnull=True) | Q(end_date__gte=F("start_date")),
@@ -174,6 +193,11 @@ class Project(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_open_for_hiring(self):
+        """New contracts may link only to planned/ongoing projects with a funding reference (P2, P3)."""
+        return self.status in self.HIRING_STATUSES and bool(self.funding_reference)
 
 
 # --- Engagements -------------------------------------------------------------
@@ -289,11 +313,14 @@ class Engagement(models.Model):
     def __str__(self):
         return f"{self.person} – {self.position_title} ({self.get_type_display()})"
 
-    def save(self, *args, **kwargs):
-        # Auto-set leave_eligible for new plantilla/casual if not explicitly altered
-        if self._state.adding and not self.leave_eligible and self.type in self.LEAVE_CREDIT_TYPES:
-            self.leave_eligible = True
-        super().save(*args, **kwargs)
+    @classmethod
+    def default_leave_eligible(cls, engagement_type):
+        """Suggested leave_eligible for a new engagement of this type (DECISIONS L3).
+
+        Only a default for entry screens and imports to apply explicitly; save() never
+        overrides the stored value, so HRMO can record Plantilla/Casual without leave.
+        """
+        return engagement_type in cls.LEAVE_CREDIT_TYPES
 
 
 # --- Documents (kept simple until the survey, DECISIONS F1) ------------------
@@ -504,6 +531,11 @@ class UserProfile(models.Model):
         default=False,
         help_text="If True, user must change password upon login (DECISIONS A1).",
     )
+    password_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When an unused one-time password stops working (DECISIONS A4).",
+    )
 
     def __str__(self):
         return f"Profile of {self.user.username}"
@@ -573,6 +605,7 @@ class AuditLog(models.Model):
         PASSWORD_RESET = "password_reset", "Password Reset"
         GROUP_CHANGE = "group_change", "Group Change"
         PERMISSION_DENIED = "permission_denied", "Permission Denied (403)"
+        VERIFY_CHAIN = "verify_chain", "Audit Chain Verification"
 
     timestamp = models.DateTimeField(default=timezone.now, db_index=True)
     action = models.CharField(max_length=30, choices=Action.choices, db_index=True)
@@ -640,3 +673,33 @@ class AuditLog(models.Model):
         payload = "|".join(parts)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+
+class AuditChainStatus(models.Model):
+    """Result of the most recent full audit hash-chain verification (a single row, pk=1).
+
+    Written by the verify_audit_chain command and by the rate-limited "Re-verify all"
+    action on /audit/, so the page can show the last result without scanning the chain.
+    Not itself audited; each web re-verification is logged as AuditLog.Action.VERIFY_CHAIN.
+    """
+
+    class AnchorStatus(models.TextChoices):
+        NONE = "none", "No anchor supplied"
+        VERIFIED = "verified", "Anchor verified"
+        NOT_VERIFIED = "not_verified", "Anchor not verified"
+
+    verified_at = models.DateTimeField()
+    is_valid = models.BooleanField()
+    record_count = models.PositiveIntegerField()
+    last_record_id = models.IntegerField(null=True, blank=True)
+    broken_id = models.IntegerField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    anchor = models.CharField(max_length=100, blank=True)
+    anchor_status = models.CharField(max_length=20, choices=AnchorStatus.choices, default=AnchorStatus.NONE)
+    source = models.CharField(max_length=20, help_text="'command' or 'web'")
+    verified_by = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        verbose_name_plural = "audit chain status"
+
+    def __str__(self):
+        return f"{'OK' if self.is_valid else 'BROKEN'} at {self.verified_at:%Y-%m-%d %H:%M:%S} ({self.record_count} records)"
