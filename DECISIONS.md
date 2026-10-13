@@ -228,6 +228,22 @@ The system currently runs in a prototype profile with synthetic test data. Prior
    - House server in a secure, climate-controlled, locked municipal IT room with restricted physical access.
    - Restrict database and web ports to the municipal staff VLAN / intranet.
 
+9. **Network exposure decision:**
+   - Decide whether the site is reachable only on the office network (or VPN), or from the public internet so staff can use mobile data. Office network only is the safer first step; public access requires every item below as well.
+
+10. **Second login step (MFA) for privileged roles (not built):**
+    - HRMO Staff, Auditor, System Admin and the emergency superuser can see or change every record. Add a second factor (e.g. an authenticator app) for these roles before go-live, and before any public exposure in any case.
+
+11. **Privacy Impact Assessment and NPC registration:**
+    - The DPO completes a Privacy Impact Assessment for this system and confirms whether the municipality's registration with the National Privacy Commission must cover it.
+
+12. **Phased account rollout (Decision A4):**
+    - First HRMO, Auditor and Office Heads. Employee accounts follow office by office (`provision_accounts --office`) once self-service (Step 10), HTTPS and an HRMO password-reset screen exist.
+
+13. **Named maintainer and penetration test:**
+    - The LGU names who applies security updates (Django 5.2 LTS is supported until April 2028), checks backups, resets passwords and watches the audit log. A prototype developer working part-time is not enough for live personal data.
+    - A penetration test (e.g. OWASP ZAP or Burp Suite) logged in under each role, before real data is loaded.
+
 ---
 
 ## Project Roadmap
