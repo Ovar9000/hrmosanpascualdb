@@ -711,12 +711,17 @@ class Step4CSecurityAndRolesTestCase(TestCase):
         self.assertNotContains(resp_b, "000-333-444-000")
 
     def test_executive_delegate_active_and_expired(self):
-        today = date(2026, 10, 5)
+        from datetime import timedelta
+        from django.utils import timezone
+
+        # Dates are relative to the real "today" because is_executive() checks the
+        # delegation against timezone.localdate(); fixed dates would expire.
+        today = timezone.localdate()
         d = Delegate.objects.create(
             principal=self.mayor,
             delegate=self.delegate_user,
-            valid_from=date(2026, 10, 1),
-            valid_to=date(2026, 10, 15),
+            valid_from=today - timedelta(days=4),
+            valid_to=today + timedelta(days=10),
             notes="Covering Mayor leave",
         )
         self.assertTrue(is_active_delegate(self.delegate_user, today))
@@ -729,8 +734,8 @@ class Step4CSecurityAndRolesTestCase(TestCase):
         self.assertFalse(resp.context["can_view_rates"])
 
         # Expired delegation
-        d.valid_from = date(2026, 9, 1)
-        d.valid_to = date(2026, 9, 15)
+        d.valid_from = today - timedelta(days=35)
+        d.valid_to = today - timedelta(days=21)
         d.save()
         self.assertFalse(is_active_delegate(self.delegate_user))
         self.assertFalse(is_executive(self.delegate_user))
