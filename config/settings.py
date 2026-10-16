@@ -37,7 +37,11 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First: answers the host's /healthz/ probe before the host check and HTTPS redirect.
+    "hr.middleware.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves /static/ from STATIC_ROOT (collected in the Docker image), no proxy needed.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -52,6 +56,9 @@ MIDDLEWARE = [
 
 # Trusted reverse proxies for client IP extraction from X-Forwarded-For (DECISIONS U5)
 TRUSTED_PROXIES = env_list("TRUSTED_PROXIES", "127.0.0.1,::1")
+# Optional header a trusted proxy sets to the client's address (Railway: X-Real-IP). When set,
+# it is used instead of walking X-Forwarded-For, which on Railway can end in a CDN hop.
+CLIENT_IP_HEADER = os.environ.get("CLIENT_IP_HEADER", "").strip()
 
 # Prototype data guard (DECISIONS D1): form-level check that ID numbers start with 00.
 # Turning this off does NOT allow real IDs: the person_*_fake_only DB constraints remain.

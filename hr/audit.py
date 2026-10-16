@@ -115,12 +115,22 @@ def get_client_ip(request):
     each proxy appends the address it received the request from, so the first hop that is
     not a trusted proxy is the client. Entries left of it were sent by the client and can
     be forged. A malformed hop stops the walk at the last address we could trust.
+
+    If CLIENT_IP_HEADER is set (e.g. "X-Real-IP" on Railway, whose edge overwrites it with the
+    connecting address), a trusted proxy's value in that header is used instead.
     """
     if not request:
         return None
     client_ip = normalize_ip(request.META.get("REMOTE_ADDR"))
     if not client_ip or not is_ip_trusted(client_ip):
         return client_ip
+
+    header = getattr(settings, "CLIENT_IP_HEADER", "")
+    if header:
+        meta_key = "HTTP_" + header.upper().replace("-", "_")
+        header_ip = normalize_ip(request.META.get(meta_key))
+        if header_ip:
+            return header_ip
 
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     for hop in reversed([h for h in xff.split(",") if h.strip()]):

@@ -165,6 +165,21 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 ---
 
+## Hosted review demo (Railway, Oct–Nov 2026)
+
+A copy of the prototype runs on Railway so the HRMO officer can explore it and give feedback. Fake data only. Setup steps: README "Run it on Railway (review demo)".
+
+| # | Decision | Survey? |
+|---|---|---|
+| H1 | **Host: Railway (Hobby plan), for the review period only.** The LGU's DICT GWHS cPanel has no Python or PostgreSQL. Render's free tier sleeps after 15 minutes, deletes its free database after 30 days and has no persistent disk (uploads lost). A Cloudflare tunnel only works while the developer's PC is on. Railway gives an always-on container, managed PostgreSQL and a volume for uploads for roughly $5–10 a month. This is not the production hosting decision (Go-Live Checklist item 8). | No |
+| H2 | **Migrations run in a separate `migrate` service**, mirroring the compose `manage` container. It holds the database owner password, runs `python manage.py prepare_database` (creates or updates the `hr_app` role like `docker/db-init`, then migrates, then re-revokes UPDATE/DELETE/TRUNCATE on `hr_auditlog`) and stops. The website service only gets the `hr_app` password, so a bug in the site cannot disable the audit-log triggers. Chosen 2026-10-16 over Railway's pre-deploy command, which would have put the owner password in the website's variables. Cost of the choice: when a change adds migrations, `migrate` must finish before the website is redeployed. | No |
+| H3 | **Time-limited exception to Go-Live items 9 and 10 (public exposure without a second factor).** Decided 2026-10-16. The review site is on a public `*.up.railway.app` address and HRMO Staff, Auditor and System Admin accounts have no second factor. Accepted only because: all data is fake (the `person_*_fake_only` constraints stay); only the `demo_*` accounts exist, each with a one-time password sent privately and changed at first login; the site runs with `DJANGO_DEBUG=0`, HTTPS, HSTS and login lockouts; nobody uses a password they use anywhere else. **The exception ends on 2026-11-13: delete the Railway project that day.** Extending it needs a new dated entry here. The second factor is still required before go-live (item 10). | No |
+| H4 | **Demo accounts on the review server.** `create_demo_users` and `seed_demo_calendar` refuse to run unless DEBUG is on, to keep known demo usernames off real servers. For the review they are run once with `DJANGO_DEBUG=1` set for that command only (`scripts/railway_demo_setup.sh`); the website itself keeps `DJANGO_DEBUG=0`. Covered by the H3 end date. | No |
+| H5 | **Client IP behind Railway's edge.** Railway documents `X-Real-IP` as the client address and `X-Forwarded-Proto` as always `https`, but publishes no proxy address range; its edge has been observed connecting from `100.0.0.0/8`, and `X-Forwarded-For` can end in a CDN hop. So the review uses `TRUSTED_PROXIES=100.0.0.0/8` with the new `CLIENT_IP_HEADER=X-Real-IP` setting: the header is read only from a trusted proxy, otherwise the existing right-to-left `X-Forwarded-For` walk applies (U5). Must be checked after deploy: the audit log has to show the visitor's public IP, not a `100.x` address, or all users share one lockout counter. *Proven by* `HostedDeploymentTestCase.test_client_ip_header_from_trusted_proxy_only`. | No |
+| H6 | **Production server in the Docker image.** The image now runs gunicorn on `$PORT`, collects static files at build time and serves them with WhiteNoise (no reverse proxy needed). `docker-compose.yml` still runs `runserver` for development. `/healthz/` answers Railway's health probe before the host check and HTTPS redirect, and returns 503 if the database is unreachable. The container starts as root only so `docker/entrypoint.sh` can give the root-owned volume at `/data/media` to the `app` user, then drops to `app`. *Proven by* `HostedDeploymentTestCase`. | No |
+
+---
+
 ## Disaster recovery & backup plan
 
 | # | Decision | Survey? |
@@ -194,7 +209,7 @@ The system currently runs in a prototype profile with synthetic test data. Prior
    - Set `DJANGO_DEBUG=0` in `.env`.
    - Disables verbose debug tracebacks and the Django technical error reporter, preventing credential or schema leaks.
    - Automatically deactivates the `create_demo_users` management command.
-   - The prototype's `runserver --insecure` serves `/static/` with DEBUG off. On the real server, run gunicorn, run `collectstatic`, and have the reverse proxy serve `/static/`.
+   - The Docker image already runs gunicorn, collects static files and serves `/static/` with WhiteNoise (H6). Do not use the compose file's `runserver --insecure` on the real server.
 
 3. **HTTPS & Transport Security:**
    - Set `DJANGO_HTTPS=1` in `.env`.
@@ -232,7 +247,7 @@ The system currently runs in a prototype profile with synthetic test data. Prior
    - Decide whether the site is reachable only on the office network (or VPN), or from the public internet so staff can use mobile data. Office network only is the safer first step; public access requires every item below as well.
 
 10. **Second login step (MFA) for privileged roles (not built):**
-    - HRMO Staff, Auditor, System Admin and the emergency superuser can see or change every record. Add a second factor (e.g. an authenticator app) for these roles before go-live, and before any public exposure in any case.
+    - HRMO Staff, Auditor, System Admin and the emergency superuser can see or change every record. Add a second factor (e.g. an authenticator app) for these roles before go-live, and before any public exposure in any case. Sole exception: the fake-data Railway review until 2026-11-13 (H3).
 
 11. **Privacy Impact Assessment and NPC registration:**
     - The DPO completes a Privacy Impact Assessment for this system and confirms whether the municipality's registration with the National Privacy Commission must cover it.
