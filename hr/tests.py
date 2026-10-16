@@ -3756,3 +3756,41 @@ class CalendarVisualsTestCase(TestCase):
             self.assertLessEqual(abs((event.start_date - today).days), 60)
         self.assertEqual(LeaveRequest.objects.filter(reason__startswith="[demo]").count(), 4)
         self.assertEqual(CalendarEvent.objects.filter(title="Rizal Day").count(), 1)  # real events untouched
+
+
+class HostedDeploymentTestCase(TestCase):
+    """Settings for hosts such as Railway: health probe and client IP from X-Real-IP."""
+
+    @override_settings(SECURE_SSL_REDIRECT=True, ALLOWED_HOSTS=["hr.example.test"])
+    def test_health_probe_answers_before_host_check_and_https_redirect(self):
+        # Railway probes over plain HTTP with its own Host header.
+        resp = self.client.get("/healthz/", HTTP_HOST="healthcheck.railway.app")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.content, b"ok")
+        self.assertFalse(AuditLog.objects.exists())
+        # Every other page still gets the host check and the redirect.
+        self.assertEqual(self.client.get("/", HTTP_HOST="healthcheck.railway.app").status_code, 400)
+        self.assertEqual(self.client.get("/", HTTP_HOST="hr.example.test").status_code, 301)
+
+    def test_health_probe_reports_database_failure(self):
+        from unittest.mock import patch
+
+        with patch("hr.middleware.connection") as conn:
+            conn.cursor.side_effect = DatabaseError("down")
+            resp = self.client.get("/healthz")
+        self.assertEqual(resp.status_code, 503)
+
+    def test_client_ip_header_from_trusted_proxy_only(self):
+        rf = RequestFactory()
+        headers = {"HTTP_X_REAL_IP": "203.0.113.7", "HTTP_X_FORWARDED_FOR": "203.0.113.7, 152.233.0.9"}
+        with override_settings(TRUSTED_PROXIES=["100.0.0.0/8"], CLIENT_IP_HEADER="X-Real-IP"):
+            # From Railway's edge: the header names the client, not the CDN hop at the right of XFF.
+            self.assertEqual(get_client_ip(rf.get("/", REMOTE_ADDR="100.64.0.3", **headers)), "203.0.113.7")
+            # Sent straight to the app by anyone else: the header is ignored.
+            self.assertEqual(get_client_ip(rf.get("/", REMOTE_ADDR="198.51.100.4", **headers)), "198.51.100.4")
+            # Missing or malformed header: fall back to the X-Forwarded-For walk.
+            bad = rf.get("/", REMOTE_ADDR="100.64.0.3", HTTP_X_REAL_IP="nope", HTTP_X_FORWARDED_FOR="203.0.113.9")
+            self.assertEqual(get_client_ip(bad), "203.0.113.9")
+        # Not configured: X-Real-IP is never read.
+        with override_settings(TRUSTED_PROXIES=["100.0.0.0/8"], CLIENT_IP_HEADER=""):
+            self.assertEqual(get_client_ip(rf.get("/", REMOTE_ADDR="100.64.0.3", **headers)), "152.233.0.9")

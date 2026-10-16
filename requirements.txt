@@ -4,3 +4,5 @@ django-axes>=8.3,<9
 openpyxl>=3.1,<4
 Faker>=40,<41
 Pillow>=10.4,<11
+gunicorn>=23,<24
+whitenoise>=6.8,<7
