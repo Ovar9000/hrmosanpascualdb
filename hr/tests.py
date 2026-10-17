@@ -4604,3 +4604,35 @@ def period_label_start(month):
     from django.db.models import Q
 
     return Q(period_start=date(2026, month, 1))
+
+
+class SalaryCheckSchedulingTestCase(TestCase):
+    """SA5: the check runs after each deploy and when the tracker or calendar finds it stale."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def test_calendar_runs_a_stale_check_once_for_hrmo_only(self):
+        self.client.force_login(self.head_a)
+        self.client.get("/calendar/")
+        self.assertFalse(SalaryCheckRun.objects.exists())  # office roles never trigger it
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/calendar/")
+        self.client.get("/calendar/")
+        self.assertEqual(list(SalaryCheckRun.objects.values_list("source", flat=True)), ["calendar"])
+
+    def test_deploy_runs_the_check_and_never_fails_because_of_it(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from hr.management.commands.prepare_database import Command
+
+        out, err = StringIO(), StringIO()
+        command = Command(stdout=out, stderr=err)
+        command._salary_check()
+        self.assertEqual(SalaryCheckRun.objects.get().source, "deploy")
+        self.assertIn("Salary actions check:", out.getvalue())
+        with patch("hr.salary_actions.run_check", side_effect=RuntimeError("boom")):
+            command._salary_check()
+        self.assertIn("skipped: boom", err.getvalue())
