@@ -134,6 +134,10 @@ Write-Step "Filling empty org chart reporting lines"
 $lines = Invoke-Manage seed_reporting_lines
 Write-Ok ($lines | Select-Object -Last 1)
 
+Write-Step "Salary actions: sample long careers, then the daily check"
+$salary = Invoke-Manage seed_demo_salary_history
+Write-Ok ($salary | Select-Object -Last 1)
+
 # --- 5. Sample upload files -----------------------------------------------------------
 Write-Step "Writing sample upload files to demo_files\"
 New-Item -ItemType Directory -Force -Path demo_files | Out-Null

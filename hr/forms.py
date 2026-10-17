@@ -7,7 +7,7 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from .models import FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, Person, Project
+from .models import FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, Person, Project, ServiceInterruption
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -621,3 +621,24 @@ class CalendarEventForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
         }
         labels = {"start_date": "Date", "end_date": "Until (optional)", "office": "Office"}
+
+
+class ServiceInterruptionForm(forms.ModelForm):
+    """Leave without pay or suspension, recorded by HRMO from a salary action case (SA2)."""
+
+    class Meta:
+        model = ServiceInterruption
+        fields = ["kind", "start_date", "end_date", "notes"]
+        widgets = {
+            "kind": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "notes": forms.TextInput(attrs={"class": "form-control form-control-sm", "placeholder": "e.g. LWOP per leave form no."}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("start_date"), cleaned.get("end_date")
+        if start and end and end < start:
+            self.add_error("end_date", "End date cannot be before start date.")
+        return cleaned

@@ -9,7 +9,10 @@ from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.management.base import BaseCommand
 from hr.audit import disable_audit
-from hr.models import AuditLog, Delegate, Document, Engagement, LeaveRequest, Office, Person, Project
+from hr.models import (
+    AuditLog, Delegate, Document, Engagement, LeaveRequest, Office, Person, Project, SalaryAction,
+    ServiceInterruption,
+)
 from hr.permissions import (
     ROLE_AUDITOR,
     ROLE_EXECUTIVE,
@@ -37,6 +40,8 @@ class Command(BaseCommand):
             office_ct = ContentType.objects.get_for_model(Office)
             audit_ct = ContentType.objects.get_for_model(AuditLog)
             project_ct = ContentType.objects.get_for_model(Project)
+            salary_ct = ContentType.objects.get_for_model(SalaryAction)
+            interruption_ct = ContentType.objects.get_for_model(ServiceInterruption)
             view_project = Permission.objects.filter(content_type=project_ct, codename="view_project")
 
             # 1. System Admin (IT)
@@ -52,7 +57,8 @@ class Command(BaseCommand):
             # Full read/write for people, appointments, documents, leave credits. Can view pay and IDs.
             hrmo_group, _ = Group.objects.get_or_create(name=ROLE_HRMO)
             hrmo_perms = Permission.objects.filter(
-                content_type__in=[person_ct, eng_ct, doc_ct, leave_ct, office_ct, delegate_ct]
+                content_type__in=[person_ct, eng_ct, doc_ct, leave_ct, office_ct, delegate_ct,
+                                  salary_ct, interruption_ct]
             ) | view_project
             # Viewing projects only: creating and editing them needs the Project Maintainer
             # group, so hiring and funding a project can sit with different offices (P1).
@@ -106,11 +112,13 @@ class Command(BaseCommand):
             # Read-only across all offices, including pay, IDs, documents, and audit logs.
             auditor_group, _ = Group.objects.get_or_create(name=ROLE_AUDITOR)
             auditor_perms = Permission.objects.filter(
-                content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct, audit_ct, project_ct],
+                content_type__in=[person_ct, eng_ct, doc_ct, office_ct, leave_ct, audit_ct, project_ct,
+                                  salary_ct, interruption_ct],
                 codename__in=[
                     "view_hr_records", "view_person", "view_pay", "view_engagement",
                     "view_ids", "view_documents", "view_document", "view_office",
                     "view_leaverequest", "view_audit_log", "view_project",
+                    "view_salary_actions", "view_salaryaction", "view_serviceinterruption",
                 ],
             )
             auditor_group.permissions.set(auditor_perms)

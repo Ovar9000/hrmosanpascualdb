@@ -36,6 +36,9 @@ from hr.models import (
     Office,
     Person,
     Project,
+    SalaryAction,
+    SalaryCheckRun,
+    ServiceInterruption,
     UserProfile,
 )
 from hr.sequences import get_next_employee_no, sync_employee_sequence
@@ -4045,3 +4048,266 @@ class OrgChartTestCase(TestCase):
         self.eng_a.refresh_from_db()
         self.assertIsNotNone(self.clerk.reports_to)
         self.assertEqual(self.eng_a.reports_to, self.boss)  # existing line kept
+
+
+@override_settings(SALARY_TRACKING_START="2020-01-01", SALARY_LOOKAHEAD_DAYS=90)
+class SalaryActionsTestCase(TestCase):
+    """SA1-SA6: the daily check, the HRMO workflow and who sees salary actions."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 700
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _person(self, last="Mabini"):
+        SalaryActionsTestCase._seq += 1
+        return Person.objects.create(
+            employee_no=f"SP-0{SalaryActionsTestCase._seq}", last_name=last, first_name="Apolinario",
+            birthdate=date(1985, 1, 1),
+        )
+
+    def _eng(self, person, start, eng_type=Engagement.Type.PLANTILLA, item="SP-MTO-010", step=1, end=None,
+             status=Engagement.Status.ACTIVE, office=None):
+        plantilla = eng_type == Engagement.Type.PLANTILLA
+        return Engagement.objects.create(
+            person=person, office=office or self.office_b, type=eng_type, position_title="Revenue Officer I",
+            salary_grade=11 if plantilla else None, step=step if plantilla else None,
+            item_number=item if plantilla else "", start_date=start, end_date=end, status=status,
+        )
+
+    def _cases(self, person, kind=None):
+        qs = SalaryAction.objects.filter(person=person)
+        return qs.filter(kind=kind) if kind else qs
+
+    # --- The check (SA1, SA2) ---------------------------------------------------------
+
+    def test_step_increment_due_after_three_years_and_check_is_idempotent(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2026, 3, 1))
+        case = self._cases(person, SalaryAction.Kind.STEP_INCREMENT).get()
+        self.assertEqual((case.status, case.due_date, case.from_step, case.to_step),
+                         (SalaryAction.Status.DUE, date(2026, 3, 1), 1, 2))
+        self.assertEqual(run_check(today=date(2026, 3, 2)), (0, 0))
+        self.assertEqual(SalaryCheckRun.objects.count(), 2)
+
+    def test_case_opens_only_within_the_lookahead(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2025, 11, 1))  # 120 days early
+        self.assertFalse(self._cases(person).exists())
+        run_check(today=date(2025, 12, 15))
+        self.assertEqual(self._cases(person).get().status, SalaryAction.Status.UPCOMING)
+        run_check(today=date(2026, 3, 1))
+        self.assertEqual(self._cases(person).get().status, SalaryAction.Status.DUE)
+
+    @override_settings(SALARY_TRACKING_START="2026-01-01")
+    def test_milestones_before_go_live_are_assumed_done_with_a_warning(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2017, 2, 1), step=3)
+        run_check(today=date(2026, 1, 15))
+        case = self._cases(person).get()
+        self.assertEqual(case.due_date, date(2026, 2, 1))  # 2020 and 2023 assumed granted on paper
+        self.assertIn("assumed granted on paper", case.warnings[0])
+
+    def test_renewals_of_the_same_item_count_together_and_promotion_restarts(self):
+        from hr.salary_actions import position_start
+
+        person = self._person()
+        first = self._eng(person, date(2020, 1, 1), end=date(2021, 12, 31), status=Engagement.Status.ENDED)
+        renewal = self._eng(person, date(2022, 1, 1))
+        promoted = self._eng(person, date(2024, 6, 1), item="SP-MTO-020")
+        engs = [first, renewal, promoted]
+        self.assertEqual(position_start(renewal, engs), date(2020, 1, 1))
+        self.assertEqual(position_start(promoted, engs), date(2024, 6, 1))
+
+    def test_leave_without_pay_moves_the_due_date(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        ServiceInterruption.objects.create(person=person, kind=ServiceInterruption.Kind.LWOP,
+                                           start_date=date(2024, 1, 10), end_date=date(2024, 1, 19))
+        run_check(today=date(2026, 3, 1))
+        case = self._cases(person).get()
+        self.assertEqual((case.due_date, case.extension_days), (date(2026, 3, 11), 10))
+        self.assertEqual(case.status, SalaryAction.Status.UPCOMING)
+
+    def test_step_eight_and_job_orders_get_no_step_increment(self):
+        from hr.salary_actions import run_check
+
+        top = self._person("Aguinaldo")
+        self._eng(top, date(2023, 3, 1), step=8)
+        jo = self._person("Luna")
+        self._eng(jo, date(2023, 3, 1), eng_type=Engagement.Type.JOB_ORDER)
+        run_check(today=date(2026, 3, 1))
+        self.assertFalse(self._cases(top, SalaryAction.Kind.STEP_INCREMENT).exists())
+        self.assertFalse(self._cases(jo).exists())
+
+    def test_loyalty_counts_unbroken_appointive_service_but_not_job_orders(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2014, 1, 1), eng_type=Engagement.Type.JOB_ORDER, end=date(2015, 12, 31),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2016, 1, 1), eng_type=Engagement.Type.CASUAL, end=date(2019, 12, 31),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2020, 1, 1), step=2)
+        run_check(today=date(2025, 12, 1))
+        case = self._cases(person, SalaryAction.Kind.LOYALTY).get()
+        self.assertEqual((case.years, case.service_from, case.due_date), (10, date(2016, 1, 1), date(2026, 1, 1)))
+        self.assertTrue(any("not counted" in w for w in case.warnings))
+
+    def test_a_gap_restarts_loyalty_counting(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2016, 1, 1), eng_type=Engagement.Type.CASUAL, end=date(2019, 6, 30),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2020, 1, 1))
+        run_check(today=date(2025, 12, 1))
+        self.assertFalse(self._cases(person, SalaryAction.Kind.LOYALTY).exists())
+
+    def test_cases_that_no_longer_apply_are_closed_and_deferred_ones_come_back(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        eng = self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2026, 2, 1))
+        eng.status = Engagement.Status.RESIGNED
+        eng.save()
+        run_check(today=date(2026, 2, 2))
+        case = self._cases(person).get()
+        self.assertEqual(case.status, SalaryAction.Status.NOT_ELIGIBLE)
+        self.assertIn("daily check", case.decision_note)
+
+        other = self._person("Jacinto")
+        self._eng(other, date(2023, 3, 1))
+        run_check(today=date(2026, 3, 1))
+        deferred = self._cases(other).get()
+        deferred.status, deferred.deferred_until = SalaryAction.Status.DEFERRED, date(2026, 4, 1)
+        deferred.save()
+        run_check(today=date(2026, 4, 1))
+        deferred.refresh_from_db()
+        self.assertEqual(deferred.status, SalaryAction.Status.DUE)
+
+    # --- Workflow (SA3) -----------------------------------------------------------------
+
+    def _due_case(self):
+        from django.utils import timezone
+        from hr.salary_actions import add_years, run_check
+
+        person = self._person()
+        eng = self._eng(person, add_years(timezone.localdate(), -3))
+        run_check()
+        return self._cases(person).get(), eng
+
+    def _act(self, case, action, user=None, **data):
+        self.client.force_login(user or self.hrmo_user)
+        case.refresh_from_db()
+        payload = {"action": action, "version": str(case.version), **data}
+        return self.client.post(f"/salary-actions/{case.pk}/", payload, follow=True)
+
+    def test_hrmo_review_signature_and_issue_raises_the_step(self):
+        case, eng = self._due_case()
+        self._act(case, "start_review")
+        resp = self._act(case, "signature", check=["rating"])
+        self.assertContains(resp, "Tick every checklist item first")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.REVIEW)
+        self._act(case, "signature", check=["rating", "no_suspension", "lwop", "funds"])
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.SIGNATURE)
+        self._act(case, "issue", nosi_number="NOSI-2026-001", signed_on="2026-01-05", effective_date=str(case.due_date))
+        case.refresh_from_db()
+        eng.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.ISSUED)
+        self.assertEqual((eng.step, eng.version), (2, 2))
+        self.assertEqual(case.issued_by, self.hrmo_user)
+        self.assertTrue(AuditLog.objects.filter(model_name="Engagement", object_id=str(eng.pk),
+                                                action=AuditLog.Action.UPDATE).exists())
+        self.assertTrue(AuditLog.objects.filter(model_name="SalaryAction", object_id=str(case.pk)).exists())
+
+        from hr.salary_actions import next_milestones
+        from hr.salary_actions import add_years
+        self.assertEqual(next_milestones(case.person)["step"]["due_date"], add_years(case.effective_date, 3))
+
+    def test_issue_is_refused_when_the_step_changed_meanwhile(self):
+        case, eng = self._due_case()
+        case.status = SalaryAction.Status.SIGNATURE
+        case.save()
+        eng.step = 3
+        eng.save()
+        resp = self._act(case, "issue", nosi_number="N-1", signed_on="2026-01-05", effective_date="2026-01-05")
+        self.assertContains(resp, "is now at step 3")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.SIGNATURE)
+
+    def test_stale_version_defer_and_not_eligible_need_reasons(self):
+        case, _eng = self._due_case()
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/salary-actions/{case.pk}/", {"action": "start_review", "version": "99"}, follow=True)
+        self.assertContains(resp, "Someone changed this case")
+        resp = self._act(case, "defer", deferred_until="2099-01-01")
+        self.assertContains(resp, "Give a reason")
+        resp = self._act(case, "defer", deferred_until="2099-01-01", note="Pending IPCR")
+        case.refresh_from_db()
+        self.assertEqual((case.status, case.deferred_until), (SalaryAction.Status.DEFERRED, date(2099, 1, 1)))
+        self._act(case, "not_eligible", note="Unsatisfactory rating")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.NOT_ELIGIBLE)
+
+    def test_recording_leave_without_pay_re_dates_open_cases(self):
+        case, _eng = self._due_case()
+        self.client.force_login(self.hrmo_user)
+        start = case.service_from + __import__("datetime").timedelta(days=30)
+        self.client.post(f"/salary-actions/{case.pk}/interruptions/", {
+            "kind": "lwop", "start_date": start.isoformat(),
+            "end_date": (start + __import__("datetime").timedelta(days=4)).isoformat(), "notes": "",
+        })
+        case.refresh_from_db()
+        self.assertEqual(case.extension_days, 5)
+        self.assertEqual(case.status, SalaryAction.Status.UPCOMING)
+
+    # --- Who sees what (SA4) ------------------------------------------------------------
+
+    def test_only_hrmo_works_cases_and_auditor_reads_them(self):
+        case, _eng = self._due_case()
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/salary-actions/").status_code, 403, user)
+            self.assertEqual(self.client.get(f"/salary-actions/{case.pk}/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertContains(self.client.get("/salary-actions/"), case.person.full_name)
+        self.assertNotContains(self.client.get(f"/salary-actions/{case.pk}/"), "Start review")
+        self.assertEqual(self._act(case, "start_review", user=self.auditor_user).status_code, 403)
+        self.assertEqual(self.client.post("/salary-actions/check/").status_code, 403)
+
+    def test_tracker_runs_the_check_when_it_has_not_run_today(self):
+        from django.utils import timezone
+        from hr.salary_actions import add_years
+
+        person = self._person()
+        self._eng(person, add_years(timezone.localdate(), -3))
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get("/salary-actions/")
+        self.assertContains(resp, person.full_name)
+        self.assertEqual(SalaryCheckRun.objects.get().source, "page")
+        self.client.get("/salary-actions/")
+        self.assertEqual(SalaryCheckRun.objects.count(), 1)
+
+    def test_calendar_and_person_page_show_milestones_to_hrmo_only(self):
+        case, _eng = self._due_case()
+        month = f"?month={case.due_date:%Y-%m}"
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "step 1 → 2")
+        self.assertContains(self.client.get(f"/people/{case.person_id}/"), "Next step increment")
+        self.client.force_login(self.head_a)
+        self.assertNotContains(self.client.get("/calendar/" + month), "step 1 → 2")

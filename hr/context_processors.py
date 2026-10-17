@@ -1,7 +1,8 @@
 """Template context shared by every page."""
 
 from django.utils.functional import SimpleLazyObject
-from .permissions import can_view_office_tree, get_user_office
+from .models import SalaryAction
+from .permissions import can_view_office_tree, can_view_salary_actions, get_user_office
 
 
 def org_chart_nav(request):
@@ -11,7 +12,13 @@ def org_chart_nav(request):
     def links():
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
-            return {"tree": False, "my_office": False}
-        return {"tree": can_view_office_tree(user), "my_office": get_user_office(user) is not None}
+            return {"tree": False, "my_office": False, "salary": False}
+        salary = can_view_salary_actions(user)
+        return {
+            "tree": can_view_office_tree(user),
+            "my_office": get_user_office(user) is not None,
+            "salary": salary,
+            "salary_due": SalaryAction.objects.filter(status=SalaryAction.Status.DUE).count() if salary else 0,
+        }
 
     return {"org_nav": SimpleLazyObject(links)}

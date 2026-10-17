@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Salary Actions{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Salary Actions</h1>
+    <div class="text-muted small">Step increments (every 3 years in the same position) and loyalty awards (10 years, then every 5).
+      The check finds and dates each case; HRMO reviews it and the Mayor signs the NOSI.</div>
+  </div>
+  <div class="text-end small">
+    <div class="text-muted">Last checked:
+      {% if last_run %}{{ last_run.ran_at|date:"M d, Y H:i" }}{% else %}never{% endif %}</div>
+    {% if can_manage %}
+      <form method="post" action="{% url 'salary_action_check_now' %}" class="mt-1">{% csrf_token %}
+        <button class="btn btn-sm btn-outline-primary" type="submit">Check now</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if overdue %}
+  <div class="alert alert-warning py-2 small">{{ overdue }} case{{ overdue|pluralize }} past {{ overdue|pluralize:"its,their" }} due date and not yet under review.</div>
+{% endif %}
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <div class="col-12 col-md-3">
+    <label class="form-label small mb-0" for="kind">Type</label>
+    <select class="form-select form-select-sm" name="kind" id="kind">
+      <option value="">All types</option>
+      {% for value, label in kinds %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-5">
+    <label class="form-label small mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" name="office" id="office">
+      <option value="">All offices</option>
+      {% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+  {% if kind or office %}<div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="?tab={{ tab }}">Clear</a></div>{% endif %}
+</form>
+
+<ul class="nav nav-tabs small">
+  {% for key, label, count in tabs %}
+    <li class="nav-item">
+      <a class="nav-link{% if key == tab %} active{% endif %}" {% if key == tab %}aria-current="page"{% endif %}
+         href="?tab={{ key }}{{ filter_qs }}">{{ label }} <span class="badge {% if key == 'due' and count %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ count }}</span></a>
+    </li>
+  {% endfor %}
+</ul>
+
+<div class="card shadow-sm border-0 border-top-0 rounded-top-0 mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light">
+        <tr><th>Person</th><th>Office</th><th>Action</th><th>Due</th><th>Status</th><th class="text-end"></th></tr>
+      </thead>
+      <tbody>
+        {% for case in page %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ case.person.full_name }}</div>
+              <div class="text-muted">{{ case.engagement.position_title }}</div>
+            </td>
+            <td>{{ case.engagement.office.acronym|default:case.engagement.office.name }}</td>
+            <td>
+              {% if case.kind == "step" %}Step increment · step {{ case.from_step }} → {{ case.to_step }}
+              {% else %}Loyalty award · {{ case.years }} years{% endif %}
+              {% if case.warnings %}<div class="text-warning-emphasis">⚠ {{ case.warnings|length }} thing{{ case.warnings|length|pluralize }} to check</div>{% endif %}
+            </td>
+            <td>
+              {{ case.due_date|date:"M d, Y" }}
+              {% if case.status == "due" and case.due_date < today %}<div class="text-danger">Overdue</div>{% endif %}
+              {% if case.status == "deferred" %}<div class="text-muted">Back on {{ case.deferred_until|date:"M d, Y" }}</div>{% endif %}
+            </td>
+            <td><span class="badge bg-light text-dark border">{{ case.get_status_display }}</span></td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'salary_action_detail' case.pk %}">Open</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No cases here.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if page.has_other_pages %}
+<nav aria-label="Pages" class="d-flex gap-2 align-items-center small">
+  {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?tab={{ tab }}{{ filter_qs }}&page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?tab={{ tab }}{{ filter_qs }}&page={{ page.next_page_number }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

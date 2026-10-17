@@ -26,6 +26,8 @@ from .models import (
     Office,
     Person,
     Project,
+    SalaryAction,
+    ServiceInterruption,
     UserProfile,
 )
 
@@ -42,6 +44,8 @@ AUDITED_MODELS = (
     Office,
     Project,
     CalendarEvent,
+    SalaryAction,
+    ServiceInterruption,
     User,
     Group,
 )

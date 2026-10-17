@@ -318,3 +318,22 @@ def can_view_office_chart(user, office):
 def can_view_chart_types(user):
     """Appointment type on chart boxes: the roles that already see it on office pages (R4)."""
     return has_all_office_scope(user) or is_office_head(user) or is_office_staff(user)
+
+
+# --- Salary actions (DECISIONS SA4) -------------------------------------------
+
+
+def can_manage_salary_actions(user):
+    """Review and issue step increments and loyalty awards: HRMO."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.has_perm("hr.manage_salary_actions") or is_hrmo(user)
+
+
+def can_view_salary_actions(user):
+    """See the tracker and cases: HRMO and Auditor. Steps are pay data (R6), so no office roles."""
+    if not user or not user.is_authenticated:
+        return False
+    return can_manage_salary_actions(user) or user.has_perm("hr.view_salary_actions") or is_auditor(user)

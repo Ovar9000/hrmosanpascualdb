@@ -19,7 +19,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views.decorators.http import require_POST
-from . import orgchart
+from . import orgchart, salary_actions
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -30,6 +30,7 @@ from .forms import (
     EngagementForm,
     PersonForm,
     ProjectForm,
+    ServiceInterruptionForm,
     sanitize_filename,
 )
 from .models import (
@@ -44,11 +45,13 @@ from .models import (
     Office,
     Person,
     Project,
+    SalaryAction,
     UserProfile,
 )
 from .permissions import (
     can_manage_hr_records,
     can_manage_projects,
+    can_manage_salary_actions,
     can_view_contacts,
     can_view_document_content,
     can_view_chart_types,
@@ -62,6 +65,7 @@ from .permissions import (
     can_approve_leave,
     can_view_project_roster,
     can_view_projects,
+    can_view_salary_actions,
     get_user_office,
     get_visible_offices,
     get_visible_people,
@@ -552,8 +556,20 @@ def person_detail(request, pk):
             "can_view_notes": can_view_hr_notes(request.user),
             "leave_balances": leave_balances,
             "can_manage_records": can_manage_hr_records(request.user),
+            "salary": _person_salary_summary(request.user, person),
         },
     )
+
+
+
+def _person_salary_summary(user, person):
+    """Next step increment and loyalty dates plus open cases, for HRMO and Auditor (SA4)."""
+    if not can_view_salary_actions(user):
+        return None
+    return {
+        "next": salary_actions.next_milestones(person),
+        "open_cases": person.salary_actions.filter(status__in=SalaryAction.OPEN_STATUSES).order_by("due_date"),
+    }
 
 
 @login_required
@@ -1168,6 +1184,189 @@ def project_edit(request, pk):
 
 # --- Calendar (DECISIONS C1-C3) -------------------------------------------------
 
+# --- Salary actions tracker (DECISIONS SA1-SA6) ---------------------------------
+
+SALARY_TABS = [
+    ("due", "Due", [SalaryAction.Status.DUE]),
+    ("upcoming", "Upcoming", [SalaryAction.Status.UPCOMING]),
+    ("review", "Under review", [SalaryAction.Status.REVIEW]),
+    ("signature", "Awaiting signature", [SalaryAction.Status.SIGNATURE]),
+    ("deferred", "Deferred", [SalaryAction.Status.DEFERRED]),
+    ("closed", "Closed", SalaryAction.CLOSED_STATUSES),
+]
+# The tracker runs the check itself when the daily job has not run for this long (SA5).
+SALARY_CHECK_STALE = timedelta(hours=20)
+
+
+def _require_salary_view(request):
+    if is_sysadmin(request.user) and not request.user.is_superuser:
+        raise PermissionDenied("System administrators have no access to HR records.")
+    if not can_view_salary_actions(request.user):
+        raise PermissionDenied("Step increments and loyalty awards are visible to HRMO and Auditor only.")
+
+
+@login_required
+def salary_action_list(request):
+    """The tracker: cases by stage, filtered by type and office."""
+    _require_salary_view(request)
+    last = salary_actions.last_run()
+    if last is None or timezone.now() - last.ran_at > SALARY_CHECK_STALE:
+        salary_actions.run_check(source="page")
+        last = salary_actions.last_run()
+
+    tabs = {key: statuses for key, _label, statuses in SALARY_TABS}
+    tab = request.GET.get("tab", "due")
+    if tab not in tabs:
+        tab = "due"
+    kind = request.GET.get("kind", "")
+    if kind not in SalaryAction.Kind.values:
+        kind = ""
+    office = None
+    office_id = request.GET.get("office", "")
+    if office_id.isdigit():
+        office = Office.objects.filter(pk=int(office_id)).first()
+
+    base = SalaryAction.objects.select_related("person", "engagement__office")
+    if kind:
+        base = base.filter(kind=kind)
+    if office:
+        base = base.filter(engagement__office=office)
+    counts = {key: base.filter(status__in=statuses).count() for key, statuses in tabs.items()}
+    cases = base.filter(status__in=tabs[tab])
+    cases = cases.order_by("-updated_at") if tab == "closed" else cases.order_by("due_date", "person__last_name")
+    page = Paginator(cases, 50).get_page(request.GET.get("page"))
+
+    params = [(k, v) for k, v in (("kind", kind), ("office", office.pk if office else "")) if v]
+    return render(
+        request,
+        "hr/salary_action_list.html",
+        {
+            "tabs": [(key, label, counts[key]) for key, label, _statuses in SALARY_TABS],
+            "tab": tab,
+            "page": page,
+            "kind": kind,
+            "kinds": SalaryAction.Kind.choices,
+            "office": office,
+            "offices": Office.objects.order_by("name"),
+            "filter_qs": "&" + urlencode(params) if params else "",
+            "today": timezone.localdate(),
+            "last_run": last,
+            "can_manage": can_manage_salary_actions(request.user),
+            "overdue": base.filter(status=SalaryAction.Status.DUE, due_date__lt=timezone.localdate()).count(),
+        },
+    )
+
+
+@login_required
+@require_POST
+def salary_action_check_now(request):
+    if not can_manage_salary_actions(request.user):
+        raise PermissionDenied("Only HRMO can run the check.")
+    created, updated = salary_actions.run_check(source="button")
+    messages.success(request, f"Check finished: {created} new case(s), {updated} updated.")
+    return redirect("salary_action_list")
+
+
+def _parse_posted_date(request, name):
+    try:
+        return parse_date(request.POST.get(name, "").strip())
+    except ValueError:  # well-formed but impossible, e.g. 2026-02-30
+        return None
+
+
+@login_required
+def salary_action_detail(request, pk):
+    """One case: the counted service, warnings, HRMO's checklist and the next step."""
+    _require_salary_view(request)
+    case = get_object_or_404(SalaryAction.objects.select_related("person", "engagement__office", "issued_by"), pk=pk)
+    can_manage = can_manage_salary_actions(request.user)
+    today = timezone.localdate()
+
+    if request.method == "POST":
+        if not can_manage:
+            raise PermissionDenied("Only HRMO can work on salary actions.")
+        action = request.POST.get("action", "")
+        try:
+            with transaction.atomic():
+                locked = SalaryAction.objects.select_for_update().get(pk=pk)
+                if str(locked.version) != request.POST.get("version", ""):
+                    raise salary_actions.WorkflowError(
+                        "Someone changed this case while you had it open. Nothing was saved; check the latest version below."
+                    )
+                note = request.POST.get("note", "").strip()
+                if action == "start_review":
+                    salary_actions.start_review(locked)
+                elif action == "checklist":
+                    salary_actions.save_checklist(locked, set(request.POST.getlist("check")))
+                elif action == "signature":
+                    salary_actions.save_checklist(locked, set(request.POST.getlist("check")))
+                    salary_actions.send_for_signature(locked)
+                elif action == "defer":
+                    salary_actions.defer(locked, _parse_posted_date(request, "deferred_until"), note, today)
+                elif action == "not_eligible":
+                    salary_actions.mark_not_eligible(locked, note)
+                elif action == "issue":
+                    salary_actions.issue(
+                        locked,
+                        request.POST.get("nosi_number", "").strip()[:50],
+                        _parse_posted_date(request, "signed_on"),
+                        _parse_posted_date(request, "effective_date"),
+                        request.user,
+                    )
+                else:
+                    raise salary_actions.WorkflowError("Unknown action.")
+                locked.version += 1
+                locked.save()
+        except salary_actions.WorkflowError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, f"{locked.get_kind_display()} for {case.person.full_name}: {locked.get_status_display()}.")
+        return redirect("salary_action_detail", pk=pk)
+
+    recomputed = salary_actions.next_milestones(case.person, today).get(case.kind)
+    redated = None
+    if recomputed and case.is_open and case.status not in SalaryAction.AUTO_STATUSES and recomputed["milestone"] == case.milestone:
+        if recomputed["due_date"] != case.due_date:
+            redated = recomputed["due_date"]
+    return render(
+        request,
+        "hr/salary_action_detail.html",
+        {
+            "case": case,
+            "can_manage": can_manage,
+            "checklist": salary_actions.checklist_items(case),
+            "engagements": case.person.engagements.select_related("office").order_by("-start_date"),
+            "interruptions": case.person.service_interruptions.all(),
+            "interruption_form": ServiceInterruptionForm(),
+            "other_cases": case.person.salary_actions.exclude(pk=case.pk).order_by("-due_date"),
+            "today": today,
+            "redated": redated,
+        },
+    )
+
+
+@login_required
+@require_POST
+def salary_interruption_create(request, pk):
+    """HRMO records leave without pay or a suspension from a case page; the check re-dates open cases."""
+    if not can_manage_salary_actions(request.user):
+        raise PermissionDenied("Only HRMO can record service interruptions.")
+    case = get_object_or_404(SalaryAction.objects.select_related("person"), pk=pk)
+    form = ServiceInterruptionForm(request.POST)
+    if form.is_valid():
+        with transaction.atomic():
+            item = form.save(commit=False)
+            item.person = case.person
+            item.created_by = request.user
+            item.save()
+        salary_actions.run_check(person_ids=[case.person_id], source="button")
+        messages.success(request, f"Recorded {item.get_kind_display().lower()} of {item.days} day(s). Open cases were re-dated.")
+    else:
+        errors = "; ".join(e for errs in form.errors.values() for e in errs)
+        messages.error(request, f"Not recorded: {errors}")
+    return redirect("salary_action_detail", pk=pk)
+
+
 # Every item kind, in the order a day lists them: (text prefix, CSS class, plural for a
 # collapsed group). The prefix makes the kind readable without colour (C3).
 CALENDAR_KINDS = {
@@ -1180,6 +1379,7 @@ CALENDAR_KINDS = {
     "hire": ("Start", "cal-hire", "contract starts"),
     "contract_end": ("End", "cal-end", "contract ends"),
     "project": ("Project", "cal-project", "project dates"),
+    "salary": ("Salary", "cal-salary", "salary actions"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1190,6 +1390,7 @@ CALENDAR_FILTERS = [
     ("hire", "Contract starts"),
     ("contract_end", "Contract ends"),
     ("project", "Project dates"),
+    ("salary", "Step increments and loyalty"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1198,6 +1399,7 @@ CALENDAR_LEGEND = [
     ("Contract start", "Start", "cal-hire"),
     ("Contract end", "End", "cal-end"),
     ("Project start / end", "Project", "cal-project"),
+    ("Step increment / loyalty due (HRMO, Auditor)", "Salary", "cal-salary"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1328,6 +1530,22 @@ def _calendar_items(user, first, last, shown, office=None):
             if project.end_date:
                 add(project.end_date, "project", f"{project.name} (end)", f"Project ends: {project.name}", url,
                     office_name=project.office.name)
+
+    # Open step increment and loyalty cases on their due dates: pay data, so HRMO and Auditor only (SA4).
+    if "salary" in shown and can_view_salary_actions(user):
+        cases = SalaryAction.objects.filter(
+            status__in=SalaryAction.OPEN_STATUSES, due_date__range=(first, last)
+        ).select_related("person", "engagement__office")
+        if office:
+            cases = cases.filter(engagement__office=office)
+        for case in cases:
+            if case.kind == SalaryAction.Kind.STEP_INCREMENT:
+                what = f"step {case.from_step} → {case.to_step}"
+            else:
+                what = f"{case.years}-year loyalty award"
+            add(case.due_date, "salary", f"{_short_name(case.person)} {what}",
+                f"{case.get_status_display()}: {case.person.full_name}, {what}",
+                reverse("salary_action_detail", args=[case.pk]), office_name=case.engagement.office.name)
 
     for items in days.values():
         items.sort(key=lambda item: (CALENDAR_KIND_ORDER.index(item["kind"]), item["full"]))

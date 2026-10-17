@@ -22,6 +22,7 @@
             <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices Directory</a></li>
           {% endif %}
           {% if org_nav.tree %}<li class="nav-item"><a class="nav-link" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
+          {% if org_nav.salary %}<li class="nav-item"><a class="nav-link" href="{% url 'salary_action_list' %}">Salary Actions{% if org_nav.salary_due %} <span class="badge bg-warning text-dark">{{ org_nav.salary_due }}<span class="visually-hidden"> due</span></span>{% endif %}</a></li>{% endif %}
           {% if org_nav.my_office %}<li class="nav-item"><a class="nav-link" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
           {% if perms.hr.view_project %}
             <li class="nav-item"><a class="nav-link" href="{% url 'project_list' %}">Projects</a></li>

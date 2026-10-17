@@ -119,6 +119,19 @@ it on public Wi-Fi.
 4. Log in as **`demo_employee`** → **My Office**: "You", your supervisor, the office head
    and your coworkers. Names and positions only; other offices are refused.
 
+### 3c. Salary actions (2 min) · `demo_hrmo`
+
+1. **Salary Actions** in the menu (the badge counts what is due) → the **Due** tab:
+   step increments found by the daily check, each with what HRMO must still verify
+   ("increments before Jan 2026 assumed granted on paper").
+2. Filter **Type → Loyalty award** → open one → the counted service and the warning about
+   service before the first record.
+3. **Start review** → tick the checklist → **Send for the Mayor's signature** →
+   **Record as issued** with a NOSI number. For a step increment, the appointment's step
+   goes up by one and the change is in the Audit Trail.
+4. On a step increment case, **record leave without pay** → the due date moves later.
+5. **Calendar** → the purple *Salary* entries (HRMO and Auditor only).
+
 ### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.

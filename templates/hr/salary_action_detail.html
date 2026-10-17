@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}{{ case.get_kind_display }} · {{ case.person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'salary_action_list' %}" class="btn btn-sm btn-outline-secondary">← Salary Actions</a>
+</div>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">
+      {% if case.kind == "step" %}Step increment: step {{ case.from_step }} → {{ case.to_step }}
+      {% else %}{{ case.years }}-year loyalty award{% endif %}
+    </h1>
+    <div><a href="{% url 'person_detail' case.person.pk %}">{{ case.person.full_name }}</a>
+      · {{ case.engagement.position_title }} · {{ case.engagement.office.name }}</div>
+  </div>
+  <span class="badge fs-6 {% if case.status == 'issued' %}bg-success{% elif case.status == 'not_eligible' %}bg-secondary{% elif case.status == 'due' %}bg-warning text-dark{% else %}bg-primary{% endif %}">{{ case.get_status_display }}</span>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2">The milestone</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-6">Counting from</dt><dd class="col-6">{{ case.service_from|date:"M d, Y" }}</dd>
+          <dt class="col-6">Due (effective) date</dt>
+          <dd class="col-6">{{ case.due_date|date:"M d, Y" }}{% if case.status == "due" and case.due_date < today %} <span class="text-danger">overdue</span>{% endif %}</dd>
+          {% if case.extension_days %}<dt class="col-6">Moved later by</dt><dd class="col-6">{{ case.extension_days }} day{{ case.extension_days|pluralize }} (LWOP / suspension)</dd>{% endif %}
+          {% if case.kind == "step" %}
+            <dt class="col-6">Plantilla item</dt><dd class="col-6">{{ case.engagement.item_number }}</dd>
+            <dt class="col-6">Salary grade, step</dt><dd class="col-6">SG {{ case.engagement.salary_grade }}, step {{ case.from_step }} → {{ case.to_step }}</dd>
+          {% endif %}
+          {% if case.status == "deferred" %}<dt class="col-6">Comes back on</dt><dd class="col-6">{{ case.deferred_until|date:"M d, Y" }}</dd>{% endif %}
+          {% if case.status == "issued" %}
+            <dt class="col-6">NOSI / award no.</dt><dd class="col-6">{{ case.nosi_number }}</dd>
+            <dt class="col-6">Signed on</dt><dd class="col-6">{{ case.signed_on|date:"M d, Y" }}</dd>
+            <dt class="col-6">Effective</dt><dd class="col-6">{{ case.effective_date|date:"M d, Y" }}</dd>
+            <dt class="col-6">Recorded by</dt><dd class="col-6">{{ case.issued_by.get_username|default:"—" }}</dd>
+          {% endif %}
+        </dl>
+        {% if case.decision_note %}<div class="mt-2 p-2 bg-light rounded"><strong>Note:</strong> {{ case.decision_note|linebreaksbr }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    {% if case.warnings %}
+    <div class="alert alert-warning small mb-3">
+      <div class="fw-bold mb-1">Check before approving</div>
+      <ul class="mb-0 ps-3">{% for w in case.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if redated %}
+    <div class="alert alert-info small mb-3">With the service records as they are now, this milestone falls on
+      <strong>{{ redated|date:"M d, Y" }}</strong>. The date above was kept because HRMO is already working on the case.</div>
+    {% endif %}
+
+    {% if can_manage %}
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">Next step</div>
+      <div class="card-body small">
+        {% if case.status == "upcoming" or case.status == "due" or case.status == "deferred" or case.status == "not_eligible" %}
+          <form method="post">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ case.version }}">
+            <button class="btn btn-primary btn-sm" name="action" value="start_review">{% if case.status == "not_eligible" %}Reopen for review{% else %}Start review{% endif %}</button>
+          </form>
+        {% elif case.status == "review" %}
+          <form method="post">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ case.version }}">
+            <fieldset>
+              <legend class="fs-6">Checklist</legend>
+              {% for key, label, done in checklist %}
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="check" value="{{ key }}" id="check_{{ key }}"{% if done %} checked{% endif %}>
+                  <label class="form-check-label" for="check_{{ key }}">{{ label }}</label>
+                </div>
+              {% endfor %}
+            </fieldset>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <button class="btn btn-outline-primary btn-sm" name="action" value="checklist">Save checklist</button>
+              <button class="btn btn-primary btn-sm" name="action" value="signature">Send for the Mayor's signature</button>
+            </div>
+          </form>
+        {% elif case.status == "signature" %}
+          <p class="mb-2">When the signed {% if case.kind == "step" %}NOSI{% else %}award{% endif %} is back, record it here.
+            {% if case.kind == "step" %}This raises the appointment to step {{ case.to_step }}.{% endif %}</p>
+          <form method="post" class="row g-2">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ case.version }}">
+            <div class="col-12 col-md-4"><label class="form-label mb-0" for="nosi_number">{% if case.kind == "step" %}NOSI{% else %}Award{% endif %} number</label>
+              <input class="form-control form-control-sm" id="nosi_number" name="nosi_number" maxlength="50" required></div>
+            <div class="col-6 col-md-4"><label class="form-label mb-0" for="signed_on">Signed on</label>
+              <input class="form-control form-control-sm" type="date" id="signed_on" name="signed_on" required></div>
+            <div class="col-6 col-md-4"><label class="form-label mb-0" for="effective_date">Effective</label>
+              <input class="form-control form-control-sm" type="date" id="effective_date" name="effective_date" value="{{ case.due_date|date:'Y-m-d' }}" required></div>
+            <div class="col-12"><button class="btn btn-success btn-sm" name="action" value="issue">Record as issued</button></div>
+          </form>
+        {% else %}
+          <p class="mb-0 text-muted">This case is closed.</p>
+        {% endif %}
+
+        {% if case.status != "issued" and case.status != "not_eligible" %}
+        <details class="mt-3">
+          <summary>Defer or mark not eligible</summary>
+          <form method="post" class="row g-2 mt-1">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ case.version }}">
+            <div class="col-12"><label class="form-label mb-0" for="note">Reason (kept on the record)</label>
+              <input class="form-control form-control-sm" id="note" name="note" maxlength="500"></div>
+            <div class="col-6 col-md-4"><label class="form-label mb-0" for="deferred_until">Bring back on</label>
+              <input class="form-control form-control-sm" type="date" id="deferred_until" name="deferred_until"></div>
+            <div class="col-12 d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-secondary btn-sm" name="action" value="defer">Defer</button>
+              <button class="btn btn-outline-danger btn-sm" name="action" value="not_eligible">Not eligible</button>
+            </div>
+          </form>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Appointments in the system</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Period</th><th>Type</th><th>Position</th><th>Item / step</th><th>Office</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for eng in engagements %}
+          <tr{% if eng.pk == case.engagement_id %} class="table-primary"{% endif %}>
+            <td>{{ eng.start_date|date:"M d, Y" }} – {{ eng.end_date|date:"M d, Y"|default:"present" }}</td>
+            <td>{{ eng.get_type_display }}</td>
+            <td>{{ eng.position_title }}</td>
+            <td>{% if eng.item_number %}{{ eng.item_number }} · step {{ eng.step }}{% else %}—{% endif %}</td>
+            <td>{{ eng.office.acronym|default:eng.office.name }}</td>
+            <td>{{ eng.get_status_display }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Leave without pay and suspensions</div>
+  <div class="card-body small">
+    {% if interruptions %}
+      <ul class="mb-2">{% for item in interruptions %}
+        <li>{{ item.get_kind_display }}: {{ item.start_date|date:"M d, Y" }} – {{ item.end_date|date:"M d, Y" }} ({{ item.days }} day{{ item.days|pluralize }}){% if item.notes %} · {{ item.notes }}{% endif %}</li>
+      {% endfor %}</ul>
+    {% else %}<p class="text-muted">None recorded.</p>{% endif %}
+    {% if can_manage %}
+      <form method="post" action="{% url 'salary_interruption_create' case.pk %}" class="row g-2 align-items-end">{% csrf_token %}
+        <div class="col-12 col-md-3"><label class="form-label mb-0" for="{{ interruption_form.kind.id_for_label }}">Kind</label>{{ interruption_form.kind }}</div>
+        <div class="col-6 col-md-2"><label class="form-label mb-0" for="{{ interruption_form.start_date.id_for_label }}">From</label>{{ interruption_form.start_date }}</div>
+        <div class="col-6 col-md-2"><label class="form-label mb-0" for="{{ interruption_form.end_date.id_for_label }}">To</label>{{ interruption_form.end_date }}</div>
+        <div class="col-12 col-md-3"><label class="form-label mb-0" for="{{ interruption_form.notes.id_for_label }}">Notes</label>{{ interruption_form.notes }}</div>
+        <div class="col-12 col-md-2"><button class="btn btn-sm btn-outline-primary w-100" type="submit">Record</button></div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if other_cases %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Other cases for this person</div>
+  <ul class="list-group list-group-flush small">
+    {% for other in other_cases %}
+      <li class="list-group-item"><a href="{% url 'salary_action_detail' other.pk %}">{{ other.get_kind_display }}{% if other.kind == "step" %} step {{ other.from_step }} → {{ other.to_step }}{% else %} {{ other.years }} years{% endif %}</a>
+        · due {{ other.due_date|date:"M d, Y" }} · {{ other.get_status_display }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}
