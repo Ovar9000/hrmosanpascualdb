@@ -19,11 +19,22 @@
         <ul class="navbar-nav me-auto">
           {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}
             <li class="nav-item"><a class="nav-link" href="{% url 'person_list' %}">Personnel</a></li>
-            <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices Directory</a></li>
           {% endif %}
-          {% if org_nav.tree %}<li class="nav-item"><a class="nav-link" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
-          {% if org_nav.salary %}<li class="nav-item"><a class="nav-link" href="{% url 'salary_action_list' %}">Salary Actions{% if org_nav.salary_due %} <span class="badge bg-warning text-dark">{{ org_nav.salary_due }}<span class="visually-hidden"> due</span></span>{% endif %}</a></li>{% endif %}
-          {% if org_nav.my_office %}<li class="nav-item"><a class="nav-link" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
+          {% if org_nav.tree or org_nav.my_office %}
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Offices</a>
+              <ul class="dropdown-menu">
+                {% if org_nav.my_office %}<li><a class="dropdown-item" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
+                {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
+                {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}<li><a class="dropdown-item" href="{% url 'office_list' %}">Offices Directory</a></li>{% endif %}
+              </ul>
+            </li>
+          {% elif not perms.hr.manage_projects or perms.hr.view_hr_records %}
+            <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices</a></li>
+          {% endif %}
+          {% if org_nav.salary %}
+            <li class="nav-item"><a class="nav-link position-relative" href="{% url 'salary_action_list' %}">Salary Actions{% if org_nav.salary_due %}<span class="position-absolute top-0 end-0 mt-2 p-1 bg-warning rounded-circle" title="Cases due"><span class="visually-hidden">(cases due)</span></span>{% endif %}</a></li>
+          {% endif %}
           {% if perms.hr.view_project %}
             <li class="nav-item"><a class="nav-link" href="{% url 'project_list' %}">Projects</a></li>
           {% endif %}
@@ -31,11 +42,11 @@
           {% if perms.hr.view_audit_log or user.is_superuser %}
             <li class="nav-item"><a class="nav-link" href="{% url 'audit_list' %}">Audit Trail</a></li>
           {% endif %}
-          {% if user.is_staff %}<li class="nav-item"><a class="nav-link" href="{% url 'admin:index' %}">Django Admin</a></li>{% endif %}
 
           {% block nav %}{% endblock %}
         </ul>
         <ul class="navbar-nav">
+          {% if user.is_staff %}<li class="nav-item"><a class="nav-link" href="{% url 'admin:index' %}">Admin</a></li>{% endif %}
           <li class="nav-item"><a class="nav-link" href="{% url 'password_change' %}">{{ user.get_username }}</a></li>
           <li class="nav-item">
             <form method="post" action="{% url 'logout' %}">{% csrf_token %}

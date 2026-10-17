@@ -124,9 +124,9 @@ AUTHENTICATION_BACKENDS = [
 # Days an unused one-time password stays valid (provision_accounts, admin resets).
 ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
 
-# Salary actions tracker (DECISIONS SA1): milestones before this date are assumed handled on paper
-# before go-live, and cases open this many days before they fall due.
-SALARY_TRACKING_START = os.environ.get("SALARY_TRACKING_START", "2026-01-01")
+# Salary actions tracker (DECISIONS SA1): the go-live date. Milestones before it are assumed handled
+# on paper, so the tracker starts without a backlog; cases open this many days before they fall due.
+SALARY_TRACKING_START = os.environ.get("SALARY_TRACKING_START", "2026-10-01")
 SALARY_LOOKAHEAD_DAYS = int(os.environ.get("SALARY_LOOKAHEAD_DAYS", "90"))
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.

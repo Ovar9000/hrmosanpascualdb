@@ -4308,6 +4308,6 @@ class SalaryActionsTestCase(TestCase):
         month = f"?month={case.due_date:%Y-%m}"
         self.client.force_login(self.hrmo_user)
         self.assertContains(self.client.get("/calendar/" + month), "step 1 → 2")
-        self.assertContains(self.client.get(f"/people/{case.person_id}/"), "Next step increment")
+        self.assertContains(self.client.get(f"/people/{case.person_id}/"), "Next salary increase (step)")
         self.client.force_login(self.head_a)
         self.assertNotContains(self.client.get("/calendar/" + month), "step 1 → 2")

@@ -5,7 +5,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
   <div>
     <h1 class="h3 mb-0">Salary Actions</h1>
-    <div class="text-muted small">Step increments (every 3 years in the same position) and loyalty awards (10 years, then every 5).
+    <div class="text-muted small">Salary increases (one step every 3 years in the same position, approved by a Notice of Step Increment) and loyalty awards (10 years, then every 5).
       The check finds and dates each case; HRMO reviews it and the Mayor signs the NOSI.</div>
   </div>
   <div class="text-end small">
@@ -67,7 +67,7 @@
             </td>
             <td>{{ case.engagement.office.acronym|default:case.engagement.office.name }}</td>
             <td>
-              {% if case.kind == "step" %}Step increment · step {{ case.from_step }} → {{ case.to_step }}
+              {% if case.kind == "step" %}Salary increase · step {{ case.from_step }} → {{ case.to_step }}
               {% else %}Loyalty award · {{ case.years }} years{% endif %}
               {% if case.warnings %}<div class="text-warning-emphasis">⚠ {{ case.warnings|length }} thing{{ case.warnings|length|pluralize }} to check</div>{% endif %}
             </td>

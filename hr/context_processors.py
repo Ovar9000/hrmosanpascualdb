@@ -18,7 +18,7 @@ def org_chart_nav(request):
             "tree": can_view_office_tree(user),
             "my_office": get_user_office(user) is not None,
             "salary": salary,
-            "salary_due": SalaryAction.objects.filter(status=SalaryAction.Status.DUE).count() if salary else 0,
+            "salary_due": salary and SalaryAction.objects.filter(status=SalaryAction.Status.DUE).exists(),
         }
 
     return {"org_nav": SimpleLazyObject(links)}

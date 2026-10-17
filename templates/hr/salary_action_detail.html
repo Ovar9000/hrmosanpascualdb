@@ -9,7 +9,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
   <div>
     <h1 class="h3 mb-0">
-      {% if case.kind == "step" %}Step increment: step {{ case.from_step }} → {{ case.to_step }}
+      {% if case.kind == "step" %}Salary increase: step {{ case.from_step }} → {{ case.to_step }}
       {% else %}{{ case.years }}-year loyalty award{% endif %}
     </h1>
     <div><a href="{% url 'person_detail' case.person.pk %}">{{ case.person.full_name }}</a>

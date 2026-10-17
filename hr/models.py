@@ -619,7 +619,7 @@ class SalaryAction(models.Model):
     """
 
     class Kind(models.TextChoices):
-        STEP_INCREMENT = "step", "Step increment"
+        STEP_INCREMENT = "step", "Salary increase (step)"
         LOYALTY = "loyalty", "Loyalty award"
 
     class Status(models.TextChoices):

@@ -1202,7 +1202,7 @@ def _require_salary_view(request):
     if is_sysadmin(request.user) and not request.user.is_superuser:
         raise PermissionDenied("System administrators have no access to HR records.")
     if not can_view_salary_actions(request.user):
-        raise PermissionDenied("Step increments and loyalty awards are visible to HRMO and Auditor only.")
+        raise PermissionDenied("Salary increases and loyalty awards are visible to HRMO and Auditor only.")
 
 
 @login_required
@@ -1379,7 +1379,8 @@ CALENDAR_KINDS = {
     "hire": ("Start", "cal-hire", "contract starts"),
     "contract_end": ("End", "cal-end", "contract ends"),
     "project": ("Project", "cal-project", "project dates"),
-    "salary": ("Salary", "cal-salary", "salary actions"),
+    "salary": ("Salary increase", "cal-salary", "salary increases"),
+    "loyalty": ("Loyalty", "cal-loyalty", "loyalty awards"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1390,7 +1391,7 @@ CALENDAR_FILTERS = [
     ("hire", "Contract starts"),
     ("contract_end", "Contract ends"),
     ("project", "Project dates"),
-    ("salary", "Step increments and loyalty"),
+    ("salary", "Salary increases and loyalty"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1399,7 +1400,8 @@ CALENDAR_LEGEND = [
     ("Contract start", "Start", "cal-hire"),
     ("Contract end", "End", "cal-end"),
     ("Project start / end", "Project", "cal-project"),
-    ("Step increment / loyalty due (HRMO, Auditor)", "Salary", "cal-salary"),
+    ("Salary increase due (HRMO, Auditor)", "Salary increase", "cal-salary"),
+    ("Loyalty award due (HRMO, Auditor)", "Loyalty", "cal-loyalty"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1540,11 +1542,11 @@ def _calendar_items(user, first, last, shown, office=None):
             cases = cases.filter(engagement__office=office)
         for case in cases:
             if case.kind == SalaryAction.Kind.STEP_INCREMENT:
-                what = f"step {case.from_step} → {case.to_step}"
+                kind, what = "salary", f"step {case.from_step} → {case.to_step}"
             else:
-                what = f"{case.years}-year loyalty award"
-            add(case.due_date, "salary", f"{_short_name(case.person)} {what}",
-                f"{case.get_status_display()}: {case.person.full_name}, {what}",
+                kind, what = "loyalty", f"{case.years} years"
+            add(case.due_date, kind, f"{_short_name(case.person)} {what}",
+                f"{case.get_kind_display()} {case.get_status_display().lower()}: {case.person.full_name}, {what}",
                 reverse("salary_action_detail", args=[case.pk]), office_name=case.engagement.office.name)
 
     for items in days.values():

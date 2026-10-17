@@ -119,7 +119,7 @@ def step_candidate(eng, engagements, interruptions, actions, today):
         cycle_start = add_years(since, STEP_YEARS * (cycles - 1))
         if cycles > 1 or eng.step > 1:
             warnings.append(
-                f"No step increment is recorded here since this position started on {since:%b %d, %Y}. "
+                f"No salary increase (step) is recorded here since this position started on {since:%b %d, %Y}. "
                 f"Increments due before {tracking_start():%b %d, %Y} are assumed granted on paper: "
                 "check the service record for the date of the last one."
             )
