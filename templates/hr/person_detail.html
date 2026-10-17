@@ -123,6 +123,39 @@
   </div>
 </div>
 
+{% if salary %}
+<!-- Salary milestones: HRMO and Auditor only (DECISIONS SA4) -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
+    <span>Salary milestones</span>
+    <a class="small" href="{% url 'salary_action_list' %}">Salary Actions</a>
+  </div>
+  <div class="card-body p-3 small">
+    <div class="row g-2">
+      <div class="col-12 col-md-6">
+        <div class="text-muted">Next salary increase (step)</div>
+        {% with nxt=salary.next.step %}
+          {% if nxt %}<div class="fw-semibold">{{ nxt.due_date|date:"M d, Y" }} · step {{ nxt.from_step }} → {{ nxt.to_step }}</div>
+          {% else %}<div>None (not plantilla, or already at step 8).</div>{% endif %}
+        {% endwith %}
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="text-muted">Next loyalty award</div>
+        {% with nxt=salary.next.loyalty %}
+          {% if nxt %}<div class="fw-semibold">{{ nxt.due_date|date:"M d, Y" }} · {{ nxt.years }} years (counting from {{ nxt.service_from|date:"M d, Y" }})</div>
+          {% else %}<div>None (no current appointive service).</div>{% endif %}
+        {% endwith %}
+      </div>
+    </div>
+    {% if salary.open_cases %}
+      <div class="mt-2">Open cases:
+        {% for case in salary.open_cases %}<a href="{% url 'salary_action_detail' case.pk %}">{{ case.get_kind_display }}, due {{ case.due_date|date:"M d, Y" }} ({{ case.get_status_display }})</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Career History & Engagements -->
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">

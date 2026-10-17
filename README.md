@@ -178,9 +178,24 @@ Pick the project and the `web` service. Then:
 railway ssh -- sh scripts/railway_demo_setup.sh
 ```
 
-This loads offices, roles, ~420 fake people and calendar samples, and prints the
+This loads offices, roles, ~420 fake people, calendar samples, org chart reporting
+lines (empty ones only), a few long careers for the Salary Actions tracker and sample
+lapsed contracts, retirements and a sample quarterly meeting for the trackers, and prints the
 `demo_*` usernames with **one-time passwords, shown once**. Copy them now. Run it again
 later safely; add `--new-passwords` to reissue passwords.
+
+### 6b. Optional: run the salary actions check every morning
+
+The Salary Actions tracker runs its check by itself when someone opens it and the last
+run is more than 20 hours old, so this step is optional. To have cases ready before
+anyone opens the page:
+
+1. **+ Create → GitHub Repo →** the same repo. Rename it `salary-check`. No domain, no volume.
+2. **Settings → Custom Start Command:** `python manage.py check_salary_actions`
+3. **Settings → Cron Schedule:** `0 22 * * *` (Railway uses UTC: 06:00 in the Philippines).
+4. **Variables:** the same as `web` (it connects as `hr_app`, data only).
+
+Each run logs `Salary actions check: N new case(s), M updated.` and is safe to repeat.
 
 ### 7. Check the client IP setting (important)
 

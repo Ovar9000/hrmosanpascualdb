@@ -107,6 +107,48 @@ it on public Wi-Fi.
 7. **`demo_head`** sees only the Treasurer's Office: its staff's leave, starts and ends, plus
    events for everyone.
 
+### 3b. Org charts (2 min) · `demo_hrmo`, then `demo_employee`
+
+1. **Org Chart** in the menu → the municipal office tree with each head and headcount.
+   Click the **Treasurer's Office** → its staff chart. JO and COS staff are counted under
+   the chart, not drawn.
+2. **Export → PowerPoint** and open it: drag a box, the lines follow. **Export → PDF / PNG**
+   for printing or chat.
+3. **Edit reporting lines** → change who one person reports to → Save. The chart redraws;
+   the change is in the Audit Trail.
+4. Log in as **`demo_employee`** → **My Office**: "You", your supervisor, the office head
+   and your coworkers. Names and positions only; other offices are refused.
+
+### 3c. Salary actions (2 min) · `demo_hrmo`
+
+1. **Salary Actions** in the menu (the badge counts what is due) → the **Due** tab:
+   step increments found by the daily check, each with what HRMO must still verify
+   ("increments before Jan 2026 assumed granted on paper").
+2. Filter **Type → Loyalty award** → open one → the counted service and the warning about
+   service before the first record.
+3. **Start review** → tick the checklist → **Send for the Mayor's signature** →
+   **Record as issued** with a NOSI number. For a step increment, the appointment's step
+   goes up by one and the change is in the Audit Trail.
+4. On a step increment case, **record leave without pay** → the due date moves later.
+5. **Calendar** → the purple *Salary* entries (HRMO and Auditor only).
+
+### 3d. Reminder lists (2 min) · `demo_hrmo`
+
+1. **Tracker → Contract renewals:** one contract shows **Lapsed** (ended 10 days ago, still
+   active). **Renew** or **End** opens the usual screens. **Export to Excel** for the contracts unit.
+2. **Tracker → Retirement:** one person past 65, one turning 65 in three months, one who can
+   retire optionally. The 65th birthdays are also on the **Calendar** ("Retires").
+3. **Tracker → Year-end bonus:** this year's list as of October 31, with who gets the full
+   bonus, a prorated cash gift, or nothing. No amounts: the Excel file goes to payroll.
+
+### 3e. Required meetings (1 min) · `demo_hrmo`
+
+1. **Tracker → Required meetings:** the sample quarterly meeting shows this quarter as
+   *Not scheduled yet*, with earlier quarters held and last quarter **missed**.
+2. **Open** this quarter → set a date → it appears on the **Calendar** for everyone.
+3. **+ Add a required meeting** → choose *Chosen people* to show a committee with its own members.
+   *Point:* ask the HRMO head which meeting she meant and its legal basis, and set it up live.
+
 ### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.

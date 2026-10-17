@@ -6,3 +6,5 @@ Faker>=40,<41
 Pillow>=10.4,<11
 gunicorn>=23,<24
 whitenoise>=6.8,<7
+python-pptx>=1.0,<2
+reportlab>=4.2,<5

@@ -228,11 +228,23 @@ class Engagement(models.Model):
         LUMP_SUM = "lump_sum", "Lump sum"
 
     LEAVE_CREDIT_TYPES = [Type.PLANTILLA, Type.CASUAL]
+    # Types drawn as boxes on the org chart; JO, COS and project-based are only counted (DECISIONS O1).
+    CHART_TYPES = [Type.ELECTED, Type.PLANTILLA, Type.CASUAL, Type.CONTRACTUAL]
 
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="engagements")
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="engagements")
     type = models.CharField(max_length=20, choices=Type.choices)
     position_title = models.CharField(max_length=150)
+    # Org chart reporting line: an active chart-type engagement in the same office (DECISIONS O2).
+    # Empty means top of the office chart (usually the office head).
+    reports_to = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="direct_reports",
+        verbose_name="Reports to",
+    )
     # Payroll *input* only (DECISIONS D2). Visible to HRMO and auditors only (R6).
     rate = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     rate_basis = models.CharField(max_length=20, choices=RateBasis.choices, blank=True)
@@ -321,6 +333,10 @@ class Engagement(models.Model):
         overrides the stored value, so HRMO can record Plantilla/Casual without leave.
         """
         return engagement_type in cls.LEAVE_CREDIT_TYPES
+
+    @property
+    def on_chart(self):
+        return self.type in self.CHART_TYPES
 
 
 # --- Documents (kept simple until the survey, DECISIONS F1) ------------------
@@ -555,6 +571,263 @@ class CalendarEvent(models.Model):
 
     def __str__(self):
         return f"{self.get_kind_display()}: {self.title} ({self.start_date})"
+
+
+# --- Salary actions: step increments and loyalty awards (DECISIONS SA1-SA6) --------
+
+
+class ServiceInterruption(models.Model):
+    """Leave without pay or suspension. Pushes back step increment and loyalty due dates (SA2)."""
+
+    class Kind(models.TextChoices):
+        LWOP = "lwop", "Leave without pay"
+        SUSPENSION = "suspension", "Suspension"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="service_interruptions")
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    notes = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["start_date"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_date__gte=F("start_date")),
+                name="serviceinterruption_end_after_start",
+                violation_error_message="End date cannot be before start date.",
+            ),
+        ]
+
+    @property
+    def days(self):
+        return (self.end_date - self.start_date).days + 1
+
+    def __str__(self):
+        return f"{self.get_kind_display()} {self.start_date} – {self.end_date}"
+
+
+class SalaryAction(models.Model):
+    """One step increment or loyalty award case, found by the daily check and worked by HRMO.
+
+    The check only finds and dates cases; HRMO reviews them, the Mayor signs the NOSI on
+    paper, and only an Issued step increment changes Engagement.step (SA3, SA4).
+    """
+
+    class Kind(models.TextChoices):
+        STEP_INCREMENT = "step", "Salary increase (step)"
+        LOYALTY = "loyalty", "Loyalty award"
+
+    class Status(models.TextChoices):
+        UPCOMING = "upcoming", "Upcoming"
+        DUE = "due", "Due"
+        REVIEW = "review", "Under review"
+        SIGNATURE = "signature", "Awaiting signature"
+        ISSUED = "issued", "Issued"
+        DEFERRED = "deferred", "Deferred"
+        NOT_ELIGIBLE = "not_eligible", "Not eligible"
+
+    # The daily check may still move these cases' dates; once HRMO starts work it never does.
+    AUTO_STATUSES = [Status.UPCOMING, Status.DUE]
+    OPEN_STATUSES = [Status.UPCOMING, Status.DUE, Status.REVIEW, Status.SIGNATURE, Status.DEFERRED]
+    CLOSED_STATUSES = [Status.ISSUED, Status.NOT_ELIGIBLE]
+
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="salary_actions")
+    # The appointment the case belongs to (its step for increments; current office for awards).
+    engagement = models.ForeignKey(Engagement, on_delete=models.PROTECT, related_name="salary_actions")
+    # Identifies the milestone so the check never opens the same case twice,
+    # e.g. "step:2023-05-01:3" or "loyalty:10".
+    milestone = models.CharField(max_length=60)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPCOMING, db_index=True)
+    service_from = models.DateField(help_text="Start of the service counted for this milestone.")
+    due_date = models.DateField(db_index=True)
+    extension_days = models.PositiveIntegerField(default=0, help_text="Leave without pay and suspension days.")
+    from_step = models.PositiveSmallIntegerField(null=True, blank=True)
+    to_step = models.PositiveSmallIntegerField(null=True, blank=True)
+    years = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Loyalty milestone in years.")
+    warnings = models.JSONField(default=list, blank=True)
+    checklist = models.JSONField(default=dict, blank=True)
+    deferred_until = models.DateField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    nosi_number = models.CharField("NOSI / award number", max_length=50, blank=True)
+    signed_on = models.DateField(null=True, blank=True)
+    effective_date = models.DateField(null=True, blank=True)
+    issued_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["due_date", "pk"]
+        permissions = [
+            ("manage_salary_actions", "Can review and issue step increments and loyalty awards"),
+            ("view_salary_actions", "Can view step increment and loyalty award cases"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["person", "kind", "milestone"], name="salaryaction_one_case_per_milestone"),
+            models.CheckConstraint(
+                condition=Q(kind="loyalty", years__isnull=False, from_step__isnull=True, to_step__isnull=True)
+                | Q(kind="step", years__isnull=True, from_step__isnull=False, to_step__isnull=False),
+                name="salaryaction_kind_fields",
+                violation_error_message="Step increments need from/to steps; loyalty awards need years.",
+            ),
+            models.CheckConstraint(
+                condition=Q(to_step__isnull=True) | Q(to_step__range=(2, 8)),
+                name="salaryaction_to_step_range",
+                violation_error_message="A step increment goes to step 2 to 8.",
+            ),
+        ]
+
+    def __str__(self):
+        what = f"Step {self.from_step} → {self.to_step}" if self.kind == self.Kind.STEP_INCREMENT else f"{self.years}-year loyalty award"
+        return f"{self.person} – {what} (due {self.due_date})"
+
+    @property
+    def is_open(self):
+        return self.status in self.OPEN_STATUSES
+
+
+class SalaryCheckRun(models.Model):
+    """One row per run of the daily check, so the tracker can say when it last ran."""
+
+    ran_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=20, help_text="'command', 'button' or 'page'")
+    created = models.PositiveIntegerField(default=0)
+    updated = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-ran_at"]
+
+
+# --- Required meetings (DECISIONS MT1-MT5) ------------------------------------------
+
+
+class MeetingSeries(models.Model):
+    """A meeting the LGU must hold on a schedule, e.g. a committee that meets every quarter."""
+
+    class Frequency(models.TextChoices):
+        MONTHLY = "monthly", "Monthly"
+        QUARTERLY = "quarterly", "Quarterly"
+        SEMESTRAL = "semestral", "Every six months"
+        ANNUAL = "annual", "Yearly"
+
+    class Audience(models.TextChoices):
+        EVERYONE = "everyone", "Everyone"
+        OFFICE = "office", "One office"
+        CHOSEN = "chosen", "Chosen people"
+
+    MONTHS = {Frequency.MONTHLY: 1, Frequency.QUARTERLY: 3, Frequency.SEMESTRAL: 6, Frequency.ANNUAL: 12}
+
+    name = models.CharField(max_length=200)
+    legal_basis = models.CharField(
+        max_length=255, blank=True, help_text="The circular, ordinance or memo that requires it."
+    )
+    frequency = models.CharField(max_length=20, choices=Frequency.choices, default=Frequency.QUARTERLY)
+    audience = models.CharField(max_length=20, choices=Audience.choices, default=Audience.EVERYONE)
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="meeting_series",
+        help_text="Required when the audience is one office.",
+    )
+    members = models.ManyToManyField(Person, blank=True, related_name="meeting_series")
+    starts_on = models.DateField(help_text="Tracking starts with the period that contains this date.")
+    is_active = models.BooleanField(default=True, help_text="Untick to stop tracking; history is kept.")
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "meeting series"
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(audience="office") | Q(office__isnull=False),
+                name="meetingseries_office_audience_has_office",
+                violation_error_message="Choose the office whose staff attend.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Meeting(models.Model):
+    """One period of a series (e.g. Q3 2026): when it was scheduled, held, and who attended.
+
+    Status is worked out from the dates, so nothing has to be closed by hand (MT2).
+    """
+
+    class Status(models.TextChoices):
+        DUE = "due", "Not scheduled yet"
+        SCHEDULED = "scheduled", "Scheduled"
+        HELD = "held", "Held"
+        NOT_HELD = "not_held", "Not held (reason given)"
+        MISSED = "missed", "Missed"
+        UPCOMING = "upcoming", "Not started"
+
+    series = models.ForeignKey(MeetingSeries, on_delete=models.PROTECT, related_name="meetings")
+    period_start = models.DateField()
+    period_end = models.DateField()
+    scheduled_on = models.DateField(null=True, blank=True)
+    scheduled_time = models.TimeField(null=True, blank=True)
+    venue = models.CharField(max_length=200, blank=True)
+    held_on = models.DateField(null=True, blank=True)
+    attendees = models.ManyToManyField(Person, blank=True, related_name="meetings_attended")
+    attendance_count = models.PositiveIntegerField(
+        null=True, blank=True, help_text="For meetings of everyone: how many attended."
+    )
+    minutes_location = models.CharField(
+        max_length=255, blank=True, help_text="Where the signed minutes and attendance sheet are filed."
+    )
+    minutes_summary = models.TextField(blank=True)
+    not_held_reason = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["series__name", "-period_start"]
+        constraints = [
+            models.UniqueConstraint(fields=["series", "period_start"], name="meeting_one_per_period"),
+            models.CheckConstraint(
+                condition=Q(period_end__gte=F("period_start")),
+                name="meeting_period_end_after_start",
+                violation_error_message="The period cannot end before it starts.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.series.name} ({self.period_label})"
+
+    @property
+    def period_label(self):
+        months = self.series.MONTHS[self.series.frequency]
+        if months == 3:
+            return f"Q{(self.period_start.month - 1) // 3 + 1} {self.period_start.year}"
+        if months == 6:
+            return f"{'Jan–Jun' if self.period_start.month == 1 else 'Jul–Dec'} {self.period_start.year}"
+        if months == 12:
+            return str(self.period_start.year)
+        return self.period_start.strftime("%B %Y")
+
+    def status_on(self, today):
+        if self.held_on:
+            return self.Status.HELD
+        if self.not_held_reason:
+            return self.Status.NOT_HELD
+        if today < self.period_start:
+            return self.Status.UPCOMING
+        if today > self.period_end:
+            return self.Status.MISSED
+        return self.Status.SCHEDULED if self.scheduled_on else self.Status.DUE
 
 
 # --- User Profile -----------------------------------------------------------

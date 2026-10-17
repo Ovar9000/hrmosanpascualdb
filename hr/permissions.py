@@ -284,3 +284,62 @@ def get_visible_offices(user):
 
     return Office.objects.none()
 
+
+
+# --- Org charts (DECISIONS O3) ------------------------------------------------
+
+
+def can_view_office_tree(user):
+    """The municipal office tree (office names and head titles): anyone with HR access or an office.
+
+    Head names and staff counts on it follow can_view_office_chart per office.
+    """
+    if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
+        return False
+    return has_all_office_scope(user) or get_user_office(user) is not None
+
+
+def can_view_office_chart(user, office):
+    """An office's staff chart: offices the role can already see, plus the user's own office.
+
+    The second part is employee self-service, so a new hire can see their head and coworkers
+    (names and positions only, see can_view_chart_types).
+    """
+    if not user or not user.is_authenticated or office is None:
+        return False
+    if is_sysadmin(user) and not user.is_superuser:
+        return False
+    if get_visible_offices(user).filter(pk=office.pk).exists():
+        return True
+    own = get_user_office(user)
+    return own is not None and own.pk == office.pk
+
+
+def can_view_chart_types(user):
+    """Appointment type on chart boxes: the roles that already see it on office pages (R4)."""
+    return has_all_office_scope(user) or is_office_head(user) or is_office_staff(user)
+
+
+# --- Salary actions (DECISIONS SA4) -------------------------------------------
+
+
+def can_manage_salary_actions(user):
+    """Review and issue step increments and loyalty awards: HRMO."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.has_perm("hr.manage_salary_actions") or is_hrmo(user)
+
+
+def can_view_salary_actions(user):
+    """See the tracker and cases: HRMO and Auditor. Steps are pay data (R6), so no office roles."""
+    if not user or not user.is_authenticated:
+        return False
+    return can_manage_salary_actions(user) or user.has_perm("hr.view_salary_actions") or is_auditor(user)
+
+
+def can_view_trackers(user):
+    """Contract renewals, retirement and year-end bonus lists (DECISIONS RM4): they use birthdates
+    and pay eligibility, so the same audience as salary actions: HRMO and Auditor."""
+    return can_view_salary_actions(user)

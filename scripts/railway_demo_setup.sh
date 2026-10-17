@@ -35,4 +35,13 @@ fi
 echo "==> Calendar sample events around today"
 DJANGO_DEBUG=1 manage seed_demo_calendar | tail -n 1
 
+echo "==> Org chart reporting lines (fills empty ones only)"
+DJANGO_DEBUG=1 manage seed_reporting_lines | tail -n 1
+
+echo "==> Reminders: sample lapsed contracts and retirements"
+DJANGO_DEBUG=1 manage seed_demo_reminders | tail -n 1
+
+echo "==> Salary actions: sample long careers, then the daily check"
+DJANGO_DEBUG=1 manage seed_demo_salary_history | tail -n 1
+
 manage verify_audit_chain >/dev/null && echo "==> Audit hash chain verifies. Done."

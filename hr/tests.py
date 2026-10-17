@@ -33,9 +33,14 @@ from hr.models import (
     LeaveCredit,
     LeaveRequest,
     LeaveType,
+    Meeting,
+    MeetingSeries,
     Office,
     Person,
     Project,
+    SalaryAction,
+    SalaryCheckRun,
+    ServiceInterruption,
     UserProfile,
 )
 from hr.sequences import get_next_employee_no, sync_employee_sequence
@@ -3794,3 +3799,808 @@ class HostedDeploymentTestCase(TestCase):
         # Not configured: X-Real-IP is never read.
         with override_settings(TRUSTED_PROXIES=["100.0.0.0/8"], CLIENT_IP_HEADER=""):
             self.assertEqual(get_client_ip(rf.get("/", REMOTE_ADDR="100.64.0.3", **headers)), "152.233.0.9")
+
+
+class OrgChartTestCase(TestCase):
+    """O1-O5: office tree, staff charts, reporting lines, My Office and exports."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 500
+
+    def setUp(self):
+        self.setUp_roles()
+        self.boss = self._eng("Dagohoy", "Francisco", Engagement.Type.ELECTED, "Municipal Mayor")
+        self.eng_a.reports_to = self.boss
+        self.eng_a.save()
+        self.clerk = self._eng("Silang", "Gabriela", Engagement.Type.CASUAL, "Administrative Aide IV", reports_to=self.eng_a)
+        self.jo = self._eng("Luna", "Antonio", Engagement.Type.JOB_ORDER, "Job Order Support Staff", reports_to=self.eng_a)
+        self.jo_user = get_user_model().objects.create_user("emp_jo", "jo@test.com", "jopass12345")
+        UserProfile.objects.create(user=self.jo_user, person=self.jo.person)
+
+    def _eng(self, last, first, eng_type, title, office=None, reports_to=None):
+        OrgChartTestCase._seq += 1
+        person = Person.objects.create(
+            employee_no=f"SP-0{OrgChartTestCase._seq}", last_name=last, first_name=first, birthdate=date(1985, 1, 1)
+        )
+        return Engagement.objects.create(
+            person=person, office=office or self.office_a, type=eng_type, position_title=title,
+            start_date=date(2025, 1, 1), status=Engagement.Status.ACTIVE, reports_to=reports_to,
+        )
+
+    def _chart(self, user, office=None):
+        self.client.force_login(user)
+        return self.client.get(f"/offices/{(office or self.office_a).pk}/chart/")
+
+    # --- What is drawn ----------------------------------------------------------------
+
+    def test_staff_chart_draws_chart_types_and_only_counts_job_orders(self):
+        from hr.orgchart import build_staff_chart
+
+        staff = build_staff_chart(self.office_a, show_types=True)
+        self.assertEqual([n.title for n in staff.chart.nodes], ["Francisco Dagohoy", "Jose Rizal", "Gabriela Silang"])
+        self.assertEqual(staff.head, self.boss)
+        self.assertEqual(staff.not_drawn, {"Job Order": 1})
+        self.assertEqual(len(staff.chart.edges), 2)
+
+    def test_line_to_an_ended_appointment_starts_a_new_top_box(self):
+        from hr.orgchart import build_staff_chart
+
+        self.boss.status = Engagement.Status.ENDED
+        self.boss.save()
+        staff = build_staff_chart(self.office_a)
+        self.assertEqual(staff.roots, [self.eng_a])
+        self.assertEqual(staff.broken_lines, [self.eng_a])
+
+    def test_layout_hangs_many_leaves_without_overlap(self):
+        from hr.orgchart import ChartNode, layout
+
+        root = ChartNode(title="Head", children=[ChartNode(title=f"Staff {i}", subtitle="Clerk") for i in range(9)])
+        chart = layout([root])
+        self.assertEqual({e.kind for e in chart.edges}, {"left", "right"})
+        boxes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in chart.nodes]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                self.assertFalse(a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3], (a, b))
+
+    def test_long_text_is_wrapped_and_shortened(self):
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from hr.orgchart import BOLD, wrap
+
+        lines = wrap("Municipal Social Welfare and Development Office of the Municipality of San Pascual", BOLD, 11, 180, 2)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[-1].endswith("…"))
+        self.assertTrue(all(stringWidth(line, BOLD, 11) <= 180 for line in lines))
+
+    def test_office_tree_follows_office_parents(self):
+        from hr.orgchart import build_office_tree
+
+        chart = build_office_tree()
+        self.assertEqual(len(chart.nodes), Office.objects.count() + 1)  # plus the municipality box
+        self.assertEqual(len(chart.edges), Office.objects.count())
+
+    # --- Who sees what (O3) -------------------------------------------------------------
+
+    def test_employee_sees_own_office_chart_only_with_names_and_positions(self):
+        resp = self._chart(self.emp_a_user)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Francisco Dagohoy")
+        self.assertContains(resp, ">YOU<")
+        self.assertNotContains(resp, ">Elected<")  # no appointment type for employees
+        self.assertNotContains(resp, f"/people/{self.boss.person_id}/")  # no links to others' records
+        self.assertEqual(self._chart(self.emp_a_user, self.office_b).status_code, 403)
+        self.assertEqual(self.client.get(f"/offices/{self.office_b.pk}/chart/export/png/").status_code, 403)
+
+    def test_new_job_order_hire_sees_supervisor_head_and_coworkers(self):
+        self.client.force_login(self.jo_user)
+        resp = self.client.get("/my-office/", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["supervisor"], self.eng_a)
+        self.assertEqual(resp.context["staff"].head, self.boss)
+        self.assertContains(resp, "Your coworkers in this office (3)")
+        self.assertContains(resp, "Gabriela Silang")
+
+    def test_office_roles_see_types_and_links_hrmo_sees_every_office(self):
+        resp = self._chart(self.staff_a)
+        self.assertContains(resp, ">Elected<")
+        self.assertContains(resp, f"/people/{self.boss.person_id}/")
+        self.assertEqual(self._chart(self.staff_a, self.office_b).status_code, 403)
+        self.assertEqual(self._chart(self.hrmo_user, self.office_b).status_code, 200)
+        self.assertNotContains(self._chart(self.hrmo_user), "SG 22")  # never pay on charts
+
+    def test_sysadmin_and_people_without_an_office_get_no_charts(self):
+        self.assertEqual(self._chart(self.sysadmin).status_code, 403)
+        self.assertEqual(self.client.get("/offices/chart/").status_code, 403)
+        self.client.force_login(self.delegate_user)
+        self.assertEqual(self.client.get("/offices/chart/").status_code, 403)
+        self.assertRedirects(self.client.get("/my-office/"), "/", fetch_redirect_response=False)
+
+    def test_office_tree_shows_heads_only_for_visible_offices(self):
+        self.client.force_login(self.staff_a)
+        resp = self.client.get("/offices/chart/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Francisco Dagohoy")  # own office head
+        self.assertContains(resp, "Office of the Municipal Treasurer")
+        self.assertNotContains(resp, f"/offices/{self.office_b.pk}/chart/")
+
+    # --- Exports (O4) --------------------------------------------------------------------
+
+    def test_exports_return_files_and_are_audit_logged(self):
+        self.client.force_login(self.staff_a)
+        magic = {"png": b"\x89PNG", "pdf": b"%PDF", "pptx": b"PK"}
+        for fmt, start in magic.items():
+            resp = self.client.get(f"/offices/{self.office_a.pk}/chart/export/{fmt}/")
+            self.assertEqual(resp.status_code, 200, fmt)
+            self.assertTrue(resp.content.startswith(start), fmt)
+            self.assertIn(f'.{fmt}"', resp["Content-Disposition"])
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="Office").count(), 3)
+        self.assertEqual(self.client.get(f"/offices/{self.office_a.pk}/chart/export/svg/").status_code, 404)
+        self.client.force_login(self.hrmo_user)
+        for fmt in magic:
+            self.assertEqual(self.client.get(f"/offices/chart/export/{fmt}/").status_code, 200)
+
+    def test_pptx_boxes_are_editable_and_lines_are_glued(self):
+        from pptx import Presentation
+        from hr.orgchart import build_staff_chart, render_pptx
+
+        prs = Presentation(BytesIO(render_pptx(build_staff_chart(self.office_a).chart, "Test")))
+        shapes = list(prs.slides[0].shapes)
+        boxes = [s for s in shapes if s.shape_type == 1]  # autoshapes
+        self.assertEqual(
+            sorted(b.text_frame.paragraphs[0].text for b in boxes),
+            ["Francisco Dagohoy", "Gabriela Silang", "Jose Rizal"],
+        )
+        connectors = [s for s in shapes if s._element.tag.endswith("}cxnSp")]
+        self.assertEqual(len(connectors), 2)
+        box_ids = {b.shape_id for b in boxes}
+        for cxn in connectors:
+            glue = cxn._element.nvCxnSpPr.cNvCxnSpPr
+            self.assertIn(glue.stCxn.id, box_ids)
+            self.assertIn(glue.endCxn.id, box_ids)
+
+    def test_connector_frame_maps_start_and_end(self):
+        from hr.orgchart import connector_frame
+
+        for start, end in (((100, 50), (40, 120)), ((100, 50), (180, 120)), ((10, 0), (30, 40))):
+            rot, _flip_h, _flip_v, (x, y, w, h) = connector_frame(start, end)
+            self.assertIn(rot, (90, 270))  # first leg runs down
+            self.assertAlmostEqual(x + w / 2, (start[0] + end[0]) / 2)
+            self.assertAlmostEqual(y + h / 2, (start[1] + end[1]) / 2)
+
+    # --- Editing reporting lines (O2) -----------------------------------------------------
+
+    def _post_lines(self, user, data):
+        self.client.force_login(user)
+        return self.client.post(f"/offices/{self.office_a.pk}/chart/edit/", data)
+
+    def test_hrmo_edits_lines_with_version_check_and_audit(self):
+        resp = self._post_lines(self.hrmo_user, {
+            f"reports_to_{self.clerk.pk}": str(self.boss.pk), f"version_{self.clerk.pk}": str(self.clerk.version),
+        })
+        self.assertRedirects(resp, f"/offices/{self.office_a.pk}/chart/", fetch_redirect_response=False)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.boss)
+        self.assertEqual(self.clerk.version, 2)
+        self.eng_a.refresh_from_db()
+        self.assertEqual(self.eng_a.reports_to, self.boss)  # rows not posted stay as they were
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.UPDATE, model_name="Engagement", object_id=str(self.clerk.pk)
+        ).exists())
+
+        stale = self._post_lines(self.hrmo_user, {f"reports_to_{self.clerk.pk}": "", f"version_{self.clerk.pk}": "1"})
+        self.assertRedirects(stale, f"/offices/{self.office_a.pk}/chart/edit/", fetch_redirect_response=False)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.boss)
+
+    def test_cycles_other_offices_and_job_order_supervisors_are_refused(self):
+        bad = [
+            {f"reports_to_{self.boss.pk}": str(self.clerk.pk), f"version_{self.boss.pk}": "1"},  # loop
+            {f"reports_to_{self.clerk.pk}": str(self.eng_b.pk), f"version_{self.clerk.pk}": "1"},  # other office
+            {f"reports_to_{self.clerk.pk}": str(self.jo.pk), f"version_{self.clerk.pk}": "1"},  # JO as supervisor
+            {f"reports_to_{self.clerk.pk}": str(self.clerk.pk), f"version_{self.clerk.pk}": "1"},  # self
+        ]
+        for data in bad:
+            resp = self._post_lines(self.hrmo_user, data)
+            self.assertEqual(resp.status_code, 200, data)
+            self.assertContains(resp, "Nothing was saved")
+        self.boss.refresh_from_db()
+        self.clerk.refresh_from_db()
+        self.assertIsNone(self.boss.reports_to)
+        self.assertEqual(self.clerk.reports_to, self.eng_a)
+
+    def test_only_hrmo_edits_lines(self):
+        for user in (self.head_a, self.staff_a, self.emp_a_user, self.auditor_user):
+            resp = self._post_lines(user, {f"reports_to_{self.clerk.pk}": "", f"version_{self.clerk.pk}": "1"})
+            self.assertEqual(resp.status_code, 403)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.eng_a)
+
+    def test_engagement_form_checks_reports_to(self):
+        form = EngagementForm(instance=self.clerk, user=self.hrmo_user, data={
+            "office": self.office_a.pk, "type": Engagement.Type.CASUAL, "position_title": "Administrative Aide IV",
+            "start_date": "2025-01-01", "status": Engagement.Status.ACTIVE, "reports_to": self.eng_b.pk,
+            "version": self.clerk.version,
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn("same office", form.errors["reports_to"][0])
+
+    def test_ending_an_appointment_hands_reports_to_the_renewal(self):
+        from hr.orgchart import hand_over_direct_reports
+
+        renewal = Engagement.objects.create(
+            person=self.person_a, office=self.office_a, type=Engagement.Type.PLANTILLA,
+            position_title="Executive Assistant V", salary_grade=23, step=1, item_number="SP-MO-002",
+            start_date=date(2026, 1, 1), status=Engagement.Status.ACTIVE, reports_to=self.boss,
+        )
+        self.eng_a.status = Engagement.Status.ENDED
+        self.eng_a.save()
+        self.assertEqual(hand_over_direct_reports(self.eng_a), 2)
+        self.clerk.refresh_from_db()
+        self.jo.refresh_from_db()
+        self.assertEqual((self.clerk.reports_to, self.jo.reports_to), (renewal, renewal))
+
+    @override_settings(DEBUG=True)
+    def test_seed_reporting_lines_fills_only_empty_lines(self):
+        from io import StringIO
+
+        self.boss.position_title = "Municipal Mayor"
+        self.clerk.reports_to = None
+        self.clerk.save()
+        call_command("seed_reporting_lines", stdout=StringIO())
+        self.clerk.refresh_from_db()
+        self.eng_a.refresh_from_db()
+        self.assertIsNotNone(self.clerk.reports_to)
+        self.assertEqual(self.eng_a.reports_to, self.boss)  # existing line kept
+
+
+@override_settings(SALARY_TRACKING_START="2020-01-01", SALARY_LOOKAHEAD_DAYS=90)
+class SalaryActionsTestCase(TestCase):
+    """SA1-SA6: the daily check, the HRMO workflow and who sees salary actions."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 700
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _person(self, last="Mabini"):
+        SalaryActionsTestCase._seq += 1
+        return Person.objects.create(
+            employee_no=f"SP-0{SalaryActionsTestCase._seq}", last_name=last, first_name="Apolinario",
+            birthdate=date(1985, 1, 1),
+        )
+
+    def _eng(self, person, start, eng_type=Engagement.Type.PLANTILLA, item="SP-MTO-010", step=1, end=None,
+             status=Engagement.Status.ACTIVE, office=None):
+        plantilla = eng_type == Engagement.Type.PLANTILLA
+        return Engagement.objects.create(
+            person=person, office=office or self.office_b, type=eng_type, position_title="Revenue Officer I",
+            salary_grade=11 if plantilla else None, step=step if plantilla else None,
+            item_number=item if plantilla else "", start_date=start, end_date=end, status=status,
+        )
+
+    def _cases(self, person, kind=None):
+        qs = SalaryAction.objects.filter(person=person)
+        return qs.filter(kind=kind) if kind else qs
+
+    # --- The check (SA1, SA2) ---------------------------------------------------------
+
+    def test_step_increment_due_after_three_years_and_check_is_idempotent(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2026, 3, 1))
+        case = self._cases(person, SalaryAction.Kind.STEP_INCREMENT).get()
+        self.assertEqual((case.status, case.due_date, case.from_step, case.to_step),
+                         (SalaryAction.Status.DUE, date(2026, 3, 1), 1, 2))
+        self.assertEqual(run_check(today=date(2026, 3, 2)), (0, 0))
+        self.assertEqual(SalaryCheckRun.objects.count(), 2)
+
+    def test_case_opens_only_within_the_lookahead(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2025, 11, 1))  # 120 days early
+        self.assertFalse(self._cases(person).exists())
+        run_check(today=date(2025, 12, 15))
+        self.assertEqual(self._cases(person).get().status, SalaryAction.Status.UPCOMING)
+        run_check(today=date(2026, 3, 1))
+        self.assertEqual(self._cases(person).get().status, SalaryAction.Status.DUE)
+
+    @override_settings(SALARY_TRACKING_START="2026-01-01")
+    def test_milestones_before_go_live_are_assumed_done_with_a_warning(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2017, 2, 1), step=3)
+        run_check(today=date(2026, 1, 15))
+        case = self._cases(person).get()
+        self.assertEqual(case.due_date, date(2026, 2, 1))  # 2020 and 2023 assumed granted on paper
+        self.assertIn("assumed granted on paper", case.warnings[0])
+
+    def test_renewals_of_the_same_item_count_together_and_promotion_restarts(self):
+        from hr.salary_actions import position_start
+
+        person = self._person()
+        first = self._eng(person, date(2020, 1, 1), end=date(2021, 12, 31), status=Engagement.Status.ENDED)
+        renewal = self._eng(person, date(2022, 1, 1))
+        promoted = self._eng(person, date(2024, 6, 1), item="SP-MTO-020")
+        engs = [first, renewal, promoted]
+        self.assertEqual(position_start(renewal, engs), date(2020, 1, 1))
+        self.assertEqual(position_start(promoted, engs), date(2024, 6, 1))
+
+    def test_leave_without_pay_moves_the_due_date(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2023, 3, 1))
+        ServiceInterruption.objects.create(person=person, kind=ServiceInterruption.Kind.LWOP,
+                                           start_date=date(2024, 1, 10), end_date=date(2024, 1, 19))
+        run_check(today=date(2026, 3, 1))
+        case = self._cases(person).get()
+        self.assertEqual((case.due_date, case.extension_days), (date(2026, 3, 11), 10))
+        self.assertEqual(case.status, SalaryAction.Status.UPCOMING)
+
+    def test_step_eight_and_job_orders_get_no_step_increment(self):
+        from hr.salary_actions import run_check
+
+        top = self._person("Aguinaldo")
+        self._eng(top, date(2023, 3, 1), step=8)
+        jo = self._person("Luna")
+        self._eng(jo, date(2023, 3, 1), eng_type=Engagement.Type.JOB_ORDER)
+        run_check(today=date(2026, 3, 1))
+        self.assertFalse(self._cases(top, SalaryAction.Kind.STEP_INCREMENT).exists())
+        self.assertFalse(self._cases(jo).exists())
+
+    def test_loyalty_counts_unbroken_appointive_service_but_not_job_orders(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2014, 1, 1), eng_type=Engagement.Type.JOB_ORDER, end=date(2015, 12, 31),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2016, 1, 1), eng_type=Engagement.Type.CASUAL, end=date(2019, 12, 31),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2020, 1, 1), step=2)
+        run_check(today=date(2025, 12, 1))
+        case = self._cases(person, SalaryAction.Kind.LOYALTY).get()
+        self.assertEqual((case.years, case.service_from, case.due_date), (10, date(2016, 1, 1), date(2026, 1, 1)))
+        self.assertTrue(any("not counted" in w for w in case.warnings))
+
+    def test_a_gap_restarts_loyalty_counting(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        self._eng(person, date(2016, 1, 1), eng_type=Engagement.Type.CASUAL, end=date(2019, 6, 30),
+                  status=Engagement.Status.ENDED)
+        self._eng(person, date(2020, 1, 1))
+        run_check(today=date(2025, 12, 1))
+        self.assertFalse(self._cases(person, SalaryAction.Kind.LOYALTY).exists())
+
+    def test_cases_that_no_longer_apply_are_closed_and_deferred_ones_come_back(self):
+        from hr.salary_actions import run_check
+
+        person = self._person()
+        eng = self._eng(person, date(2023, 3, 1))
+        run_check(today=date(2026, 2, 1))
+        eng.status = Engagement.Status.RESIGNED
+        eng.save()
+        run_check(today=date(2026, 2, 2))
+        case = self._cases(person).get()
+        self.assertEqual(case.status, SalaryAction.Status.NOT_ELIGIBLE)
+        self.assertIn("daily check", case.decision_note)
+
+        other = self._person("Jacinto")
+        self._eng(other, date(2023, 3, 1))
+        run_check(today=date(2026, 3, 1))
+        deferred = self._cases(other).get()
+        deferred.status, deferred.deferred_until = SalaryAction.Status.DEFERRED, date(2026, 4, 1)
+        deferred.save()
+        run_check(today=date(2026, 4, 1))
+        deferred.refresh_from_db()
+        self.assertEqual(deferred.status, SalaryAction.Status.DUE)
+
+    # --- Workflow (SA3) -----------------------------------------------------------------
+
+    def _due_case(self):
+        from django.utils import timezone
+        from hr.salary_actions import add_years, run_check
+
+        person = self._person()
+        eng = self._eng(person, add_years(timezone.localdate(), -3))
+        run_check()
+        return self._cases(person).get(), eng
+
+    def _act(self, case, action, user=None, **data):
+        self.client.force_login(user or self.hrmo_user)
+        case.refresh_from_db()
+        payload = {"action": action, "version": str(case.version), **data}
+        return self.client.post(f"/salary-actions/{case.pk}/", payload, follow=True)
+
+    def test_hrmo_review_signature_and_issue_raises_the_step(self):
+        case, eng = self._due_case()
+        self._act(case, "start_review")
+        resp = self._act(case, "signature", check=["rating"])
+        self.assertContains(resp, "Tick every checklist item first")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.REVIEW)
+        self._act(case, "signature", check=["rating", "no_suspension", "lwop", "funds"])
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.SIGNATURE)
+        self._act(case, "issue", nosi_number="NOSI-2026-001", signed_on="2026-01-05", effective_date=str(case.due_date))
+        case.refresh_from_db()
+        eng.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.ISSUED)
+        self.assertEqual((eng.step, eng.version), (2, 2))
+        self.assertEqual(case.issued_by, self.hrmo_user)
+        self.assertTrue(AuditLog.objects.filter(model_name="Engagement", object_id=str(eng.pk),
+                                                action=AuditLog.Action.UPDATE).exists())
+        self.assertTrue(AuditLog.objects.filter(model_name="SalaryAction", object_id=str(case.pk)).exists())
+
+        from hr.salary_actions import next_milestones
+        from hr.salary_actions import add_years
+        self.assertEqual(next_milestones(case.person)["step"]["due_date"], add_years(case.effective_date, 3))
+
+    def test_issue_is_refused_when_the_step_changed_meanwhile(self):
+        case, eng = self._due_case()
+        case.status = SalaryAction.Status.SIGNATURE
+        case.save()
+        eng.step = 3
+        eng.save()
+        resp = self._act(case, "issue", nosi_number="N-1", signed_on="2026-01-05", effective_date="2026-01-05")
+        self.assertContains(resp, "is now at step 3")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.SIGNATURE)
+
+    def test_stale_version_defer_and_not_eligible_need_reasons(self):
+        case, _eng = self._due_case()
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(f"/salary-actions/{case.pk}/", {"action": "start_review", "version": "99"}, follow=True)
+        self.assertContains(resp, "Someone changed this case")
+        resp = self._act(case, "defer", deferred_until="2099-01-01")
+        self.assertContains(resp, "Give a reason")
+        resp = self._act(case, "defer", deferred_until="2099-01-01", note="Pending IPCR")
+        case.refresh_from_db()
+        self.assertEqual((case.status, case.deferred_until), (SalaryAction.Status.DEFERRED, date(2099, 1, 1)))
+        self._act(case, "not_eligible", note="Unsatisfactory rating")
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.NOT_ELIGIBLE)
+
+    def test_recording_leave_without_pay_re_dates_open_cases(self):
+        case, _eng = self._due_case()
+        self.client.force_login(self.hrmo_user)
+        start = case.service_from + __import__("datetime").timedelta(days=30)
+        self.client.post(f"/salary-actions/{case.pk}/interruptions/", {
+            "kind": "lwop", "start_date": start.isoformat(),
+            "end_date": (start + __import__("datetime").timedelta(days=4)).isoformat(), "notes": "",
+        })
+        case.refresh_from_db()
+        self.assertEqual(case.extension_days, 5)
+        self.assertEqual(case.status, SalaryAction.Status.UPCOMING)
+
+    # --- Who sees what (SA4) ------------------------------------------------------------
+
+    def test_only_hrmo_works_cases_and_auditor_reads_them(self):
+        case, _eng = self._due_case()
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/salary-actions/").status_code, 403, user)
+            self.assertEqual(self.client.get(f"/salary-actions/{case.pk}/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertContains(self.client.get("/salary-actions/"), case.person.full_name)
+        self.assertNotContains(self.client.get(f"/salary-actions/{case.pk}/"), "Start review")
+        self.assertEqual(self._act(case, "start_review", user=self.auditor_user).status_code, 403)
+        self.assertEqual(self.client.post("/salary-actions/check/").status_code, 403)
+
+    def test_tracker_runs_the_check_when_it_has_not_run_today(self):
+        from django.utils import timezone
+        from hr.salary_actions import add_years
+
+        person = self._person()
+        self._eng(person, add_years(timezone.localdate(), -3))
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get("/salary-actions/")
+        self.assertContains(resp, person.full_name)
+        self.assertEqual(SalaryCheckRun.objects.get().source, "page")
+        self.client.get("/salary-actions/")
+        self.assertEqual(SalaryCheckRun.objects.count(), 1)
+
+    def test_calendar_and_person_page_show_milestones_to_hrmo_only(self):
+        case, _eng = self._due_case()
+        month = f"?month={case.due_date:%Y-%m}"
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "step 1 → 2")
+        self.assertContains(self.client.get(f"/people/{case.person_id}/"), "Next salary increase (step)")
+        self.client.force_login(self.head_a)
+        self.assertNotContains(self.client.get("/calendar/" + month), "step 1 → 2")
+
+
+@override_settings(RENEWAL_LOOKAHEAD_DAYS=45)
+class RemindersTestCase(TestCase):
+    """RM1-RM5: contract renewals, retirement and year-end bonus lists."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 900
+    TODAY = date(2026, 10, 17)
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _person(self, last="Del Pilar", birthdate=date(1985, 1, 1)):
+        RemindersTestCase._seq += 1
+        return Person.objects.create(employee_no=f"SP-0{RemindersTestCase._seq}", last_name=last,
+                                     first_name="Gregorio", birthdate=birthdate)
+
+    def _eng(self, person, eng_type, start, end=None, status=Engagement.Status.ACTIVE, item="SP-MTO-050"):
+        plantilla = eng_type == Engagement.Type.PLANTILLA
+        return Engagement.objects.create(
+            person=person, office=self.office_b, type=eng_type, position_title="Clerk",
+            salary_grade=8 if plantilla else None, step=1 if plantilla else None,
+            item_number=item if plantilla else "", start_date=start, end_date=end, status=status,
+        )
+
+    # --- Renewals (RM1) -------------------------------------------------------------------
+
+    def test_renewals_list_lapsed_and_soon_and_drop_renewed(self):
+        from hr.reminders import renewal_rows
+
+        lapsed = self._eng(self._person("Lapsed"), Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 10, 7))
+        soon = self._eng(self._person("Soon"), Engagement.Type.CONTRACT_OF_SERVICE, date(2026, 7, 1), date(2026, 11, 20))
+        self._eng(self._person("Later"), Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 12, 31))
+        renewed_person = self._person("Renewed")
+        renewed = self._eng(renewed_person, Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 11, 1))
+        self._eng(renewed_person, Engagement.Type.JOB_ORDER, date(2026, 11, 2), date(2027, 4, 30))
+        rows = {r["eng"].pk: r for r in renewal_rows(self.TODAY)}
+        self.assertEqual(set(rows), {lapsed.pk, soon.pk})
+        self.assertTrue(rows[lapsed.pk]["lapsed"])
+        self.assertEqual(rows[lapsed.pk]["ago"], 10)
+        self.assertNotIn(renewed.pk, rows)
+
+    # --- Retirement (RM2) -----------------------------------------------------------------
+
+    def test_retirement_groups(self):
+        from hr.reminders import retirement_rows
+
+        past = self._person("Past", date(1961, 9, 1))
+        self._eng(past, Engagement.Type.PLANTILLA, date(2010, 1, 1))
+        soon = self._person("Soon", date(1962, 3, 1))
+        self._eng(soon, Engagement.Type.CASUAL, date(2020, 1, 1))
+        optional = self._person("Optional", date(1965, 5, 1))
+        self._eng(optional, Engagement.Type.CASUAL, date(2008, 1, 1), date(2011, 12, 31), Engagement.Status.ENDED)
+        self._eng(optional, Engagement.Type.PLANTILLA, date(2012, 1, 1), item="SP-MTO-051")
+        young_service = self._person("ShortService", date(1964, 5, 1))
+        self._eng(young_service, Engagement.Type.PLANTILLA, date(2020, 1, 1), item="SP-MTO-052")
+        jo = self._person("OldJO", date(1950, 1, 1))
+        self._eng(jo, Engagement.Type.JOB_ORDER, date(2026, 1, 1), date(2026, 12, 31))
+        groups = retirement_rows(self.TODAY)
+        names = {k: [r["person"].last_name for r in v] for k, v in groups.items()}
+        self.assertEqual(names, {"past": ["Past"], "soon": ["Soon"], "optional": ["Optional"]})
+        self.assertEqual(groups["optional"][0]["service_years"], 18)
+
+    # --- Year-end bonus (RM3) -------------------------------------------------------------
+
+    def test_year_end_bonus_eligibility(self):
+        from hr.reminders import ELIGIBLE, NOT_IN_SERVICE, PRORATED, yeb_rows
+
+        full = self._person("Full")
+        self._eng(full, Engagement.Type.CASUAL, date(2026, 1, 1), date(2026, 3, 31), Engagement.Status.ENDED)
+        self._eng(full, Engagement.Type.CONTRACTUAL, date(2026, 9, 1), date(2026, 12, 31))  # 90 + 61 days
+        short = self._person("Short")
+        self._eng(short, Engagement.Type.PLANTILLA, date(2026, 8, 1))  # 92 days by Oct 31
+        left = self._person("Left")
+        self._eng(left, Engagement.Type.PLANTILLA, date(2020, 1, 1), date(2026, 6, 30), Engagement.Status.RESIGNED)
+        jo = self._person("JobOrder")
+        self._eng(jo, Engagement.Type.JOB_ORDER, date(2026, 1, 1), date(2026, 12, 31))
+        rows = {r["person"].last_name: r for r in yeb_rows(2026, self.TODAY)}
+        self.assertEqual(rows["Full"]["result"], ELIGIBLE)
+        self.assertEqual(rows["Full"]["days"], 151)
+        self.assertEqual(rows["Short"]["result"], PRORATED)
+        self.assertEqual(rows["Left"]["result"], NOT_IN_SERVICE)
+        self.assertNotIn("JobOrder", rows)
+
+    # --- Pages, exports, calendar (RM4) ---------------------------------------------------
+
+    def test_only_hrmo_and_auditor_see_the_lists(self):
+        pages = ["/tracker/renewals/", "/tracker/retirement/", "/tracker/year-end-bonus/"]
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            for page in pages:
+                self.assertEqual(self.client.get(page).status_code, 403, (user, page))
+        for user in (self.hrmo_user, self.auditor_user):
+            self.client.force_login(user)
+            for page in pages:
+                self.assertEqual(self.client.get(page).status_code, 200, (user, page))
+
+    def test_excel_exports_are_audited_and_formula_safe(self):
+        from openpyxl import load_workbook
+
+        person = self._person("=HYPERLINK(1)")
+        self._eng(person, Engagement.Type.JOB_ORDER, date(2025, 1, 1), timezone_today_plus(5))
+        self.client.force_login(self.hrmo_user)
+        for page in ("/tracker/renewals/", "/tracker/retirement/", "/tracker/year-end-bonus/"):
+            resp = self.client.get(page + "?export=xlsx")
+            self.assertEqual(resp.status_code, 200, page)
+            self.assertTrue(resp.content.startswith(b"PK"))
+        sheet = load_workbook(BytesIO(self.client.get("/tracker/renewals/?export=xlsx").content)).active
+        names = [row[1] for row in sheet.iter_rows(min_row=2, values_only=True)]
+        self.assertIn("'=HYPERLINK(1), Gregorio", names)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="Engagement").count(), 4)
+
+    def test_calendar_shows_65th_birthdays_to_hrmo_only(self):
+        from hr.salary_actions import add_years
+
+        turning = timezone_today_plus(10)
+        person = self._person("Retiree", add_years(turning, -65))
+        self._eng(person, Engagement.Type.PLANTILLA, date(2010, 1, 1))
+        month = f"?month={turning:%Y-%m}"
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "Turns 65 (compulsory retirement)")
+        self.client.force_login(self.head_a)
+        self.assertNotContains(self.client.get("/calendar/" + month), "Turns 65")
+
+    def test_menu_dot_when_a_contract_lapsed(self):
+        self.client.force_login(self.hrmo_user)
+        self.assertNotContains(self.client.get("/people/"), "needs attention")
+        self._eng(self._person(), Engagement.Type.JOB_ORDER, date(2025, 1, 1), timezone_today_plus(-3))
+        self.assertContains(self.client.get("/people/"), "needs attention")
+
+
+def timezone_today_plus(days):
+    from datetime import timedelta
+    from django.utils import timezone
+
+    return timezone.localdate() + timedelta(days=days)
+
+
+class RequiredMeetingsTestCase(TestCase):
+    """MT1-MT5: required meeting series, periods, attendance and who sees them."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _series(self, **kwargs):
+        defaults = {"name": "HR committee", "starts_on": date(2026, 1, 15)}
+        defaults.update(kwargs)
+        members = defaults.pop("members", [])
+        series = MeetingSeries.objects.create(**defaults)
+        series.members.set(members)
+        return series
+
+    def test_periods_are_calendar_quarters_and_creation_is_idempotent(self):
+        from hr.meetings import ensure_meetings, period_of
+
+        self.assertEqual(period_of(date(2026, 11, 3), 3), (date(2026, 10, 1), date(2026, 12, 31)))
+        self.assertEqual(period_of(date(2026, 8, 3), 6), (date(2026, 7, 1), date(2026, 12, 31)))
+        self.assertEqual(period_of(date(2026, 2, 3), 1), (date(2026, 2, 1), date(2026, 2, 28)))
+        series = self._series()
+        ensure_meetings(date(2026, 10, 17))
+        ensure_meetings(date(2026, 10, 18))
+        self.assertEqual([m.period_label for m in series.meetings.order_by("period_start")],
+                         ["Q1 2026", "Q2 2026", "Q3 2026", "Q4 2026"])
+
+    def test_status_follows_the_dates(self):
+        from hr.meetings import ensure_meetings
+
+        series = self._series()
+        ensure_meetings(date(2026, 10, 17))
+        q3, q4 = series.meetings.get(period_label_start(7)), series.meetings.get(period_label_start(10))
+        today = date(2026, 10, 17)
+        self.assertEqual(q3.status_on(today), Meeting.Status.MISSED)
+        self.assertEqual(q4.status_on(today), Meeting.Status.DUE)
+        q4.scheduled_on = date(2026, 11, 20)
+        self.assertEqual(q4.status_on(today), Meeting.Status.SCHEDULED)
+        q3.not_held_reason = "Typhoon"
+        self.assertEqual(q3.status_on(today), Meeting.Status.NOT_HELD)
+
+    def test_expected_people_by_audience(self):
+        from hr.meetings import expected_people
+
+        everyone = self._series(name="All staff")
+        office = self._series(name="Mayor's office", audience=MeetingSeries.Audience.OFFICE, office=self.office_a)
+        chosen = self._series(name="Committee", audience=MeetingSeries.Audience.CHOSEN, members=[self.person_b])
+        self.assertEqual(set(expected_people(everyone)), {self.person_a, self.person_b})
+        self.assertEqual(list(expected_people(office)), [self.person_a])
+        self.assertEqual(list(expected_people(chosen)), [self.person_b])
+
+    def test_hrmo_sets_up_a_series_and_records_attendance(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post("/tracker/meetings/new/", {
+            "name": "Selection board", "legal_basis": "", "frequency": "quarterly", "audience": "chosen",
+            "office": self.office_b.pk, "members": [self.person_a.pk, self.person_b.pk],
+            "starts_on": "2026-01-01", "is_active": "on", "notes": "",
+        })
+        self.assertRedirects(resp, "/tracker/meetings/", fetch_redirect_response=False)
+        series = MeetingSeries.objects.get(name="Selection board")
+        self.assertIsNone(series.office)  # office only kept for one-office meetings
+        from django.utils import timezone
+
+        current = series.meetings.get(period_start__lte=timezone.localdate(), period_end__gte=timezone.localdate())
+        self.client.post(f"/tracker/meetings/{current.pk}/", {
+            "action": "held", "version": "1", "held_on": timezone.localdate().isoformat(),
+            "attended": [str(self.person_a.pk), "99999"], "minutes_location": "Cabinet B",
+        })
+        current.refresh_from_db()
+        self.assertEqual(current.status_on(timezone.localdate()), Meeting.Status.HELD)
+        self.assertEqual(list(current.attendees.all()), [self.person_a])  # unknown ids ignored
+        self.assertEqual(current.attendance_count, 1)
+        self.assertTrue(AuditLog.objects.filter(model_name="Meeting", object_id=str(current.pk)).exists())
+        stale = self.client.post(f"/tracker/meetings/{current.pk}/", {"action": "reopen", "version": "1"}, follow=True)
+        self.assertContains(stale, "Someone changed this meeting")
+
+    def test_series_form_requires_office_or_members(self):
+        self.client.force_login(self.hrmo_user)
+        base = {"name": "X", "frequency": "quarterly", "starts_on": "2026-01-01", "is_active": "on"}
+        resp = self.client.post("/tracker/meetings/new/", {**base, "audience": "office"})
+        self.assertContains(resp, "Choose the office whose staff attend.")
+        resp = self.client.post("/tracker/meetings/new/", {**base, "audience": "chosen"})
+        self.assertContains(resp, "Choose at least one person.")
+        self.assertFalse(MeetingSeries.objects.exists())
+
+    def test_held_needs_a_past_date_and_not_held_needs_a_reason(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self._series(starts_on=timezone.localdate())
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/tracker/meetings/")
+        meeting = Meeting.objects.get()
+        future = (timezone.localdate() + timedelta(days=3)).isoformat()
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "held", "version": "1", "held_on": future}, follow=True)
+        self.assertContains(resp, "today or earlier")
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "not_held", "version": "1", "reason": ""}, follow=True)
+        self.assertContains(resp, "Give the reason")
+
+    def test_only_hrmo_and_auditor_open_the_tracker_and_only_hrmo_edits(self):
+        series = self._series()
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/tracker/meetings/")
+        meeting = series.meetings.first()
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/tracker/meetings/").status_code, 403, user)
+            self.assertEqual(self.client.get(f"/tracker/meetings/{meeting.pk}/").status_code, 403, user)
+            self.assertEqual(self.client.get("/tracker/meetings/new/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.get(f"/tracker/meetings/{meeting.pk}/").status_code, 200)
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "reopen", "version": "1"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_calendar_shows_meetings_to_their_audience(self):
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        everyone = self._series(name="All-staff assembly", starts_on=today)
+        chosen = self._series(name="Selection board", starts_on=today, audience=MeetingSeries.Audience.CHOSEN,
+                              members=[self.person_b])
+        from hr.meetings import ensure_meetings
+        ensure_meetings(today)
+        for series in (everyone, chosen):
+            m = series.meetings.get()
+            m.scheduled_on = today
+            m.save()
+        month = f"?month={today:%Y-%m}"
+        self.client.force_login(self.emp_a_user)  # person A: not on the board
+        resp = self.client.get("/calendar/" + month)
+        self.assertContains(resp, "All-staff assembly")
+        self.assertNotContains(resp, "Selection board")
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "Selection board")
+
+    def test_menu_dot_near_the_end_of_an_unheld_period(self):
+        from hr.meetings import needs_attention
+
+        self._series(starts_on=date(2026, 1, 1))
+        self.assertFalse(needs_attention(date(2026, 11, 1)))  # Q4 ends in 60 days
+        self.assertTrue(needs_attention(date(2026, 12, 15)))
+        m = Meeting.objects.get(period_start=date(2026, 10, 1))
+        m.held_on = date(2026, 12, 10)
+        m.save()
+        self.assertFalse(needs_attention(date(2026, 12, 15)))
+
+
+def period_label_start(month):
+    from django.db.models import Q
+
+    return Q(period_start=date(2026, month, 1))

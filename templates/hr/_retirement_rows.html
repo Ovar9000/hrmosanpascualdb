@@ -1,0 +1,19 @@
+<div class="table-responsive">
+  <table class="table table-hover align-middle mb-0 small">
+    <thead class="table-light"><tr><th>Person</th><th>Office · position</th><th>Age</th><th>Turns 65</th><th>Unbroken service</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td><a class="fw-semibold text-decoration-none" href="{% url 'person_detail' row.person.pk %}">{{ row.person.full_name }}</a>
+            <div class="text-muted font-monospace">{{ row.person.employee_no }}</div></td>
+          <td>{{ row.eng.office.acronym|default:row.eng.office.name }} · {{ row.eng.position_title }}</td>
+          <td>{{ row.age }}</td>
+          <td>{{ row.compulsory|date:"M d, Y" }}</td>
+          <td>{{ row.service_years }} year{{ row.service_years|pluralize }} (since {{ row.service_from|date:"M Y" }})</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-3">Nobody.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

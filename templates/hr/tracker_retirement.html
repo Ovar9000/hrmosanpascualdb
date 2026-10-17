@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Retirement{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">Retirement</h1>
+    <div class="text-muted small">Compulsory at 65; optional from 60 with at least 15 years of service (RA 8291).
+      Plantilla, casual and contractual staff only: JO, COS and project-based workers are not GSIS members,
+      and elected officials have no retirement age.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-primary" href="?export=xlsx">Export to Excel</a>
+</div>
+
+{% with rows=groups.past %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Past 65 and still active <span class="badge {% if rows %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ rows|length }}</span></div>
+  <div class="card-body py-2 small text-muted">Check for an approved extension of service; otherwise process the retirement and end the appointment.</div>
+  {% include "hr/_retirement_rows.html" %}
+</div>
+{% endwith %}
+
+{% with rows=groups.soon %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Turns 65 within a year <span class="badge bg-secondary">{{ rows|length }}</span></div>
+  <div class="card-body py-2 small text-muted">Start the GSIS retirement papers and plan the replacement.</div>
+  {% include "hr/_retirement_rows.html" %}
+</div>
+{% endwith %}
+
+{% with rows=groups.optional %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Can retire optionally now <span class="badge bg-secondary">{{ rows|length }}</span></div>
+  <div class="card-body py-2 small text-muted">60 or older with 15 years of unbroken service recorded here. Service in other
+    government agencies is not in this system and may also count: the GSIS service record decides.</div>
+  {% include "hr/_retirement_rows.html" %}
+</div>
+{% endwith %}
+{% endblock %}

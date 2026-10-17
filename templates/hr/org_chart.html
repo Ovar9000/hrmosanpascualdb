@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Org chart · {{ heading }}{% endblock %}
+
+{% block content %}
+<style>
+  .org-chart-scroll { overflow: auto; max-height: 78vh; background: #fff; }
+  .org-chart-scroll svg { display: block; }
+  .org-chart-scroll a { text-decoration: none; }
+  .org-chart-scroll a:hover rect:first-of-type, .org-chart-scroll a:focus rect:first-of-type { stroke-width: 3; }
+  .org-key { display: inline-block; width: .9rem; height: .9rem; border-radius: 3px; vertical-align: -.1rem; }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <div class="small mb-1">
+      {% if is_tree %}
+        <a href="{% url 'office_list' %}">Offices Directory</a>
+      {% else %}
+        {% if can_view_tree %}<a href="{% url 'office_tree' %}">Office tree</a> ›{% endif %}
+        {% if office.parent %}<a href="{% url 'office_chart' office.parent.pk %}">{{ office.parent.acronym|default:office.parent.name }}</a> ›{% endif %}
+      {% endif %}
+    </div>
+    <h1 class="h3 mb-0">{% if is_tree %}{{ heading }}{% else %}{{ office.name }} <span class="text-muted fs-5">org chart</span>{% endif %}</h1>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    {% if can_edit %}
+      <a class="btn btn-outline-primary btn-sm" href="{% url 'office_chart_edit' office.pk %}">Edit reporting lines</a>
+    {% endif %}
+    <div class="dropdown">
+      <button class="btn btn-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Export</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><h6 class="dropdown-header">Picture or print</h6></li>
+        <li><a class="dropdown-item" href="{{ export_urls.png }}">PNG image</a></li>
+        <li><a class="dropdown-item" href="{{ export_urls.pdf }}">PDF</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header">Editable</h6></li>
+        <li><a class="dropdown-item" href="{{ export_urls.pptx }}">PowerPoint (.pptx)</a></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% if you %}
+<div class="card border-warning shadow-sm mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 small">
+      <div class="col-12 col-md-4">
+        <div class="text-muted">You</div>
+        <div class="fw-semibold">{{ you.position_title }}</div>
+        {% if not you.on_chart %}<div class="text-muted">{{ you.get_type_display }} staff are listed below the chart, not drawn on it.</div>{% endif %}
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="text-muted">Your supervisor</div>
+        {% if supervisor %}
+          <div class="fw-semibold">{{ supervisor.person.first_name }} {{ supervisor.person.last_name }}</div>
+          <div>{{ supervisor.position_title }}</div>
+        {% elif staff.head and staff.head.pk == you.pk %}<div>None. You head this office.</div>
+        {% else %}<div>Not recorded yet. Ask HRMO.</div>{% endif %}
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="text-muted">Office head</div>
+        {% if staff.head and staff.head.pk != you.pk %}
+          <div class="fw-semibold">{{ staff.head.person.first_name }} {{ staff.head.person.last_name }}</div>
+          <div>{{ staff.head.position_title }}</div>
+        {% elif staff.head %}<div class="fw-semibold">You</div>
+        {% else %}<div>{{ office.head_title|default:"Not recorded yet." }}</div>{% endif %}
+      </div>
+    </div>
+    {% if coworkers %}
+    <details class="mt-2 small">
+      <summary>Your coworkers in this office ({{ coworkers|length }})</summary>
+      <ul class="list-unstyled row row-cols-1 row-cols-md-2 row-cols-lg-3 g-1 mt-1 mb-0">
+        {% for eng in coworkers %}
+          <li class="col"><span class="fw-semibold">{{ eng.person.first_name }} {{ eng.person.last_name }}</span> · {{ eng.position_title }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if staff.broken_lines and can_edit %}
+<div class="alert alert-warning small py-2">
+  Reporting to someone who is no longer on this chart, so shown at the top:
+  {% for eng in staff.broken_lines %}{{ eng.person.last_name }}{% if not forloop.last %}, {% endif %}{% endfor %}.
+  <a href="{% url 'office_chart_edit' office.pk %}">Fix reporting lines</a>.
+</div>
+{% endif %}
+{% if staff and staff.roots|length > 1 and not staff.broken_lines %}
+<div class="alert alert-light border small py-2">
+  {% if can_edit %}No single head yet: {{ staff.roots|length }} people have no supervisor recorded. <a href="{% url 'office_chart_edit' office.pk %}">Set reporting lines</a>.
+  {% else %}Reporting lines for this office are not complete yet.{% endif %}
+</div>
+{% endif %}
+
+<div class="card shadow-sm border-0 mb-2">
+  {% if staff and not staff.on_chart %}
+    <div class="card-body text-muted">No active Elected, Plantilla, Casual or Contractual staff in this office.</div>
+  {% else %}
+    <div class="org-chart-scroll" tabindex="0" aria-label="Org chart, scroll to see all of it">{{ svg|safe }}</div>
+  {% endif %}
+</div>
+
+<div class="small text-muted d-flex flex-wrap gap-3 mb-3">
+  {% if is_tree %}
+    <span><span class="org-key" style="background:#0d6efd"></span> Executive</span>
+    <span><span class="org-key" style="background:#087990"></span> Legislative</span>
+    <span><span class="org-key" style="background:#6c757d"></span> Other</span>
+    <span>Click an office to open its chart.{% if own_office %} Head names and staff counts are shown for offices you can see.{% endif %}</span>
+  {% else %}
+    <span><span class="org-key" style="background:#198754"></span> Elected</span>
+    <span><span class="org-key" style="background:#0d6efd"></span> Plantilla</span>
+    <span><span class="org-key" style="background:#0aa2c0"></span> Casual</span>
+    <span><span class="org-key" style="background:#6f42c1"></span> Contractual</span>
+    {% if not_drawn_note %}<span>{{ not_drawn_note }}Job Order, Contract of Service and project-based staff are counted, not drawn.</span>{% endif %}
+  {% endif %}
+</div>
+{% endblock %}

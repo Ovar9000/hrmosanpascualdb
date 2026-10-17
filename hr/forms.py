@@ -7,7 +7,9 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from .models import FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, Person, Project
+from .models import (
+    FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, MeetingSeries, Person, Project, ServiceInterruption,
+)
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -162,6 +164,7 @@ class EngagementForm(forms.ModelForm):
             "office",
             "type",
             "position_title",
+            "reports_to",
             "rate",
             "rate_basis",
             "start_date",
@@ -178,6 +181,7 @@ class EngagementForm(forms.ModelForm):
             "office": forms.Select(attrs={"class": "form-select"}),
             "type": forms.Select(attrs={"class": "form-select"}),
             "position_title": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Administrative Officer IV"}),
+            "reports_to": forms.Select(attrs={"class": "form-select"}),
             "rate": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "placeholder": "0.00"}),
             "rate_basis": forms.Select(attrs={"class": "form-select"}),
             "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
@@ -213,6 +217,22 @@ class EngagementForm(forms.ModelForm):
             if self.instance.pk and self.instance.project_id:
                 open_projects |= Q(pk=self.instance.project_id)
             self.fields["project"].queryset = Project.objects.filter(open_projects).select_related("office")
+
+        # Reporting line for the org chart: active chart-type appointments only (DECISIONS O2).
+        # clean() also requires the same office, since the office can change on this form.
+        if "reports_to" in self.fields:
+            supervisors = Engagement.objects.filter(
+                status=Engagement.Status.ACTIVE, type__in=Engagement.CHART_TYPES
+            ).select_related("person", "office").order_by("office__name", "person__last_name")
+            if self.instance.pk:
+                supervisors = supervisors.exclude(pk=self.instance.pk)
+            field = self.fields["reports_to"]
+            field.queryset = supervisors
+            field.empty_label = "— Nobody in this office (top of the office chart) —"
+            field.label_from_instance = lambda e: (
+                f"{e.office.acronym or e.office.name} · {e.person.full_name} — {e.position_title}"
+            )
+            field.help_text = "Their supervisor in the same office. Leave empty for the office head."
 
         # Field-level permission gate: pay rate fields visible only with view_pay (DECISIONS R6)
         from .permissions import can_view_pay
@@ -278,6 +298,14 @@ class EngagementForm(forms.ModelForm):
                     f"Contract must end by the project end date ({period}). "
                     "Ask the Project Maintainer to extend the project first.",
                 )
+
+        supervisor = cleaned_data.get("reports_to")
+        if supervisor is not None:
+            from .orgchart import supervisor_error
+
+            message = supervisor_error(self.instance.pk, office, supervisor)
+            if message:
+                self.add_error("reports_to", message)
 
         # Overlap check with existing active engagements of same type in same office
         if self.person and office and eng_type and start_date and status == Engagement.Status.ACTIVE:
@@ -595,3 +623,71 @@ class CalendarEventForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
         }
         labels = {"start_date": "Date", "end_date": "Until (optional)", "office": "Office"}
+
+
+class ServiceInterruptionForm(forms.ModelForm):
+    """Leave without pay or suspension, recorded by HRMO from a salary action case (SA2)."""
+
+    class Meta:
+        model = ServiceInterruption
+        fields = ["kind", "start_date", "end_date", "notes"]
+        widgets = {
+            "kind": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "notes": forms.TextInput(attrs={"class": "form-control form-control-sm", "placeholder": "e.g. LWOP per leave form no."}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("start_date"), cleaned.get("end_date")
+        if start and end and end < start:
+            self.add_error("end_date", "End date cannot be before start date.")
+        return cleaned
+
+
+class MeetingSeriesForm(forms.ModelForm):
+    """A required meeting and who attends it (DECISIONS MT1)."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = MeetingSeries
+        fields = ["name", "legal_basis", "frequency", "audience", "office", "members", "starts_on", "is_active", "notes"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Quarterly HR committee meeting"}),
+            "legal_basis": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. CSC MC No. __, s. ____"}),
+            "frequency": forms.Select(attrs={"class": "form-select"}),
+            "audience": forms.Select(attrs={"class": "form-select"}),
+            "office": forms.Select(attrs={"class": "form-select"}),
+            "members": forms.SelectMultiple(attrs={"class": "form-select", "size": 12}),
+            "starts_on": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        # Members: people in active service (and anyone already chosen, so editing keeps them).
+        active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+        chosen = Q(pk__in=self.instance.members.values("pk")) if self.instance.pk else Q(pk__in=[])
+        self.fields["members"].queryset = Person.objects.filter(Q(pk__in=active) | chosen).order_by("last_name", "first_name")
+        self.fields["members"].help_text = "Hold Ctrl (Cmd on a Mac) to choose several. Only used for chosen people."
+
+    def clean_name(self):
+        return self.cleaned_data.get("name", "").strip()
+
+    def clean(self):
+        cleaned = super().clean()
+        audience = cleaned.get("audience")
+        if audience == MeetingSeries.Audience.OFFICE and not cleaned.get("office"):
+            self.add_error("office", "Choose the office whose staff attend.")
+        if audience == MeetingSeries.Audience.CHOSEN and not cleaned.get("members"):
+            self.add_error("members", "Choose at least one person.")
+        if audience != MeetingSeries.Audience.OFFICE:
+            cleaned["office"] = None
+        if audience != MeetingSeries.Audience.CHOSEN:
+            cleaned["members"] = Person.objects.none()
+        return cleaned

@@ -1,0 +1,7 @@
+<ul class="nav nav-pills small mb-3" aria-label="Trackers">
+  <li class="nav-item"><a class="nav-link{% if tracker == 'salary' %} active{% endif %}" href="{% url 'salary_action_list' %}">Salary increases &amp; loyalty</a></li>
+  <li class="nav-item"><a class="nav-link{% if tracker == 'renewals' %} active{% endif %}" href="{% url 'tracker_renewals' %}">Contract renewals</a></li>
+  <li class="nav-item"><a class="nav-link{% if tracker == 'retirement' %} active{% endif %}" href="{% url 'tracker_retirement' %}">Retirement</a></li>
+  <li class="nav-item"><a class="nav-link{% if tracker == 'yeb' %} active{% endif %}" href="{% url 'tracker_year_end_bonus' %}">Year-end bonus</a></li>
+  <li class="nav-item"><a class="nav-link{% if tracker == 'meetings' %} active{% endif %}" href="{% url 'tracker_meetings' %}">Required meetings</a></li>
+</ul>

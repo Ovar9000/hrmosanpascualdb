@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ meeting }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'tracker_meetings' %}" class="btn btn-sm btn-outline-secondary">← Required meetings</a></div>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ meeting.series.name }}, {{ meeting.period_label }}</h1>
+    <div class="text-muted small">{{ meeting.period_start|date:"M d" }} – {{ meeting.period_end|date:"M d, Y" }} ·
+      {% if meeting.series.audience == "office" %}{{ meeting.series.office.name }}{% else %}{{ meeting.series.get_audience_display }}{% endif %}
+      ({{ expected_count }} expected)
+      {% if meeting.series.legal_basis %}· Required by: {{ meeting.series.legal_basis }}{% endif %}</div>
+  </div>
+  <span class="badge fs-6 {% if status == 'held' %}bg-success{% elif status == 'scheduled' %}bg-primary{% elif status == 'not_held' %}bg-secondary{% elif status == 'upcoming' %}bg-light text-dark border{% else %}bg-warning text-dark{% endif %}">{{ status.label }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2">Record</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-5">Scheduled</dt><dd class="col-7">{{ meeting.scheduled_on|date:"M d, Y"|default:"—" }}{% if meeting.scheduled_time %} at {{ meeting.scheduled_time|time:"H:i" }}{% endif %}{% if meeting.venue %}, {{ meeting.venue }}{% endif %}</dd>
+          <dt class="col-5">Held</dt><dd class="col-7">{{ meeting.held_on|date:"M d, Y"|default:"—" }}</dd>
+          <dt class="col-5">Attendance</dt><dd class="col-7">{% if meeting.attendance_count is not None %}{{ meeting.attendance_count }} of {{ expected_count }}{% else %}—{% endif %}</dd>
+          <dt class="col-5">Minutes filed at</dt><dd class="col-7">{{ meeting.minutes_location|default:"—" }}</dd>
+          {% if meeting.not_held_reason %}<dt class="col-5">Not held because</dt><dd class="col-7">{{ meeting.not_held_reason|linebreaksbr }}</dd>{% endif %}
+        </dl>
+        {% if meeting.minutes_summary %}<div class="mt-2 p-2 bg-light rounded"><strong>Summary:</strong> {{ meeting.minutes_summary|linebreaksbr }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if can_manage %}
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">Update</div>
+      <div class="card-body small">
+        {% if status == "held" or status == "not_held" %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="version" value="{{ meeting.version }}">
+            <p class="mb-2">This period is done. Reopen it to change the record.</p>
+            <button class="btn btn-sm btn-outline-secondary" name="action" value="reopen">Reopen</button>
+          </form>
+        {% else %}
+          <form method="post" class="row g-2 align-items-end mb-3">{% csrf_token %}<input type="hidden" name="version" value="{{ meeting.version }}">
+            <div class="col-6 col-md-4"><label class="form-label mb-0" for="scheduled_on">Date</label>
+              <input class="form-control form-control-sm" type="date" id="scheduled_on" name="scheduled_on" value="{{ meeting.scheduled_on|date:'Y-m-d' }}"></div>
+            <div class="col-6 col-md-3"><label class="form-label mb-0" for="scheduled_time">Time</label>
+              <input class="form-control form-control-sm" type="time" id="scheduled_time" name="scheduled_time" value="{{ meeting.scheduled_time|time:'H:i' }}"></div>
+            <div class="col-12 col-md-5"><label class="form-label mb-0" for="venue">Venue</label>
+              <input class="form-control form-control-sm" id="venue" name="venue" maxlength="200" value="{{ meeting.venue }}"></div>
+            <div class="col-12"><button class="btn btn-sm btn-outline-primary" name="action" value="schedule">Save schedule (shows on the calendar)</button></div>
+          </form>
+
+          <form method="post" class="border-top pt-3">{% csrf_token %}<input type="hidden" name="version" value="{{ meeting.version }}">
+            <div class="row g-2">
+              <div class="col-6 col-md-4"><label class="form-label mb-0" for="held_on">Held on</label>
+                <input class="form-control form-control-sm" type="date" id="held_on" name="held_on" max="{{ today|date:'Y-m-d' }}" value="{{ meeting.scheduled_on|date:'Y-m-d' }}"></div>
+              {% if not use_checklist %}
+                <div class="col-6 col-md-4"><label class="form-label mb-0" for="attendance_count">How many attended</label>
+                  <input class="form-control form-control-sm" type="number" min="0" id="attendance_count" name="attendance_count"></div>
+              {% endif %}
+              <div class="col-12"><label class="form-label mb-0" for="minutes_location">Where the signed minutes and attendance sheet are filed</label>
+                <input class="form-control form-control-sm" id="minutes_location" name="minutes_location" maxlength="255" placeholder="e.g. HRMO cabinet B, folder 2026"></div>
+              <div class="col-12"><label class="form-label mb-0" for="minutes_summary">Short summary (optional)</label>
+                <textarea class="form-control form-control-sm" id="minutes_summary" name="minutes_summary" rows="2"></textarea></div>
+            </div>
+            {% if use_checklist %}
+              <fieldset class="mt-2">
+                <legend class="fs-6 mb-1">Who attended</legend>
+                <div class="row row-cols-1 row-cols-md-2 g-0" style="max-height: 16rem; overflow:auto">
+                  {% for person in expected %}
+                    <div class="col form-check">
+                      <input class="form-check-input" type="checkbox" name="attended" value="{{ person.pk }}" id="att_{{ person.pk }}"{% if person.pk in attended %} checked{% endif %}>
+                      <label class="form-check-label" for="att_{{ person.pk }}">{{ person.full_name }}</label>
+                    </div>
+                  {% empty %}<div class="text-muted">Nobody is expected (check the meeting's audience).</div>{% endfor %}
+                </div>
+              </fieldset>
+            {% endif %}
+            <button class="btn btn-sm btn-success mt-2" name="action" value="held">Record as held</button>
+          </form>
+
+          <details class="mt-3">
+            <summary>It will not be held this period</summary>
+            <form method="post" class="mt-2">{% csrf_token %}<input type="hidden" name="version" value="{{ meeting.version }}">
+              <label class="form-label mb-0" for="reason">Reason (kept on the record)</label>
+              <input class="form-control form-control-sm mb-2" id="reason" name="reason" maxlength="500">
+              <button class="btn btn-sm btn-outline-danger" name="action" value="not_held">Record as not held</button>
+            </form>
+          </details>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
