@@ -72,7 +72,20 @@ class Command(BaseCommand):
         connection.ensure_connection()
         with connection.connection.cursor() as cursor:
             self._restrict_audit_table(cursor, role)
+        self._salary_check()
         self.stdout.write(self.style.SUCCESS("Database ready."))
+
+    def _salary_check(self):
+        """Opens due salary increase and loyalty cases right after each deploy (DECISIONS SA5).
+        A failure here is reported but never blocks the deploy: the tracker reruns it on its own."""
+        from hr.salary_actions import run_check
+
+        try:
+            created, updated = run_check(source="deploy")
+        except Exception as exc:  # noqa: BLE001 - the database itself is ready; only the check failed
+            self.stderr.write(f"Salary actions check skipped: {exc}")
+        else:
+            self.stdout.write(f"Salary actions check: {created} new case(s), {updated} updated.")
 
     @staticmethod
     def _restrict_audit_table(cursor, role):

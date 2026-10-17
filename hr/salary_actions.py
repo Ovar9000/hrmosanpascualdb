@@ -9,7 +9,7 @@ verify, and opens a case. Only an Issued step increment changes pay data (Engage
 from datetime import date, timedelta
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import Engagement, Person, SalaryAction, SalaryCheckRun
@@ -227,6 +227,11 @@ def candidates_for(person, today):
     return found, actions
 
 
+# Serializes runs (cron, deploy, page visits), so two never open the same case at once.
+SALARY_CHECK_LOCK_KEY = 7_220_517
+# How old the last run may be before a page visit runs the check itself (SA5).
+STALE_AFTER = timedelta(hours=20)
+
 SYNCED_FIELDS = ["engagement", "service_from", "due_date", "extension_days", "from_step", "to_step", "years", "warnings"]
 
 
@@ -243,6 +248,8 @@ def run_check(today=None, person_ids=None, source="command"):
 
     created = updated = 0
     with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [SALARY_CHECK_LOCK_KEY])
         for person in people:
             found, actions = candidates_for(person, today)
             by_key = {(a.kind, a.milestone): a for a in actions}
@@ -293,6 +300,16 @@ def run_check(today=None, person_ids=None, source="command"):
 
 def last_run():
     return SalaryCheckRun.objects.order_by("-ran_at").first()
+
+
+def run_if_stale(source):
+    """Runs the check when it has never run or the last run is older than STALE_AFTER, so the
+    tracker and calendar are current even without the daily job (SA5). Returns the last run."""
+    last = last_run()
+    if last is None or timezone.now() - last.ran_at > STALE_AFTER:
+        run_check(source=source)
+        last = last_run()
+    return last
 
 
 # --- Workflow (SA3-SA4) ------------------------------------------------------------

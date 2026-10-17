@@ -186,8 +186,9 @@ later safely; add `--new-passwords` to reissue passwords.
 
 ### 6b. Optional: run the salary actions check every morning
 
-The Salary Actions tracker runs its check by itself when someone opens it and the last
-run is more than 20 hours old, so this step is optional. To have cases ready before
+The salary check already runs after every deploy (in `migrate`) and whenever HRMO or the
+Auditor opens the tracker or the calendar and the last run is more than 20 hours old, so
+this step is optional. To have cases ready before
 anyone opens the page:
 
 1. **+ Create → GitHub Repo →** the same repo. Rename it `salary-check`. No domain, no volume.

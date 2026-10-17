@@ -1199,8 +1199,6 @@ SALARY_TABS = [
     ("deferred", "Deferred", [SalaryAction.Status.DEFERRED]),
     ("closed", "Closed", SalaryAction.CLOSED_STATUSES),
 ]
-# The tracker runs the check itself when the daily job has not run for this long (SA5).
-SALARY_CHECK_STALE = timedelta(hours=20)
 
 
 def _require_salary_view(request):
@@ -1214,10 +1212,7 @@ def _require_salary_view(request):
 def salary_action_list(request):
     """The tracker: cases by stage, filtered by type and office."""
     _require_salary_view(request)
-    last = salary_actions.last_run()
-    if last is None or timezone.now() - last.ran_at > SALARY_CHECK_STALE:
-        salary_actions.run_check(source="page")
-        last = salary_actions.last_run()
+    last = salary_actions.run_if_stale(source="page")
 
     tabs = {key: statuses for key, _label, statuses in SALARY_TABS}
     tab = request.GET.get("tab", "due")
@@ -1839,6 +1834,7 @@ def _calendar_items(user, first, last, shown, office=None):
 
     # Open step increment and loyalty cases on their due dates: pay data, so HRMO and Auditor only (SA4).
     if "salary" in shown and can_view_salary_actions(user):
+        salary_actions.run_if_stale(source="calendar")
         cases = SalaryAction.objects.filter(
             status__in=SalaryAction.OPEN_STATUSES, due_date__range=(first, last)
         ).select_related("person", "engagement__office")
