@@ -107,6 +107,18 @@ it on public Wi-Fi.
 7. **`demo_head`** sees only the Treasurer's Office: its staff's leave, starts and ends, plus
    events for everyone.
 
+### 3b. Org charts (2 min) · `demo_hrmo`, then `demo_employee`
+
+1. **Org Chart** in the menu → the municipal office tree with each head and headcount.
+   Click the **Treasurer's Office** → its staff chart. JO and COS staff are counted under
+   the chart, not drawn.
+2. **Export → PowerPoint** and open it: drag a box, the lines follow. **Export → PDF / PNG**
+   for printing or chat.
+3. **Edit reporting lines** → change who one person reports to → Save. The chart redraws;
+   the change is in the Audit Trail.
+4. Log in as **`demo_employee`** → **My Office**: "You", your supervisor, the office head
+   and your coworkers. Names and positions only; other offices are refused.
+
 ### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.

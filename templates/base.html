@@ -21,6 +21,8 @@
             <li class="nav-item"><a class="nav-link" href="{% url 'person_list' %}">Personnel</a></li>
             <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices Directory</a></li>
           {% endif %}
+          {% if org_nav.tree %}<li class="nav-item"><a class="nav-link" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
+          {% if org_nav.my_office %}<li class="nav-item"><a class="nav-link" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
           {% if perms.hr.view_project %}
             <li class="nav-item"><a class="nav-link" href="{% url 'project_list' %}">Projects</a></li>
           {% endif %}

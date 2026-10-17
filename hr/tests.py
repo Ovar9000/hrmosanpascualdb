@@ -3794,3 +3794,254 @@ class HostedDeploymentTestCase(TestCase):
         # Not configured: X-Real-IP is never read.
         with override_settings(TRUSTED_PROXIES=["100.0.0.0/8"], CLIENT_IP_HEADER=""):
             self.assertEqual(get_client_ip(rf.get("/", REMOTE_ADDR="100.64.0.3", **headers)), "152.233.0.9")
+
+
+class OrgChartTestCase(TestCase):
+    """O1-O5: office tree, staff charts, reporting lines, My Office and exports."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 500
+
+    def setUp(self):
+        self.setUp_roles()
+        self.boss = self._eng("Dagohoy", "Francisco", Engagement.Type.ELECTED, "Municipal Mayor")
+        self.eng_a.reports_to = self.boss
+        self.eng_a.save()
+        self.clerk = self._eng("Silang", "Gabriela", Engagement.Type.CASUAL, "Administrative Aide IV", reports_to=self.eng_a)
+        self.jo = self._eng("Luna", "Antonio", Engagement.Type.JOB_ORDER, "Job Order Support Staff", reports_to=self.eng_a)
+        self.jo_user = get_user_model().objects.create_user("emp_jo", "jo@test.com", "jopass12345")
+        UserProfile.objects.create(user=self.jo_user, person=self.jo.person)
+
+    def _eng(self, last, first, eng_type, title, office=None, reports_to=None):
+        OrgChartTestCase._seq += 1
+        person = Person.objects.create(
+            employee_no=f"SP-0{OrgChartTestCase._seq}", last_name=last, first_name=first, birthdate=date(1985, 1, 1)
+        )
+        return Engagement.objects.create(
+            person=person, office=office or self.office_a, type=eng_type, position_title=title,
+            start_date=date(2025, 1, 1), status=Engagement.Status.ACTIVE, reports_to=reports_to,
+        )
+
+    def _chart(self, user, office=None):
+        self.client.force_login(user)
+        return self.client.get(f"/offices/{(office or self.office_a).pk}/chart/")
+
+    # --- What is drawn ----------------------------------------------------------------
+
+    def test_staff_chart_draws_chart_types_and_only_counts_job_orders(self):
+        from hr.orgchart import build_staff_chart
+
+        staff = build_staff_chart(self.office_a, show_types=True)
+        self.assertEqual([n.title for n in staff.chart.nodes], ["Francisco Dagohoy", "Jose Rizal", "Gabriela Silang"])
+        self.assertEqual(staff.head, self.boss)
+        self.assertEqual(staff.not_drawn, {"Job Order": 1})
+        self.assertEqual(len(staff.chart.edges), 2)
+
+    def test_line_to_an_ended_appointment_starts_a_new_top_box(self):
+        from hr.orgchart import build_staff_chart
+
+        self.boss.status = Engagement.Status.ENDED
+        self.boss.save()
+        staff = build_staff_chart(self.office_a)
+        self.assertEqual(staff.roots, [self.eng_a])
+        self.assertEqual(staff.broken_lines, [self.eng_a])
+
+    def test_layout_hangs_many_leaves_without_overlap(self):
+        from hr.orgchart import ChartNode, layout
+
+        root = ChartNode(title="Head", children=[ChartNode(title=f"Staff {i}", subtitle="Clerk") for i in range(9)])
+        chart = layout([root])
+        self.assertEqual({e.kind for e in chart.edges}, {"left", "right"})
+        boxes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in chart.nodes]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                self.assertFalse(a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3], (a, b))
+
+    def test_long_text_is_wrapped_and_shortened(self):
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from hr.orgchart import BOLD, wrap
+
+        lines = wrap("Municipal Social Welfare and Development Office of the Municipality of San Pascual", BOLD, 11, 180, 2)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[-1].endswith("…"))
+        self.assertTrue(all(stringWidth(line, BOLD, 11) <= 180 for line in lines))
+
+    def test_office_tree_follows_office_parents(self):
+        from hr.orgchart import build_office_tree
+
+        chart = build_office_tree()
+        self.assertEqual(len(chart.nodes), Office.objects.count() + 1)  # plus the municipality box
+        self.assertEqual(len(chart.edges), Office.objects.count())
+
+    # --- Who sees what (O3) -------------------------------------------------------------
+
+    def test_employee_sees_own_office_chart_only_with_names_and_positions(self):
+        resp = self._chart(self.emp_a_user)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Francisco Dagohoy")
+        self.assertContains(resp, ">YOU<")
+        self.assertNotContains(resp, ">Elected<")  # no appointment type for employees
+        self.assertNotContains(resp, f"/people/{self.boss.person_id}/")  # no links to others' records
+        self.assertEqual(self._chart(self.emp_a_user, self.office_b).status_code, 403)
+        self.assertEqual(self.client.get(f"/offices/{self.office_b.pk}/chart/export/png/").status_code, 403)
+
+    def test_new_job_order_hire_sees_supervisor_head_and_coworkers(self):
+        self.client.force_login(self.jo_user)
+        resp = self.client.get("/my-office/", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["supervisor"], self.eng_a)
+        self.assertEqual(resp.context["staff"].head, self.boss)
+        self.assertContains(resp, "Your coworkers in this office (3)")
+        self.assertContains(resp, "Gabriela Silang")
+
+    def test_office_roles_see_types_and_links_hrmo_sees_every_office(self):
+        resp = self._chart(self.staff_a)
+        self.assertContains(resp, ">Elected<")
+        self.assertContains(resp, f"/people/{self.boss.person_id}/")
+        self.assertEqual(self._chart(self.staff_a, self.office_b).status_code, 403)
+        self.assertEqual(self._chart(self.hrmo_user, self.office_b).status_code, 200)
+        self.assertNotContains(self._chart(self.hrmo_user), "SG 22")  # never pay on charts
+
+    def test_sysadmin_and_people_without_an_office_get_no_charts(self):
+        self.assertEqual(self._chart(self.sysadmin).status_code, 403)
+        self.assertEqual(self.client.get("/offices/chart/").status_code, 403)
+        self.client.force_login(self.delegate_user)
+        self.assertEqual(self.client.get("/offices/chart/").status_code, 403)
+        self.assertRedirects(self.client.get("/my-office/"), "/", fetch_redirect_response=False)
+
+    def test_office_tree_shows_heads_only_for_visible_offices(self):
+        self.client.force_login(self.staff_a)
+        resp = self.client.get("/offices/chart/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Francisco Dagohoy")  # own office head
+        self.assertContains(resp, "Office of the Municipal Treasurer")
+        self.assertNotContains(resp, f"/offices/{self.office_b.pk}/chart/")
+
+    # --- Exports (O4) --------------------------------------------------------------------
+
+    def test_exports_return_files_and_are_audit_logged(self):
+        self.client.force_login(self.staff_a)
+        magic = {"png": b"\x89PNG", "pdf": b"%PDF", "pptx": b"PK"}
+        for fmt, start in magic.items():
+            resp = self.client.get(f"/offices/{self.office_a.pk}/chart/export/{fmt}/")
+            self.assertEqual(resp.status_code, 200, fmt)
+            self.assertTrue(resp.content.startswith(start), fmt)
+            self.assertIn(f'.{fmt}"', resp["Content-Disposition"])
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="Office").count(), 3)
+        self.assertEqual(self.client.get(f"/offices/{self.office_a.pk}/chart/export/svg/").status_code, 404)
+        self.client.force_login(self.hrmo_user)
+        for fmt in magic:
+            self.assertEqual(self.client.get(f"/offices/chart/export/{fmt}/").status_code, 200)
+
+    def test_pptx_boxes_are_editable_and_lines_are_glued(self):
+        from pptx import Presentation
+        from hr.orgchart import build_staff_chart, render_pptx
+
+        prs = Presentation(BytesIO(render_pptx(build_staff_chart(self.office_a).chart, "Test")))
+        shapes = list(prs.slides[0].shapes)
+        boxes = [s for s in shapes if s.shape_type == 1]  # autoshapes
+        self.assertEqual(
+            sorted(b.text_frame.paragraphs[0].text for b in boxes),
+            ["Francisco Dagohoy", "Gabriela Silang", "Jose Rizal"],
+        )
+        connectors = [s for s in shapes if s._element.tag.endswith("}cxnSp")]
+        self.assertEqual(len(connectors), 2)
+        box_ids = {b.shape_id for b in boxes}
+        for cxn in connectors:
+            glue = cxn._element.nvCxnSpPr.cNvCxnSpPr
+            self.assertIn(glue.stCxn.id, box_ids)
+            self.assertIn(glue.endCxn.id, box_ids)
+
+    def test_connector_frame_maps_start_and_end(self):
+        from hr.orgchart import connector_frame
+
+        for start, end in (((100, 50), (40, 120)), ((100, 50), (180, 120)), ((10, 0), (30, 40))):
+            rot, _flip_h, _flip_v, (x, y, w, h) = connector_frame(start, end)
+            self.assertIn(rot, (90, 270))  # first leg runs down
+            self.assertAlmostEqual(x + w / 2, (start[0] + end[0]) / 2)
+            self.assertAlmostEqual(y + h / 2, (start[1] + end[1]) / 2)
+
+    # --- Editing reporting lines (O2) -----------------------------------------------------
+
+    def _post_lines(self, user, data):
+        self.client.force_login(user)
+        return self.client.post(f"/offices/{self.office_a.pk}/chart/edit/", data)
+
+    def test_hrmo_edits_lines_with_version_check_and_audit(self):
+        resp = self._post_lines(self.hrmo_user, {
+            f"reports_to_{self.clerk.pk}": str(self.boss.pk), f"version_{self.clerk.pk}": str(self.clerk.version),
+        })
+        self.assertRedirects(resp, f"/offices/{self.office_a.pk}/chart/", fetch_redirect_response=False)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.boss)
+        self.assertEqual(self.clerk.version, 2)
+        self.eng_a.refresh_from_db()
+        self.assertEqual(self.eng_a.reports_to, self.boss)  # rows not posted stay as they were
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.UPDATE, model_name="Engagement", object_id=str(self.clerk.pk)
+        ).exists())
+
+        stale = self._post_lines(self.hrmo_user, {f"reports_to_{self.clerk.pk}": "", f"version_{self.clerk.pk}": "1"})
+        self.assertRedirects(stale, f"/offices/{self.office_a.pk}/chart/edit/", fetch_redirect_response=False)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.boss)
+
+    def test_cycles_other_offices_and_job_order_supervisors_are_refused(self):
+        bad = [
+            {f"reports_to_{self.boss.pk}": str(self.clerk.pk), f"version_{self.boss.pk}": "1"},  # loop
+            {f"reports_to_{self.clerk.pk}": str(self.eng_b.pk), f"version_{self.clerk.pk}": "1"},  # other office
+            {f"reports_to_{self.clerk.pk}": str(self.jo.pk), f"version_{self.clerk.pk}": "1"},  # JO as supervisor
+            {f"reports_to_{self.clerk.pk}": str(self.clerk.pk), f"version_{self.clerk.pk}": "1"},  # self
+        ]
+        for data in bad:
+            resp = self._post_lines(self.hrmo_user, data)
+            self.assertEqual(resp.status_code, 200, data)
+            self.assertContains(resp, "Nothing was saved")
+        self.boss.refresh_from_db()
+        self.clerk.refresh_from_db()
+        self.assertIsNone(self.boss.reports_to)
+        self.assertEqual(self.clerk.reports_to, self.eng_a)
+
+    def test_only_hrmo_edits_lines(self):
+        for user in (self.head_a, self.staff_a, self.emp_a_user, self.auditor_user):
+            resp = self._post_lines(user, {f"reports_to_{self.clerk.pk}": "", f"version_{self.clerk.pk}": "1"})
+            self.assertEqual(resp.status_code, 403)
+        self.clerk.refresh_from_db()
+        self.assertEqual(self.clerk.reports_to, self.eng_a)
+
+    def test_engagement_form_checks_reports_to(self):
+        form = EngagementForm(instance=self.clerk, user=self.hrmo_user, data={
+            "office": self.office_a.pk, "type": Engagement.Type.CASUAL, "position_title": "Administrative Aide IV",
+            "start_date": "2025-01-01", "status": Engagement.Status.ACTIVE, "reports_to": self.eng_b.pk,
+            "version": self.clerk.version,
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn("same office", form.errors["reports_to"][0])
+
+    def test_ending_an_appointment_hands_reports_to_the_renewal(self):
+        from hr.orgchart import hand_over_direct_reports
+
+        renewal = Engagement.objects.create(
+            person=self.person_a, office=self.office_a, type=Engagement.Type.PLANTILLA,
+            position_title="Executive Assistant V", salary_grade=23, step=1, item_number="SP-MO-002",
+            start_date=date(2026, 1, 1), status=Engagement.Status.ACTIVE, reports_to=self.boss,
+        )
+        self.eng_a.status = Engagement.Status.ENDED
+        self.eng_a.save()
+        self.assertEqual(hand_over_direct_reports(self.eng_a), 2)
+        self.clerk.refresh_from_db()
+        self.jo.refresh_from_db()
+        self.assertEqual((self.clerk.reports_to, self.jo.reports_to), (renewal, renewal))
+
+    @override_settings(DEBUG=True)
+    def test_seed_reporting_lines_fills_only_empty_lines(self):
+        from io import StringIO
+
+        self.boss.position_title = "Municipal Mayor"
+        self.clerk.reports_to = None
+        self.clerk.save()
+        call_command("seed_reporting_lines", stdout=StringIO())
+        self.clerk.refresh_from_db()
+        self.eng_a.refresh_from_db()
+        self.assertIsNotNone(self.clerk.reports_to)
+        self.assertEqual(self.eng_a.reports_to, self.boss)  # existing line kept

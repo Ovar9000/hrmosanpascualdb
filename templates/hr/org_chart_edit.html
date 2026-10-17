@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Reporting lines · {{ office.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% url 'office_chart' office.pk %}" class="btn btn-sm btn-outline-secondary">← Back to the org chart</a>
+</div>
+<h1 class="h3 mb-1">Reporting lines</h1>
+<p class="text-muted mb-3">{{ office.name }}. Pick who each person reports to. Leave the office head on
+  "Top of the chart". Every change is audit-logged.</p>
+
+{% if has_errors %}
+  <div class="alert alert-danger">Nothing was saved. Fix the rows marked below.</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  {% include "hr/_reporting_rows.html" with rows=chart_rows caption="On the chart (Elected, Plantilla, Casual, Contractual)" %}
+  {% if other_rows %}
+    <details class="mb-3"{% if other_has_errors %} open{% endif %}>
+      <summary class="mb-2">Not drawn on the chart: Job Order, Contract of Service and project-based ({{ other_rows|length }})</summary>
+      <p class="small text-muted">Optional. Recording their supervisor lets new hires see who they report to on the My Office page.</p>
+      {% include "hr/_reporting_rows.html" with rows=other_rows caption="" %}
+    </details>
+  {% endif %}
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Save reporting lines</button>
+    <a class="btn btn-outline-secondary" href="{% url 'office_chart' office.pk %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

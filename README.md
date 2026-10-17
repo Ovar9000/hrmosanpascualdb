@@ -178,7 +178,8 @@ Pick the project and the `web` service. Then:
 railway ssh -- sh scripts/railway_demo_setup.sh
 ```
 
-This loads offices, roles, ~420 fake people and calendar samples, and prints the
+This loads offices, roles, ~420 fake people, calendar samples and org chart reporting
+lines (empty ones only), and prints the
 `demo_*` usernames with **one-time passwords, shown once**. Copy them now. Run it again
 later safely; add `--new-passwords` to reissue passwords.
 

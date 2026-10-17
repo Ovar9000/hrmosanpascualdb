@@ -7,7 +7,10 @@
     <h1 class="h4 mb-0">Municipal Offices Directory</h1>
     <div class="text-muted small">Municipality of San Pascual</div>
   </div>
-  <span class="badge bg-primary fs-6">{{ offices|length }} Offices</span>
+  <div class="d-flex align-items-center gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'office_tree' %}">Office tree</a>
+    <span class="badge bg-primary fs-6">{{ offices|length }} Offices</span>
+  </div>
 </div>
 
 <!-- Search & Filter Card -->

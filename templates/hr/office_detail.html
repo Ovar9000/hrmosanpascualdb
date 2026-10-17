@@ -14,7 +14,8 @@
         <h1 class="h3 mb-1">{{ office.name }}</h1>
         {% if office.acronym %}<div class="text-muted fw-bold">{{ office.acronym }}</div>{% endif %}
       </div>
-      <div class="d-flex gap-1">
+      <div class="d-flex flex-wrap align-items-center gap-1">
+        <a class="btn btn-sm btn-outline-primary me-1" href="{% url 'office_chart' office.pk %}">Org chart</a>
         <span class="badge 
           {% if office.branch == 'legislative' %}bg-info text-dark
           {% elif office.branch == 'other' %}bg-secondary

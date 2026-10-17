@@ -1,0 +1,35 @@
+<div class="card shadow-sm border-0 mb-3">
+  {% if caption %}<div class="card-header bg-white fw-bold py-2">{{ caption }}</div>{% endif %}
+  <div class="table-responsive">
+    <table class="table align-middle mb-0 small">
+      <thead class="table-light">
+        <tr><th>Person</th><th>Position</th><th style="min-width: 18rem">Reports to</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr{% if row.error %} class="table-danger"{% endif %}>
+            <td>
+              <div class="fw-semibold">{{ row.eng.person.full_name }}</div>
+              <div class="text-muted">{{ row.eng.get_type_display }}</div>
+            </td>
+            <td>{{ row.eng.position_title }}</td>
+            <td>
+              <input type="hidden" name="version_{{ row.eng.pk }}" value="{{ row.eng.version }}">
+              <label class="visually-hidden" for="reports_to_{{ row.eng.pk }}">Reports to, for {{ row.eng.person.full_name }}</label>
+              <select class="form-select form-select-sm" name="reports_to_{{ row.eng.pk }}" id="reports_to_{{ row.eng.pk }}">
+                <option value="">— Top of the chart —</option>
+                {% for sup in row.options %}
+                  <option value="{{ sup.pk }}"{% if sup.pk == row.selected %} selected{% endif %}>{{ sup.person.full_name }} — {{ sup.position_title }}</option>
+                {% endfor %}
+              </select>
+              {% if row.broken %}<div class="text-warning-emphasis mt-1">Was reporting to {{ row.eng.reports_to.person.full_name }}, whose appointment is no longer active.</div>{% endif %}
+              {% if row.error %}<div class="text-danger mt-1">{{ row.error }}</div>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="text-muted text-center py-3">Nobody here.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

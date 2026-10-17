@@ -17,7 +17,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.utils.text import slugify
 from django.views.decorators.http import require_POST
+from . import orgchart
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -49,9 +51,12 @@ from .permissions import (
     can_manage_projects,
     can_view_contacts,
     can_view_document_content,
+    can_view_chart_types,
     can_view_document_list,
     can_view_hr_notes,
     can_view_ids,
+    can_view_office_chart,
+    can_view_office_tree,
     can_view_pay,
     can_view_personal_details,
     can_approve_leave,
@@ -166,6 +171,252 @@ def office_detail(request, pk):
             "active_engagements": active_engagements,
             "ended_engagements": ended_engagements,
             "can_view_rates": can_view_pay(request.user),
+        },
+    )
+
+
+# --- Org charts (DECISIONS O1-O5) -----------------------------------------------
+
+
+def _chart_or_403(request, office):
+    if is_sysadmin(request.user) and not request.user.is_superuser:
+        raise PermissionDenied("System administrators have no access to HR records.")
+    if not can_view_office_chart(request.user, office):
+        raise PermissionDenied("You can only see the org chart of your own office.")
+
+
+def _viewer_engagement(user, office):
+    """The viewer's own active engagement in this office, if any (for "You" on the chart)."""
+    person_id = getattr(getattr(user, "profile", None), "person_id", None)
+    if not person_id:
+        return None
+    return (
+        office.engagements.filter(person_id=person_id, status=Engagement.Status.ACTIVE)
+        .select_related("reports_to__person")
+        .order_by("-start_date")
+        .first()
+    )
+
+
+def _staff_chart(request, office):
+    you = _viewer_engagement(request.user, office)
+    candidates = Engagement.objects.filter(office=office, status=Engagement.Status.ACTIVE).values("person_id")
+    linked = set(get_visible_people(request.user).filter(pk__in=candidates).values_list("pk", flat=True))
+    staff = orgchart.build_staff_chart(
+        office,
+        show_types=can_view_chart_types(request.user),
+        linked_person_ids=linked,
+        you=you if you and you.on_chart else None,
+    )
+    return staff, you
+
+
+def _not_drawn_note(not_drawn):
+    if not not_drawn:
+        return ""
+    parts = ", ".join(f"{n} {label}" for label, n in sorted(not_drawn.items()))
+    return f"Not drawn: {parts}. "
+
+
+def _office_tree_scope(user):
+    """Offices whose head and headcount the viewer may see, and whose chart they may open."""
+    ids = set(get_visible_offices(user).values_list("pk", flat=True))
+    own = get_user_office(user)
+    if own is not None:
+        ids.add(own.pk)
+    return ids
+
+
+@login_required
+def office_tree(request):
+    """The municipal office tree, from Office.parent."""
+    if not can_view_office_tree(request.user):
+        raise PermissionDenied("You do not have access to the office tree.")
+    scope = _office_tree_scope(request.user)
+    chart = orgchart.build_office_tree(detail_office_ids=scope, linked_office_ids=scope)
+    return render(
+        request,
+        "hr/org_chart.html",
+        {
+            "heading": "Municipal office tree",
+            "svg": orgchart.render_svg(chart, "Municipal office tree"),
+            "export_urls": {f: reverse("office_tree_export", args=[f]) for f in orgchart.EXPORTS},
+            "is_tree": True,
+            "own_office": get_user_office(request.user),
+        },
+    )
+
+
+@login_required
+def office_chart(request, pk):
+    """One office's staff chart, with the viewer's place in it."""
+    office = get_object_or_404(Office.objects.select_related("parent"), pk=pk)
+    _chart_or_403(request, office)
+    staff, you = _staff_chart(request, office)
+
+    supervisor = None
+    if you and you.reports_to_id and you.reports_to.status == Engagement.Status.ACTIVE:
+        supervisor = you.reports_to
+    coworkers = []
+    if you:
+        coworkers = list(
+            office.engagements.filter(status=Engagement.Status.ACTIVE)
+            .exclude(person_id=you.person_id)
+            .select_related("person")
+            .order_by("person__last_name", "person__first_name")
+        )
+    return render(
+        request,
+        "hr/org_chart.html",
+        {
+            "heading": office.name,
+            "office": office,
+            "svg": orgchart.render_svg(staff.chart, f"Org chart of {office.name}"),
+            "staff": staff,
+            "not_drawn_note": _not_drawn_note(staff.not_drawn),
+            "export_urls": {f: reverse("office_chart_export", args=[office.pk, f]) for f in orgchart.EXPORTS},
+            "you": you,
+            "supervisor": supervisor,
+            "coworkers": coworkers,
+            "can_edit": can_manage_hr_records(request.user),
+            "can_view_tree": can_view_office_tree(request.user),
+        },
+    )
+
+
+@login_required
+def my_office(request):
+    """Shortcut for employees: the chart of the office they work in."""
+    office = get_user_office(request.user)
+    if office is None:
+        messages.info(request, "Your account is not linked to an office yet. Ask HRMO to link it.")
+        return redirect("home")
+    return redirect("office_chart", pk=office.pk)
+
+
+def _export_response(request, fmt, chart, heading, note, filename, object_id):
+    if fmt not in orgchart.EXPORTS:
+        raise Http404("Unknown export format.")
+    content_type, renderer = orgchart.EXPORTS[fmt]
+    content = renderer(chart, heading, note)
+    # Logged once the file exists, like the audit CSV export (DECISIONS U1).
+    log_audit_event(
+        action=AuditLog.Action.EXPORT,
+        model_name="Office",
+        object_id=str(object_id),
+        object_repr=f"Org chart {fmt.upper()}: {heading}"[:255],
+        request=request,
+    )
+    response = HttpResponse(content, content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}.{fmt}"'
+    return response
+
+
+@login_required
+def office_tree_export(request, fmt):
+    if not can_view_office_tree(request.user):
+        raise PermissionDenied("You do not have access to the office tree.")
+    chart = orgchart.build_office_tree(detail_office_ids=_office_tree_scope(request.user))
+    return _export_response(
+        request, fmt, chart, "San Pascual municipal office tree", orgchart.export_note(),
+        f"san-pascual-office-tree-{timezone.localdate():%Y-%m-%d}", "",
+    )
+
+
+@login_required
+def office_chart_export(request, pk, fmt):
+    office = get_object_or_404(Office, pk=pk)
+    _chart_or_403(request, office)
+    staff, _you = _staff_chart(request, office)
+    name = slugify(office.acronym or office.name) or "office"
+    return _export_response(
+        request, fmt, staff.chart, f"{office.name} org chart",
+        orgchart.export_note(_not_drawn_note(staff.not_drawn)),
+        f"org-chart-{name}-{timezone.localdate():%Y-%m-%d}", office.pk,
+    )
+
+
+@login_required
+def office_chart_edit(request, pk):
+    """HRMO edits a whole office's reporting lines on one screen (DECISIONS O2).
+
+    Only rows present in the POST are changed, each supervisor must come from this office's
+    active chart appointments, and every changed row passes the S2 version check.
+    """
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("You do not have permission to edit reporting lines.")
+    office = get_object_or_404(Office, pk=pk)
+    active = sorted(
+        office.engagements.filter(status=Engagement.Status.ACTIVE).select_related("person", "reports_to__person"),
+        key=lambda e: (e.reports_to_id is not None, orgchart.sort_key(e)),  # heads first
+    )
+    by_pk = {e.pk: e for e in active}
+    supervisors = [e for e in active if e.on_chart]
+
+    proposed = {e.pk: e.reports_to_id for e in active}
+    errors = {}
+    if request.method == "POST":
+        for eng in active:
+            key = f"reports_to_{eng.pk}"
+            if key not in request.POST:
+                continue
+            raw = request.POST[key].strip()
+            if raw == "":
+                proposed[eng.pk] = None
+            elif raw.isdigit() and int(raw) in by_pk:
+                proposed[eng.pk] = int(raw)
+            else:
+                errors[eng.pk] = "Choose someone from the list."
+        for eng_pk, message in orgchart.reporting_line_errors(by_pk, proposed).items():
+            errors.setdefault(eng_pk, message)
+
+        if not errors:
+            changed = [e for e in active if proposed[e.pk] != e.reports_to_id]
+            conflict = False
+            with transaction.atomic():
+                locked = Engagement.objects.select_for_update().in_bulk([e.pk for e in changed])
+                for eng in changed:
+                    row = locked.get(eng.pk)
+                    posted_version = request.POST.get(f"version_{eng.pk}", "")
+                    if row is None or str(row.version) != posted_version or row.status != Engagement.Status.ACTIVE:
+                        conflict = True
+                if not conflict:
+                    for eng in changed:
+                        row = locked[eng.pk]
+                        row.reports_to_id = proposed[eng.pk]
+                        row.version += 1
+                        row.save()
+            if conflict:
+                messages.error(
+                    request,
+                    "Someone changed these appointments while you were editing. Nothing was saved; "
+                    "the page now shows the latest data.",
+                )
+                return redirect("office_chart_edit", pk=office.pk)
+            if changed:
+                messages.success(request, f"Saved {len(changed)} reporting line change(s) for {office.name}.")
+            else:
+                messages.info(request, "No changes to save.")
+            return redirect("office_chart", pk=office.pk)
+
+    def row(eng):
+        return {
+            "eng": eng,
+            "selected": proposed.get(eng.pk),
+            "error": errors.get(eng.pk, ""),
+            "options": [s for s in supervisors if s.pk != eng.pk],
+            "broken": bool(eng.reports_to_id and eng.reports_to_id not in by_pk),
+        }
+
+    return render(
+        request,
+        "hr/org_chart_edit.html",
+        {
+            "office": office,
+            "chart_rows": [row(e) for e in active if e.on_chart],
+            "other_rows": [row(e) for e in active if not e.on_chart],
+            "has_errors": bool(errors),
+            "other_has_errors": any(not e.on_chart and e.pk in errors for e in active),
         },
     )
 
@@ -462,6 +713,8 @@ def engagement_edit(request, pk):
                 saved_eng = form.save(commit=False)
                 saved_eng.version = locked_eng.version + 1
                 saved_eng.save()
+                if locked_eng.status == Engagement.Status.ACTIVE:
+                    orgchart.hand_over_direct_reports(saved_eng)
 
             messages.success(
                 request,
@@ -516,6 +769,7 @@ def engagement_end(request, pk):
                     locked_eng.notes = f"{locked_eng.notes}\n{note_entry}".strip()
                 locked_eng.version += 1
                 locked_eng.save()
+                orgchart.hand_over_direct_reports(locked_eng)
 
             messages.success(
                 request,
@@ -552,6 +806,8 @@ def engagement_renew(request, pk):
                 new_eng.person = old_eng.person
                 new_eng.version = 1
                 new_eng.save()
+                old_eng.refresh_from_db()
+                orgchart.hand_over_direct_reports(old_eng)
 
             messages.success(
                 request,
@@ -571,6 +827,7 @@ def engagement_renew(request, pk):
             "step": old_eng.step,
             "item_number": old_eng.item_number,
             "project": old_eng.project_id,
+            "reports_to": old_eng.reports_to_id,
             "start_date": start_date,
             "status": Engagement.Status.ACTIVE,
         }

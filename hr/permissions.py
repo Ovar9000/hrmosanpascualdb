@@ -284,3 +284,37 @@ def get_visible_offices(user):
 
     return Office.objects.none()
 
+
+
+# --- Org charts (DECISIONS O3) ------------------------------------------------
+
+
+def can_view_office_tree(user):
+    """The municipal office tree (office names and head titles): anyone with HR access or an office.
+
+    Head names and staff counts on it follow can_view_office_chart per office.
+    """
+    if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
+        return False
+    return has_all_office_scope(user) or get_user_office(user) is not None
+
+
+def can_view_office_chart(user, office):
+    """An office's staff chart: offices the role can already see, plus the user's own office.
+
+    The second part is employee self-service, so a new hire can see their head and coworkers
+    (names and positions only, see can_view_chart_types).
+    """
+    if not user or not user.is_authenticated or office is None:
+        return False
+    if is_sysadmin(user) and not user.is_superuser:
+        return False
+    if get_visible_offices(user).filter(pk=office.pk).exists():
+        return True
+    own = get_user_office(user)
+    return own is not None and own.pk == office.pk
+
+
+def can_view_chart_types(user):
+    """Appointment type on chart boxes: the roles that already see it on office pages (R4)."""
+    return has_all_office_scope(user) or is_office_head(user) or is_office_staff(user)

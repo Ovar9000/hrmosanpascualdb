@@ -4,6 +4,12 @@ from . import views
 urlpatterns = [
     path("offices/", views.office_list, name="office_list"),
     path("offices/<int:pk>/", views.office_detail, name="office_detail"),
+    path("offices/chart/", views.office_tree, name="office_tree"),
+    path("offices/chart/export/<str:fmt>/", views.office_tree_export, name="office_tree_export"),
+    path("offices/<int:pk>/chart/", views.office_chart, name="office_chart"),
+    path("offices/<int:pk>/chart/edit/", views.office_chart_edit, name="office_chart_edit"),
+    path("offices/<int:pk>/chart/export/<str:fmt>/", views.office_chart_export, name="office_chart_export"),
+    path("my-office/", views.my_office, name="my_office"),
     path("people/", views.person_list, name="person_list"),
     path("people/new/", views.person_create, name="person_create"),
     path("people/<int:pk>/", views.person_detail, name="person_detail"),

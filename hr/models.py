@@ -228,11 +228,23 @@ class Engagement(models.Model):
         LUMP_SUM = "lump_sum", "Lump sum"
 
     LEAVE_CREDIT_TYPES = [Type.PLANTILLA, Type.CASUAL]
+    # Types drawn as boxes on the org chart; JO, COS and project-based are only counted (DECISIONS O1).
+    CHART_TYPES = [Type.ELECTED, Type.PLANTILLA, Type.CASUAL, Type.CONTRACTUAL]
 
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="engagements")
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="engagements")
     type = models.CharField(max_length=20, choices=Type.choices)
     position_title = models.CharField(max_length=150)
+    # Org chart reporting line: an active chart-type engagement in the same office (DECISIONS O2).
+    # Empty means top of the office chart (usually the office head).
+    reports_to = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="direct_reports",
+        verbose_name="Reports to",
+    )
     # Payroll *input* only (DECISIONS D2). Visible to HRMO and auditors only (R6).
     rate = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     rate_basis = models.CharField(max_length=20, choices=RateBasis.choices, blank=True)
@@ -321,6 +333,10 @@ class Engagement(models.Model):
         overrides the stored value, so HRMO can record Plantilla/Casual without leave.
         """
         return engagement_type in cls.LEAVE_CREDIT_TYPES
+
+    @property
+    def on_chart(self):
+        return self.type in self.CHART_TYPES
 
 
 # --- Documents (kept simple until the survey, DECISIONS F1) ------------------
