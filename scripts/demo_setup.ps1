@@ -134,6 +134,10 @@ Write-Step "Filling empty org chart reporting lines"
 $lines = Invoke-Manage seed_reporting_lines
 Write-Ok ($lines | Select-Object -Last 1)
 
+Write-Step "Reminders: sample lapsed contracts and retirements"
+$reminders = Invoke-Manage seed_demo_reminders
+Write-Ok ($reminders | Select-Object -Last 1)
+
 Write-Step "Salary actions: sample long careers, then the daily check"
 $salary = Invoke-Manage seed_demo_salary_history
 Write-Ok ($salary | Select-Object -Last 1)

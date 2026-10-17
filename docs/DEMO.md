@@ -132,6 +132,15 @@ it on public Wi-Fi.
 4. On a step increment case, **record leave without pay** → the due date moves later.
 5. **Calendar** → the purple *Salary* entries (HRMO and Auditor only).
 
+### 3d. Reminder lists (2 min) · `demo_hrmo`
+
+1. **Tracker → Contract renewals:** one contract shows **Lapsed** (ended 10 days ago, still
+   active). **Renew** or **End** opens the usual screens. **Export to Excel** for the contracts unit.
+2. **Tracker → Retirement:** one person past 65, one turning 65 in three months, one who can
+   retire optionally. The 65th birthdays are also on the **Calendar** ("Retires").
+3. **Tracker → Year-end bonus:** this year's list as of October 31, with who gets the full
+   bonus, a prorated cash gift, or nothing. No amounts: the Excel file goes to payroll.
+
 ### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.

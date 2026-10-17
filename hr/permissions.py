@@ -337,3 +337,9 @@ def can_view_salary_actions(user):
     if not user or not user.is_authenticated:
         return False
     return can_manage_salary_actions(user) or user.has_perm("hr.view_salary_actions") or is_auditor(user)
+
+
+def can_view_trackers(user):
+    """Contract renewals, retirement and year-end bonus lists (DECISIONS RM4): they use birthdates
+    and pay eligibility, so the same audience as salary actions: HRMO and Auditor."""
+    return can_view_salary_actions(user)

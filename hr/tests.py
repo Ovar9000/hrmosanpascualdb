@@ -4311,3 +4311,140 @@ class SalaryActionsTestCase(TestCase):
         self.assertContains(self.client.get(f"/people/{case.person_id}/"), "Next salary increase (step)")
         self.client.force_login(self.head_a)
         self.assertNotContains(self.client.get("/calendar/" + month), "step 1 → 2")
+
+
+@override_settings(RENEWAL_LOOKAHEAD_DAYS=45)
+class RemindersTestCase(TestCase):
+    """RM1-RM5: contract renewals, retirement and year-end bonus lists."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _seq = 900
+    TODAY = date(2026, 10, 17)
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _person(self, last="Del Pilar", birthdate=date(1985, 1, 1)):
+        RemindersTestCase._seq += 1
+        return Person.objects.create(employee_no=f"SP-0{RemindersTestCase._seq}", last_name=last,
+                                     first_name="Gregorio", birthdate=birthdate)
+
+    def _eng(self, person, eng_type, start, end=None, status=Engagement.Status.ACTIVE, item="SP-MTO-050"):
+        plantilla = eng_type == Engagement.Type.PLANTILLA
+        return Engagement.objects.create(
+            person=person, office=self.office_b, type=eng_type, position_title="Clerk",
+            salary_grade=8 if plantilla else None, step=1 if plantilla else None,
+            item_number=item if plantilla else "", start_date=start, end_date=end, status=status,
+        )
+
+    # --- Renewals (RM1) -------------------------------------------------------------------
+
+    def test_renewals_list_lapsed_and_soon_and_drop_renewed(self):
+        from hr.reminders import renewal_rows
+
+        lapsed = self._eng(self._person("Lapsed"), Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 10, 7))
+        soon = self._eng(self._person("Soon"), Engagement.Type.CONTRACT_OF_SERVICE, date(2026, 7, 1), date(2026, 11, 20))
+        self._eng(self._person("Later"), Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 12, 31))
+        renewed_person = self._person("Renewed")
+        renewed = self._eng(renewed_person, Engagement.Type.JOB_ORDER, date(2026, 7, 1), date(2026, 11, 1))
+        self._eng(renewed_person, Engagement.Type.JOB_ORDER, date(2026, 11, 2), date(2027, 4, 30))
+        rows = {r["eng"].pk: r for r in renewal_rows(self.TODAY)}
+        self.assertEqual(set(rows), {lapsed.pk, soon.pk})
+        self.assertTrue(rows[lapsed.pk]["lapsed"])
+        self.assertEqual(rows[lapsed.pk]["ago"], 10)
+        self.assertNotIn(renewed.pk, rows)
+
+    # --- Retirement (RM2) -----------------------------------------------------------------
+
+    def test_retirement_groups(self):
+        from hr.reminders import retirement_rows
+
+        past = self._person("Past", date(1961, 9, 1))
+        self._eng(past, Engagement.Type.PLANTILLA, date(2010, 1, 1))
+        soon = self._person("Soon", date(1962, 3, 1))
+        self._eng(soon, Engagement.Type.CASUAL, date(2020, 1, 1))
+        optional = self._person("Optional", date(1965, 5, 1))
+        self._eng(optional, Engagement.Type.CASUAL, date(2008, 1, 1), date(2011, 12, 31), Engagement.Status.ENDED)
+        self._eng(optional, Engagement.Type.PLANTILLA, date(2012, 1, 1), item="SP-MTO-051")
+        young_service = self._person("ShortService", date(1964, 5, 1))
+        self._eng(young_service, Engagement.Type.PLANTILLA, date(2020, 1, 1), item="SP-MTO-052")
+        jo = self._person("OldJO", date(1950, 1, 1))
+        self._eng(jo, Engagement.Type.JOB_ORDER, date(2026, 1, 1), date(2026, 12, 31))
+        groups = retirement_rows(self.TODAY)
+        names = {k: [r["person"].last_name for r in v] for k, v in groups.items()}
+        self.assertEqual(names, {"past": ["Past"], "soon": ["Soon"], "optional": ["Optional"]})
+        self.assertEqual(groups["optional"][0]["service_years"], 18)
+
+    # --- Year-end bonus (RM3) -------------------------------------------------------------
+
+    def test_year_end_bonus_eligibility(self):
+        from hr.reminders import ELIGIBLE, NOT_IN_SERVICE, PRORATED, yeb_rows
+
+        full = self._person("Full")
+        self._eng(full, Engagement.Type.CASUAL, date(2026, 1, 1), date(2026, 3, 31), Engagement.Status.ENDED)
+        self._eng(full, Engagement.Type.CONTRACTUAL, date(2026, 9, 1), date(2026, 12, 31))  # 90 + 61 days
+        short = self._person("Short")
+        self._eng(short, Engagement.Type.PLANTILLA, date(2026, 8, 1))  # 92 days by Oct 31
+        left = self._person("Left")
+        self._eng(left, Engagement.Type.PLANTILLA, date(2020, 1, 1), date(2026, 6, 30), Engagement.Status.RESIGNED)
+        jo = self._person("JobOrder")
+        self._eng(jo, Engagement.Type.JOB_ORDER, date(2026, 1, 1), date(2026, 12, 31))
+        rows = {r["person"].last_name: r for r in yeb_rows(2026, self.TODAY)}
+        self.assertEqual(rows["Full"]["result"], ELIGIBLE)
+        self.assertEqual(rows["Full"]["days"], 151)
+        self.assertEqual(rows["Short"]["result"], PRORATED)
+        self.assertEqual(rows["Left"]["result"], NOT_IN_SERVICE)
+        self.assertNotIn("JobOrder", rows)
+
+    # --- Pages, exports, calendar (RM4) ---------------------------------------------------
+
+    def test_only_hrmo_and_auditor_see_the_lists(self):
+        pages = ["/tracker/renewals/", "/tracker/retirement/", "/tracker/year-end-bonus/"]
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            for page in pages:
+                self.assertEqual(self.client.get(page).status_code, 403, (user, page))
+        for user in (self.hrmo_user, self.auditor_user):
+            self.client.force_login(user)
+            for page in pages:
+                self.assertEqual(self.client.get(page).status_code, 200, (user, page))
+
+    def test_excel_exports_are_audited_and_formula_safe(self):
+        from openpyxl import load_workbook
+
+        person = self._person("=HYPERLINK(1)")
+        self._eng(person, Engagement.Type.JOB_ORDER, date(2025, 1, 1), timezone_today_plus(5))
+        self.client.force_login(self.hrmo_user)
+        for page in ("/tracker/renewals/", "/tracker/retirement/", "/tracker/year-end-bonus/"):
+            resp = self.client.get(page + "?export=xlsx")
+            self.assertEqual(resp.status_code, 200, page)
+            self.assertTrue(resp.content.startswith(b"PK"))
+        sheet = load_workbook(BytesIO(self.client.get("/tracker/renewals/?export=xlsx").content)).active
+        names = [row[1] for row in sheet.iter_rows(min_row=2, values_only=True)]
+        self.assertIn("'=HYPERLINK(1), Gregorio", names)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="Engagement").count(), 4)
+
+    def test_calendar_shows_65th_birthdays_to_hrmo_only(self):
+        from hr.salary_actions import add_years
+
+        turning = timezone_today_plus(10)
+        person = self._person("Retiree", add_years(turning, -65))
+        self._eng(person, Engagement.Type.PLANTILLA, date(2010, 1, 1))
+        month = f"?month={turning:%Y-%m}"
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "Turns 65 (compulsory retirement)")
+        self.client.force_login(self.head_a)
+        self.assertNotContains(self.client.get("/calendar/" + month), "Turns 65")
+
+    def test_menu_dot_when_a_contract_lapsed(self):
+        self.client.force_login(self.hrmo_user)
+        self.assertNotContains(self.client.get("/people/"), "needs attention")
+        self._eng(self._person(), Engagement.Type.JOB_ORDER, date(2025, 1, 1), timezone_today_plus(-3))
+        self.assertContains(self.client.get("/people/"), "needs attention")
+
+
+def timezone_today_plus(days):
+    from datetime import timedelta
+    from django.utils import timezone
+
+    return timezone.localdate() + timedelta(days=days)

@@ -33,7 +33,15 @@
             <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices</a></li>
           {% endif %}
           {% if org_nav.salary %}
-            <li class="nav-item"><a class="nav-link position-relative" href="{% url 'salary_action_list' %}">Salary Actions{% if org_nav.salary_due %}<span class="position-absolute top-0 end-0 mt-2 p-1 bg-warning rounded-circle" title="Cases due"><span class="visually-hidden">(cases due)</span></span>{% endif %}</a></li>
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tracker{% if org_nav.salary_due or org_nav.attention %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{% url 'salary_action_list' %}">Salary increases &amp; loyalty</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_renewals' %}">Contract renewals</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_retirement' %}">Retirement</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_year_end_bonus' %}">Year-end bonus</a></li>
+              </ul>
+            </li>
           {% endif %}
           {% if perms.hr.view_project %}
             <li class="nav-item"><a class="nav-link" href="{% url 'project_list' %}">Projects</a></li>

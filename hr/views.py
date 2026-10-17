@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from io import BytesIO
 from calendar import Calendar
 from urllib.parse import urlencode
 from datetime import date, timedelta
@@ -19,7 +20,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views.decorators.http import require_POST
-from . import orgchart, salary_actions
+from . import orgchart, reminders, salary_actions
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -66,6 +67,7 @@ from .permissions import (
     can_view_project_roster,
     can_view_projects,
     can_view_salary_actions,
+    can_view_trackers,
     get_user_office,
     get_visible_offices,
     get_visible_people,
@@ -1367,6 +1369,148 @@ def salary_interruption_create(request, pk):
     return redirect("salary_action_detail", pk=pk)
 
 
+# --- Reminder lists: renewals, retirement, year-end bonus (DECISIONS RM1-RM5) ----------
+
+
+def _require_tracker_view(request):
+    if is_sysadmin(request.user) and not request.user.is_superuser:
+        raise PermissionDenied("System administrators have no access to HR records.")
+    if not can_view_trackers(request.user):
+        raise PermissionDenied("These lists are for HRMO and Auditor only.")
+
+
+def _xlsx_response(request, filename, sheet, headers, rows, audit_repr):
+    """An Excel file of a reminder list. Text that looks like a formula is written as text (U1)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    book = Workbook()
+    ws = book.active
+    ws.title = sheet[:31]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in rows:
+        ws.append([csv_safe(v) if isinstance(v, str) else v for v in row])
+    for column in ws.columns:
+        width = max(len(str(c.value or "")) for c in column)
+        ws.column_dimensions[column[0].column_letter].width = min(max(width + 2, 10), 60)
+    ws.freeze_panes = "A2"
+    buf = BytesIO()
+    book.save(buf)
+    log_audit_event(action=AuditLog.Action.EXPORT, model_name="Engagement", object_repr=audit_repr[:255], request=request)
+    response = HttpResponse(
+        buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _office_and_type_filters(request):
+    office = None
+    office_id = request.GET.get("office", "")
+    if office_id.isdigit():
+        office = Office.objects.filter(pk=int(office_id)).first()
+    eng_type = request.GET.get("type", "")
+    if eng_type not in Engagement.Type.values:
+        eng_type = ""
+    return office, eng_type
+
+
+@login_required
+def tracker_renewals(request):
+    """Contracts that lapsed or end soon, so HRMO renews or ends them on time (RM1)."""
+    _require_tracker_view(request)
+    today = timezone.localdate()
+    office, eng_type = _office_and_type_filters(request)
+    rows = reminders.renewal_rows(today, office, eng_type)
+    if request.GET.get("export") == "xlsx":
+        return _xlsx_response(
+            request, f"contract-renewals-{today:%Y-%m-%d}.xlsx", "Contract renewals",
+            ["Employee no.", "Name", "Office", "Type", "Position", "End date", "Days left", "Note"],
+            [[r["eng"].person.employee_no, r["eng"].person.full_name, r["eng"].office.name,
+              r["eng"].get_type_display(), r["eng"].position_title, r["eng"].end_date, r["days"],
+              ("Already renewed: end this record" if r["renewed"] else "Lapsed: renew or end") if r["lapsed"] else ""]
+             for r in rows],
+            "Contract renewals list (Excel)",
+        )
+    params = [(k, v) for k, v in (("office", office.pk if office else ""), ("type", eng_type)) if v]
+    return render(request, "hr/tracker_renewals.html", {
+        "tracker": "renewals",
+        "rows": rows,
+        "lapsed": sum(1 for r in rows if r["lapsed"]),
+        "window": settings.RENEWAL_LOOKAHEAD_DAYS,
+        "offices": Office.objects.order_by("name"),
+        "office": office,
+        "types": Engagement.Type.choices,
+        "eng_type": eng_type,
+        "export_qs": urlencode(params + [("export", "xlsx")]),
+        "can_manage": can_manage_hr_records(request.user),
+    })
+
+
+@login_required
+def tracker_retirement(request):
+    """Compulsory (65) and optional (60 with 15 years) retirement, from birthdates (RM2)."""
+    _require_tracker_view(request)
+    today = timezone.localdate()
+    groups = reminders.retirement_rows(today)
+    if request.GET.get("export") == "xlsx":
+        labels = {"past": "Past 65, still active", "soon": "Turns 65 within a year", "optional": "Can retire optionally"}
+        return _xlsx_response(
+            request, f"retirement-{today:%Y-%m-%d}.xlsx", "Retirement",
+            ["Group", "Employee no.", "Name", "Office", "Position", "Age", "Compulsory retirement date",
+             "Unbroken service since", "Years of service"],
+            [[labels[key], r["person"].employee_no, r["person"].full_name, r["eng"].office.name,
+              r["eng"].position_title, r["age"], r["compulsory"], r["service_from"], r["service_years"]]
+             for key in ("past", "soon", "optional") for r in groups[key]],
+            "Retirement list (Excel)",
+        )
+    return render(request, "hr/tracker_retirement.html", {"tracker": "retirement", "groups": groups, "today": today})
+
+
+@login_required
+def tracker_year_end_bonus(request):
+    """Who qualifies for the year-end bonus and cash gift as of October 31 (RM3). No amounts."""
+    _require_tracker_view(request)
+    today = timezone.localdate()
+    years = list(range(today.year, today.year - 4, -1))
+    year = request.GET.get("year", "")
+    year = int(year) if year.isdigit() and int(year) in years else today.year
+    office, eng_type = _office_and_type_filters(request)
+    rows = reminders.yeb_rows(year, today)
+    if office:
+        rows = [r for r in rows if r["eng"].office_id == office.pk]
+    if eng_type:
+        rows = [r for r in rows if r["eng"].type == eng_type]
+    if request.GET.get("export") == "xlsx":
+        return _xlsx_response(
+            request, f"year-end-bonus-{year}.xlsx", f"Year-end bonus {year}",
+            ["Employee no.", "Name", "Office", "Type", "Position", "Days of service Jan 1 - Oct 31",
+             "In service Oct 31", "Result"],
+            [[r["person"].employee_no, r["person"].full_name, r["eng"].office.name, r["eng"].get_type_display(),
+              r["eng"].position_title, r["days"], "Yes" if r["in_service"] else "No", r["label"]] for r in rows],
+            f"Year-end bonus eligibility {year} (Excel)",
+        )
+    counts = {key: sum(1 for r in rows if r["result"] == key) for key in reminders.YEB_LABELS}
+    params = [(k, v) for k, v in (("year", year), ("office", office.pk if office else ""), ("type", eng_type)) if v]
+    return render(request, "hr/tracker_year_end_bonus.html", {
+        "tracker": "yeb",
+        "rows": rows,
+        "year": year,
+        "years": years,
+        "projection": today < date(year, 10, 31),
+        "counts": counts,
+        "labels": reminders.YEB_LABELS,
+        "offices": Office.objects.order_by("name"),
+        "office": office,
+        "types": [(v, l) for v, l in Engagement.Type.choices if v in reminders.YEB_TYPES],
+        "eng_type": eng_type,
+        "export_qs": urlencode(params + [("export", "xlsx")]),
+        "min_days": reminders.YEB_MIN_DAYS,
+    })
+
+
 # Every item kind, in the order a day lists them: (text prefix, CSS class, plural for a
 # collapsed group). The prefix makes the kind readable without colour (C3).
 CALENDAR_KINDS = {
@@ -1381,6 +1525,7 @@ CALENDAR_KINDS = {
     "project": ("Project", "cal-project", "project dates"),
     "salary": ("Salary increase", "cal-salary", "salary increases"),
     "loyalty": ("Loyalty", "cal-loyalty", "loyalty awards"),
+    "retirement": ("Retires", "cal-retire", "retirements"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1392,6 +1537,7 @@ CALENDAR_FILTERS = [
     ("contract_end", "Contract ends"),
     ("project", "Project dates"),
     ("salary", "Salary increases and loyalty"),
+    ("retirement", "Retirements (age 65)"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1402,6 +1548,7 @@ CALENDAR_LEGEND = [
     ("Project start / end", "Project", "cal-project"),
     ("Salary increase due (HRMO, Auditor)", "Salary increase", "cal-salary"),
     ("Loyalty award due (HRMO, Auditor)", "Loyalty", "cal-loyalty"),
+    ("Compulsory retirement at 65 (HRMO, Auditor)", "Retires", "cal-retire"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1548,6 +1695,24 @@ def _calendar_items(user, first, last, shown, office=None):
             add(case.due_date, kind, f"{_short_name(case.person)} {what}",
                 f"{case.get_kind_display()} {case.get_status_display().lower()}: {case.person.full_name}, {what}",
                 reverse("salary_action_detail", args=[case.pk]), office_name=case.engagement.office.name)
+
+    # 65th birthdays of active GSIS members: birthdates are personal details, so HRMO and Auditor (RM2).
+    if "retirement" in shown and can_view_trackers(user):
+        age = reminders.COMPULSORY_AGE
+        retiring = Engagement.objects.filter(
+            status=Engagement.Status.ACTIVE, type__in=reminders.GSIS_TYPES,
+            person__birthdate__range=(salary_actions.add_years(first, -age), salary_actions.add_years(last, -age)),
+        ).select_related("person", "office")
+        if office:
+            retiring = retiring.filter(office=office)
+        seen = set()
+        for eng in retiring:
+            if eng.person_id in seen:
+                continue
+            seen.add(eng.person_id)
+            add(salary_actions.add_years(eng.person.birthdate, age), "retirement", _short_name(eng.person),
+                f"Turns {age} (compulsory retirement): {eng.person.full_name}, {eng.position_title}",
+                reverse("tracker_retirement"), office_name=eng.office.name)
 
     for items in days.values():
         items.sort(key=lambda item: (CALENDAR_KIND_ORDER.index(item["kind"]), item["full"]))

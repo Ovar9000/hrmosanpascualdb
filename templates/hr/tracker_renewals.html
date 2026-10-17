@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Contract renewals{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">Contract renewals</h1>
+    <div class="text-muted small">Active appointments that end within {{ window }} days, or whose end date has passed
+      but are still marked active. One drops off when it is renewed or ended.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-primary" href="?{{ export_qs }}">Export to Excel</a>
+</div>
+
+{% if lapsed %}
+  <div class="alert alert-warning py-2 small">{{ lapsed }} appointment{{ lapsed|pluralize }} passed {{ lapsed|pluralize:"its,their" }} end date and {{ lapsed|pluralize:"is,are" }} still marked active. Renew or end {{ lapsed|pluralize:"it,them" }}.</div>
+{% endif %}
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-12 col-md-5">
+    <label class="form-label small mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" name="office" id="office">
+      <option value="">All offices</option>
+      {% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label small mb-0" for="type">Type</label>
+    <select class="form-select form-select-sm" name="type" id="type">
+      <option value="">All types</option>
+      {% for value, label in types %}<option value="{{ value }}"{% if value == eng_type %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+  {% if office or eng_type %}<div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="?">Clear</a></div>{% endif %}
+</form>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Person</th><th>Office</th><th>Appointment</th><th>Ends</th><th class="text-end">Action</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+          <tr{% if row.lapsed %} class="table-warning"{% endif %}>
+            <td><a href="{% url 'person_detail' row.eng.person_id %}" class="fw-semibold text-decoration-none">{{ row.eng.person.full_name }}</a>
+              <div class="text-muted font-monospace">{{ row.eng.person.employee_no }}</div></td>
+            <td>{{ row.eng.office.acronym|default:row.eng.office.name }}</td>
+            <td>{{ row.eng.get_type_display }} · {{ row.eng.position_title }}{% if row.eng.project %}<div class="text-muted">Project: {{ row.eng.project.name }}</div>{% endif %}</td>
+            <td>{{ row.eng.end_date|date:"M d, Y" }}
+              {% if row.lapsed %}<div class="fw-semibold">Lapsed {{ row.ago }} day{{ row.ago|pluralize }} ago</div>
+              {% elif row.days == 0 %}<div>Today</div>
+              {% else %}<div class="text-muted">in {{ row.days }} day{{ row.days|pluralize }}</div>{% endif %}
+              {% if row.renewed %}<div class="text-muted">Already renewed: end this record</div>{% endif %}
+            </td>
+            <td class="text-end text-nowrap">
+              {% if can_manage %}
+                {% if not row.renewed %}<a class="btn btn-sm btn-outline-primary py-0" href="{% url 'engagement_renew' row.eng.pk %}">Renew</a>{% endif %}
+                <a class="btn btn-sm btn-outline-danger py-0" href="{% url 'engagement_end' row.eng.pk %}">End</a>
+              {% else %}<a class="btn btn-sm btn-outline-secondary py-0" href="{% url 'person_detail' row.eng.person_id %}">View</a>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">Nothing ends in the next {{ window }} days.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

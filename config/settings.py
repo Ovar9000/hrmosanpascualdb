@@ -128,6 +128,8 @@ ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
 # on paper, so the tracker starts without a backlog; cases open this many days before they fall due.
 SALARY_TRACKING_START = os.environ.get("SALARY_TRACKING_START", "2026-10-01")
 SALARY_LOOKAHEAD_DAYS = int(os.environ.get("SALARY_LOOKAHEAD_DAYS", "90"))
+# Contract renewals list (DECISIONS RM1): appointments ending within this many days.
+RENEWAL_LOOKAHEAD_DAYS = int(os.environ.get("RENEWAL_LOOKAHEAD_DAYS", "45"))
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.
