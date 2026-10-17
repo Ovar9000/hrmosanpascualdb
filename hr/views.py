@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views.decorators.http import require_POST
-from . import orgchart, reminders, salary_actions
+from . import meetings, orgchart, reminders, salary_actions
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -29,6 +29,7 @@ from .forms import (
     DocumentReplaceForm,
     EndEngagementForm,
     EngagementForm,
+    MeetingSeriesForm,
     PersonForm,
     ProjectForm,
     ServiceInterruptionForm,
@@ -43,6 +44,8 @@ from .models import (
     LeaveCredit,
     LeaveRequest,
     LeaveType,
+    Meeting,
+    MeetingSeries,
     Office,
     Person,
     Project,
@@ -1511,6 +1514,157 @@ def tracker_year_end_bonus(request):
     })
 
 
+# --- Required meetings (DECISIONS MT1-MT5) -----------------------------------------
+
+
+@login_required
+def tracker_meetings(request):
+    """Every required meeting with this period's status and the last few periods."""
+    _require_tracker_view(request)
+    today = timezone.localdate()
+    meetings.ensure_meetings(today)
+    rows = []
+    for series in MeetingSeries.objects.select_related("office").prefetch_related("meetings"):
+        periods = [m for m in series.meetings.all() if m.period_start <= today]  # newest first (Meta ordering)
+        current = periods[0] if periods else None
+        rows.append({
+            "series": series,
+            "current": current,
+            "current_status": current.status_on(today) if current else None,
+            "history": [(m, m.status_on(today)) for m in periods[1:5]],
+            "missed": sum(1 for m in periods if m.status_on(today) == Meeting.Status.MISSED),
+        })
+    rows.sort(key=lambda r: (not r["series"].is_active, r["series"].name))
+    return render(request, "hr/tracker_meetings.html", {
+        "tracker": "meetings",
+        "rows": rows,
+        "today": today,
+        "can_manage": can_manage_hr_records(request.user),
+        "attention_days": meetings.ATTENTION_DAYS,
+    })
+
+
+@login_required
+def meeting_series_form(request, pk=None):
+    """HRMO adds or edits a required meeting (who attends, how often, legal basis)."""
+    if not can_manage_hr_records(request.user):
+        raise PermissionDenied("Only HRMO can set up required meetings.")
+    series = get_object_or_404(MeetingSeries, pk=pk) if pk else None
+    if request.method == "POST":
+        form = MeetingSeriesForm(request.POST, instance=series)
+        if form.is_valid():
+            with transaction.atomic():
+                if series:
+                    locked = MeetingSeries.objects.select_for_update().get(pk=series.pk)
+                    if locked.version != form.cleaned_data.get("version"):
+                        form.add_error(None, "Someone changed this meeting while you were editing. Reload and try again.")
+                        return render(request, "hr/meeting_series_form.html", {"form": form, "series": series})
+                saved = form.save(commit=False)
+                if series:
+                    saved.version = locked.version + 1
+                else:
+                    saved.created_by = request.user
+                saved.save()
+                form.save_m2m()
+            meetings.ensure_meetings(timezone.localdate(), MeetingSeries.objects.filter(pk=saved.pk, is_active=True))
+            messages.success(request, f"Saved {saved.name}.")
+            return redirect("tracker_meetings")
+    else:
+        initial = {} if series else {"starts_on": timezone.localdate()}
+        form = MeetingSeriesForm(instance=series, initial=initial)
+    return render(request, "hr/meeting_series_form.html", {"form": form, "series": series})
+
+
+@login_required
+def meeting_detail(request, pk):
+    """One period's meeting: schedule it, record it as held with attendance, or give a reason."""
+    _require_tracker_view(request)
+    meeting = get_object_or_404(Meeting.objects.select_related("series", "series__office"), pk=pk)
+    today = timezone.localdate()
+    expected = meetings.expected_people(meeting.series)
+    use_checklist = meeting.series.audience != MeetingSeries.Audience.EVERYONE
+
+    if request.method == "POST":
+        if not can_manage_hr_records(request.user):
+            raise PermissionDenied("Only HRMO can update required meetings.")
+        action = request.POST.get("action", "")
+        error = None
+        with transaction.atomic():
+            locked = Meeting.objects.select_for_update().get(pk=pk)
+            if str(locked.version) != request.POST.get("version", ""):
+                error = "Someone changed this meeting while you had it open. Nothing was saved."
+            elif action == "schedule":
+                day = _parse_posted_date(request, "scheduled_on")
+                if day is None:
+                    error = "Choose the meeting date."
+                else:
+                    locked.scheduled_on = day
+                    locked.scheduled_time = _parse_posted_time(request, "scheduled_time")
+                    locked.venue = request.POST.get("venue", "").strip()[:200]
+            elif action == "held":
+                day = _parse_posted_date(request, "held_on")
+                if day is None or day > today:
+                    error = "Enter the date it was held (today or earlier)."
+                else:
+                    locked.held_on = day
+                    locked.not_held_reason = ""
+                    locked.minutes_location = request.POST.get("minutes_location", "").strip()[:255]
+                    locked.minutes_summary = request.POST.get("minutes_summary", "").strip()
+                    if use_checklist:
+                        allowed = set(expected.values_list("pk", flat=True))
+                        picked = [int(v) for v in request.POST.getlist("attended") if v.isdigit() and int(v) in allowed]
+                        locked.attendance_count = len(picked)
+                    else:
+                        count = request.POST.get("attendance_count", "").strip()
+                        locked.attendance_count = int(count) if count.isdigit() else None
+            elif action == "not_held":
+                reason = request.POST.get("reason", "").strip()
+                if not reason:
+                    error = "Give the reason it was not held."
+                else:
+                    locked.not_held_reason = reason
+                    locked.held_on = None
+            elif action == "reopen":
+                locked.held_on = None
+                locked.not_held_reason = ""
+            else:
+                error = "Unknown action."
+            if error is None:
+                locked.version += 1
+                locked.save()
+                if action == "held" and use_checklist:
+                    locked.attendees.set(picked)
+                elif action in ("reopen", "not_held"):
+                    locked.attendees.clear()
+        if error:
+            messages.error(request, error)
+        else:
+            messages.success(request, f"{locked}: {locked.status_on(today).label}.")
+        return redirect("meeting_detail", pk=pk)
+
+    attended = set(meeting.attendees.values_list("pk", flat=True))
+    return render(request, "hr/meeting_detail.html", {
+        "tracker": "meetings",
+        "meeting": meeting,
+        "status": meeting.status_on(today),
+        "expected": expected,
+        "expected_count": expected.count(),
+        "use_checklist": use_checklist,
+        "attended": attended,
+        "today": today,
+        "can_manage": can_manage_hr_records(request.user),
+    })
+
+
+def _parse_posted_time(request, name):
+    from django.utils.dateparse import parse_time
+
+    try:
+        return parse_time(request.POST.get(name, "").strip())
+    except ValueError:
+        return None
+
+
 # Every item kind, in the order a day lists them: (text prefix, CSS class, plural for a
 # collapsed group). The prefix makes the kind readable without colour (C3).
 CALENDAR_KINDS = {
@@ -1526,6 +1680,7 @@ CALENDAR_KINDS = {
     "salary": ("Salary increase", "cal-salary", "salary increases"),
     "loyalty": ("Loyalty", "cal-loyalty", "loyalty awards"),
     "retirement": ("Retires", "cal-retire", "retirements"),
+    "required_meeting": ("Required", "cal-required", "required meetings"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1538,6 +1693,7 @@ CALENDAR_FILTERS = [
     ("project", "Project dates"),
     ("salary", "Salary increases and loyalty"),
     ("retirement", "Retirements (age 65)"),
+    ("required_meeting", "Required meetings"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1549,6 +1705,7 @@ CALENDAR_LEGEND = [
     ("Salary increase due (HRMO, Auditor)", "Salary increase", "cal-salary"),
     ("Loyalty award due (HRMO, Auditor)", "Loyalty", "cal-loyalty"),
     ("Compulsory retirement at 65 (HRMO, Auditor)", "Retires", "cal-retire"),
+    ("Required meeting (date, or the last day to hold it)", "Required", "cal-required"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1695,6 +1852,40 @@ def _calendar_items(user, first, last, shown, office=None):
             add(case.due_date, kind, f"{_short_name(case.person)} {what}",
                 f"{case.get_kind_display()} {case.get_status_display().lower()}: {case.person.full_name}, {what}",
                 reverse("salary_action_detail", args=[case.pk]), office_name=case.engagement.office.name)
+
+    # Required meetings: everyone sees meetings for everyone; office meetings show to that office and
+    # all-office roles; chosen-people meetings to the members and all-office roles (MT4).
+    if "required_meeting" in shown:
+        meetings.ensure_meetings(timezone.localdate())
+        items = Meeting.objects.filter(series__is_active=True, period_start__lte=last, period_end__gte=first).filter(
+            Q(scheduled_on__range=(first, last)) | Q(held_on__range=(first, last)) | Q(period_end__range=(first, last))
+        ).select_related("series", "series__office")
+        if not has_all_office_scope(user):
+            office_ids = list(get_visible_offices(user).values_list("pk", flat=True))
+            own_office = get_user_office(user)
+            if own_office:
+                office_ids.append(own_office.pk)
+            person_id = getattr(getattr(user, "profile", None), "person_id", None)
+            items = items.filter(
+                Q(series__audience=MeetingSeries.Audience.EVERYONE)
+                | Q(series__audience=MeetingSeries.Audience.OFFICE, series__office__in=office_ids)
+                | Q(series__audience=MeetingSeries.Audience.CHOSEN, series__members=person_id or 0)
+            ).distinct()
+        if office:
+            items = items.filter(Q(series__office__isnull=True) | Q(series__office=office))
+        url_ok = can_view_trackers(user)
+        for item in items:
+            url = reverse("meeting_detail", args=[item.pk]) if url_ok else None
+            label = f"{item.series.name} ({item.period_label})"
+            if item.held_on:
+                add(item.held_on, "required_meeting", item.series.name, f"Held: {label}", url)
+            elif item.scheduled_on and not item.not_held_reason:
+                when = f" at {item.scheduled_time:%H:%M}" if item.scheduled_time else ""
+                where = f", {item.venue}" if item.venue else ""
+                add(item.scheduled_on, "required_meeting", item.series.name, f"{label}{when}{where}", url)
+            elif not item.not_held_reason:
+                add(item.period_end, "required_meeting", f"Hold by today: {item.series.name}",
+                    f"Last day to hold {label} (not scheduled yet)", url)
 
     # 65th birthdays of active GSIS members: birthdates are personal details, so HRMO and Auditor (RM2).
     if "retirement" in shown and can_view_trackers(user):

@@ -706,6 +706,130 @@ class SalaryCheckRun(models.Model):
         ordering = ["-ran_at"]
 
 
+# --- Required meetings (DECISIONS MT1-MT5) ------------------------------------------
+
+
+class MeetingSeries(models.Model):
+    """A meeting the LGU must hold on a schedule, e.g. a committee that meets every quarter."""
+
+    class Frequency(models.TextChoices):
+        MONTHLY = "monthly", "Monthly"
+        QUARTERLY = "quarterly", "Quarterly"
+        SEMESTRAL = "semestral", "Every six months"
+        ANNUAL = "annual", "Yearly"
+
+    class Audience(models.TextChoices):
+        EVERYONE = "everyone", "Everyone"
+        OFFICE = "office", "One office"
+        CHOSEN = "chosen", "Chosen people"
+
+    MONTHS = {Frequency.MONTHLY: 1, Frequency.QUARTERLY: 3, Frequency.SEMESTRAL: 6, Frequency.ANNUAL: 12}
+
+    name = models.CharField(max_length=200)
+    legal_basis = models.CharField(
+        max_length=255, blank=True, help_text="The circular, ordinance or memo that requires it."
+    )
+    frequency = models.CharField(max_length=20, choices=Frequency.choices, default=Frequency.QUARTERLY)
+    audience = models.CharField(max_length=20, choices=Audience.choices, default=Audience.EVERYONE)
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="meeting_series",
+        help_text="Required when the audience is one office.",
+    )
+    members = models.ManyToManyField(Person, blank=True, related_name="meeting_series")
+    starts_on = models.DateField(help_text="Tracking starts with the period that contains this date.")
+    is_active = models.BooleanField(default=True, help_text="Untick to stop tracking; history is kept.")
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "meeting series"
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(audience="office") | Q(office__isnull=False),
+                name="meetingseries_office_audience_has_office",
+                violation_error_message="Choose the office whose staff attend.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Meeting(models.Model):
+    """One period of a series (e.g. Q3 2026): when it was scheduled, held, and who attended.
+
+    Status is worked out from the dates, so nothing has to be closed by hand (MT2).
+    """
+
+    class Status(models.TextChoices):
+        DUE = "due", "Not scheduled yet"
+        SCHEDULED = "scheduled", "Scheduled"
+        HELD = "held", "Held"
+        NOT_HELD = "not_held", "Not held (reason given)"
+        MISSED = "missed", "Missed"
+        UPCOMING = "upcoming", "Not started"
+
+    series = models.ForeignKey(MeetingSeries, on_delete=models.PROTECT, related_name="meetings")
+    period_start = models.DateField()
+    period_end = models.DateField()
+    scheduled_on = models.DateField(null=True, blank=True)
+    scheduled_time = models.TimeField(null=True, blank=True)
+    venue = models.CharField(max_length=200, blank=True)
+    held_on = models.DateField(null=True, blank=True)
+    attendees = models.ManyToManyField(Person, blank=True, related_name="meetings_attended")
+    attendance_count = models.PositiveIntegerField(
+        null=True, blank=True, help_text="For meetings of everyone: how many attended."
+    )
+    minutes_location = models.CharField(
+        max_length=255, blank=True, help_text="Where the signed minutes and attendance sheet are filed."
+    )
+    minutes_summary = models.TextField(blank=True)
+    not_held_reason = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["series__name", "-period_start"]
+        constraints = [
+            models.UniqueConstraint(fields=["series", "period_start"], name="meeting_one_per_period"),
+            models.CheckConstraint(
+                condition=Q(period_end__gte=F("period_start")),
+                name="meeting_period_end_after_start",
+                violation_error_message="The period cannot end before it starts.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.series.name} ({self.period_label})"
+
+    @property
+    def period_label(self):
+        months = self.series.MONTHS[self.series.frequency]
+        if months == 3:
+            return f"Q{(self.period_start.month - 1) // 3 + 1} {self.period_start.year}"
+        if months == 6:
+            return f"{'Jan–Jun' if self.period_start.month == 1 else 'Jul–Dec'} {self.period_start.year}"
+        if months == 12:
+            return str(self.period_start.year)
+        return self.period_start.strftime("%B %Y")
+
+    def status_on(self, today):
+        if self.held_on:
+            return self.Status.HELD
+        if self.not_held_reason:
+            return self.Status.NOT_HELD
+        if today < self.period_start:
+            return self.Status.UPCOMING
+        if today > self.period_end:
+            return self.Status.MISSED
+        return self.Status.SCHEDULED if self.scheduled_on else self.Status.DUE
+
+
 # --- User Profile -----------------------------------------------------------
 
 

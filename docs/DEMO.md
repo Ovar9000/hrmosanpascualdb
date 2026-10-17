@@ -141,6 +141,14 @@ it on public Wi-Fi.
 3. **Tracker → Year-end bonus:** this year's list as of October 31, with who gets the full
    bonus, a prorated cash gift, or nothing. No amounts: the Excel file goes to payroll.
 
+### 3e. Required meetings (1 min) · `demo_hrmo`
+
+1. **Tracker → Required meetings:** the sample quarterly meeting shows this quarter as
+   *Not scheduled yet*, with earlier quarters held and last quarter **missed**.
+2. **Open** this quarter → set a date → it appears on the **Calendar** for everyone.
+3. **+ Add a required meeting** → choose *Chosen people* to show a committee with its own members.
+   *Point:* ask the HRMO head which meeting she meant and its legal basis, and set it up live.
+
 ### 4. Two people editing at once (2 min) · `demo_hrmo`, two tabs
 
 1. Open the same person's **Edit Details** in two tabs.

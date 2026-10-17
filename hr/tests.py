@@ -33,6 +33,8 @@ from hr.models import (
     LeaveCredit,
     LeaveRequest,
     LeaveType,
+    Meeting,
+    MeetingSeries,
     Office,
     Person,
     Project,
@@ -4448,3 +4450,157 @@ def timezone_today_plus(days):
     from django.utils import timezone
 
     return timezone.localdate() + timedelta(days=days)
+
+
+class RequiredMeetingsTestCase(TestCase):
+    """MT1-MT5: required meeting series, periods, attendance and who sees them."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+
+    def _series(self, **kwargs):
+        defaults = {"name": "HR committee", "starts_on": date(2026, 1, 15)}
+        defaults.update(kwargs)
+        members = defaults.pop("members", [])
+        series = MeetingSeries.objects.create(**defaults)
+        series.members.set(members)
+        return series
+
+    def test_periods_are_calendar_quarters_and_creation_is_idempotent(self):
+        from hr.meetings import ensure_meetings, period_of
+
+        self.assertEqual(period_of(date(2026, 11, 3), 3), (date(2026, 10, 1), date(2026, 12, 31)))
+        self.assertEqual(period_of(date(2026, 8, 3), 6), (date(2026, 7, 1), date(2026, 12, 31)))
+        self.assertEqual(period_of(date(2026, 2, 3), 1), (date(2026, 2, 1), date(2026, 2, 28)))
+        series = self._series()
+        ensure_meetings(date(2026, 10, 17))
+        ensure_meetings(date(2026, 10, 18))
+        self.assertEqual([m.period_label for m in series.meetings.order_by("period_start")],
+                         ["Q1 2026", "Q2 2026", "Q3 2026", "Q4 2026"])
+
+    def test_status_follows_the_dates(self):
+        from hr.meetings import ensure_meetings
+
+        series = self._series()
+        ensure_meetings(date(2026, 10, 17))
+        q3, q4 = series.meetings.get(period_label_start(7)), series.meetings.get(period_label_start(10))
+        today = date(2026, 10, 17)
+        self.assertEqual(q3.status_on(today), Meeting.Status.MISSED)
+        self.assertEqual(q4.status_on(today), Meeting.Status.DUE)
+        q4.scheduled_on = date(2026, 11, 20)
+        self.assertEqual(q4.status_on(today), Meeting.Status.SCHEDULED)
+        q3.not_held_reason = "Typhoon"
+        self.assertEqual(q3.status_on(today), Meeting.Status.NOT_HELD)
+
+    def test_expected_people_by_audience(self):
+        from hr.meetings import expected_people
+
+        everyone = self._series(name="All staff")
+        office = self._series(name="Mayor's office", audience=MeetingSeries.Audience.OFFICE, office=self.office_a)
+        chosen = self._series(name="Committee", audience=MeetingSeries.Audience.CHOSEN, members=[self.person_b])
+        self.assertEqual(set(expected_people(everyone)), {self.person_a, self.person_b})
+        self.assertEqual(list(expected_people(office)), [self.person_a])
+        self.assertEqual(list(expected_people(chosen)), [self.person_b])
+
+    def test_hrmo_sets_up_a_series_and_records_attendance(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post("/tracker/meetings/new/", {
+            "name": "Selection board", "legal_basis": "", "frequency": "quarterly", "audience": "chosen",
+            "office": self.office_b.pk, "members": [self.person_a.pk, self.person_b.pk],
+            "starts_on": "2026-01-01", "is_active": "on", "notes": "",
+        })
+        self.assertRedirects(resp, "/tracker/meetings/", fetch_redirect_response=False)
+        series = MeetingSeries.objects.get(name="Selection board")
+        self.assertIsNone(series.office)  # office only kept for one-office meetings
+        from django.utils import timezone
+
+        current = series.meetings.get(period_start__lte=timezone.localdate(), period_end__gte=timezone.localdate())
+        self.client.post(f"/tracker/meetings/{current.pk}/", {
+            "action": "held", "version": "1", "held_on": timezone.localdate().isoformat(),
+            "attended": [str(self.person_a.pk), "99999"], "minutes_location": "Cabinet B",
+        })
+        current.refresh_from_db()
+        self.assertEqual(current.status_on(timezone.localdate()), Meeting.Status.HELD)
+        self.assertEqual(list(current.attendees.all()), [self.person_a])  # unknown ids ignored
+        self.assertEqual(current.attendance_count, 1)
+        self.assertTrue(AuditLog.objects.filter(model_name="Meeting", object_id=str(current.pk)).exists())
+        stale = self.client.post(f"/tracker/meetings/{current.pk}/", {"action": "reopen", "version": "1"}, follow=True)
+        self.assertContains(stale, "Someone changed this meeting")
+
+    def test_series_form_requires_office_or_members(self):
+        self.client.force_login(self.hrmo_user)
+        base = {"name": "X", "frequency": "quarterly", "starts_on": "2026-01-01", "is_active": "on"}
+        resp = self.client.post("/tracker/meetings/new/", {**base, "audience": "office"})
+        self.assertContains(resp, "Choose the office whose staff attend.")
+        resp = self.client.post("/tracker/meetings/new/", {**base, "audience": "chosen"})
+        self.assertContains(resp, "Choose at least one person.")
+        self.assertFalse(MeetingSeries.objects.exists())
+
+    def test_held_needs_a_past_date_and_not_held_needs_a_reason(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self._series(starts_on=timezone.localdate())
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/tracker/meetings/")
+        meeting = Meeting.objects.get()
+        future = (timezone.localdate() + timedelta(days=3)).isoformat()
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "held", "version": "1", "held_on": future}, follow=True)
+        self.assertContains(resp, "today or earlier")
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "not_held", "version": "1", "reason": ""}, follow=True)
+        self.assertContains(resp, "Give the reason")
+
+    def test_only_hrmo_and_auditor_open_the_tracker_and_only_hrmo_edits(self):
+        series = self._series()
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/tracker/meetings/")
+        meeting = series.meetings.first()
+        for user in (self.head_a, self.staff_a, self.mayor, self.emp_a_user, self.sysadmin):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/tracker/meetings/").status_code, 403, user)
+            self.assertEqual(self.client.get(f"/tracker/meetings/{meeting.pk}/").status_code, 403, user)
+            self.assertEqual(self.client.get("/tracker/meetings/new/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.get(f"/tracker/meetings/{meeting.pk}/").status_code, 200)
+        resp = self.client.post(f"/tracker/meetings/{meeting.pk}/", {"action": "reopen", "version": "1"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_calendar_shows_meetings_to_their_audience(self):
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        everyone = self._series(name="All-staff assembly", starts_on=today)
+        chosen = self._series(name="Selection board", starts_on=today, audience=MeetingSeries.Audience.CHOSEN,
+                              members=[self.person_b])
+        from hr.meetings import ensure_meetings
+        ensure_meetings(today)
+        for series in (everyone, chosen):
+            m = series.meetings.get()
+            m.scheduled_on = today
+            m.save()
+        month = f"?month={today:%Y-%m}"
+        self.client.force_login(self.emp_a_user)  # person A: not on the board
+        resp = self.client.get("/calendar/" + month)
+        self.assertContains(resp, "All-staff assembly")
+        self.assertNotContains(resp, "Selection board")
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/calendar/" + month), "Selection board")
+
+    def test_menu_dot_near_the_end_of_an_unheld_period(self):
+        from hr.meetings import needs_attention
+
+        self._series(starts_on=date(2026, 1, 1))
+        self.assertFalse(needs_attention(date(2026, 11, 1)))  # Q4 ends in 60 days
+        self.assertTrue(needs_attention(date(2026, 12, 15)))
+        m = Meeting.objects.get(period_start=date(2026, 10, 1))
+        m.held_on = date(2026, 12, 10)
+        m.save()
+        self.assertFalse(needs_attention(date(2026, 12, 15)))
+
+
+def period_label_start(month):
+    from django.db.models import Q
+
+    return Q(period_start=date(2026, month, 1))

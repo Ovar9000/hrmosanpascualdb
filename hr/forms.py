@@ -7,7 +7,9 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from .models import FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, Person, Project, ServiceInterruption
+from .models import (
+    FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, MeetingSeries, Person, Project, ServiceInterruption,
+)
 from .permissions import can_view_ids, can_view_pay
 
 
@@ -641,4 +643,51 @@ class ServiceInterruptionForm(forms.ModelForm):
         start, end = cleaned.get("start_date"), cleaned.get("end_date")
         if start and end and end < start:
             self.add_error("end_date", "End date cannot be before start date.")
+        return cleaned
+
+
+class MeetingSeriesForm(forms.ModelForm):
+    """A required meeting and who attends it (DECISIONS MT1)."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = MeetingSeries
+        fields = ["name", "legal_basis", "frequency", "audience", "office", "members", "starts_on", "is_active", "notes"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Quarterly HR committee meeting"}),
+            "legal_basis": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. CSC MC No. __, s. ____"}),
+            "frequency": forms.Select(attrs={"class": "form-select"}),
+            "audience": forms.Select(attrs={"class": "form-select"}),
+            "office": forms.Select(attrs={"class": "form-select"}),
+            "members": forms.SelectMultiple(attrs={"class": "form-select", "size": 12}),
+            "starts_on": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        # Members: people in active service (and anyone already chosen, so editing keeps them).
+        active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+        chosen = Q(pk__in=self.instance.members.values("pk")) if self.instance.pk else Q(pk__in=[])
+        self.fields["members"].queryset = Person.objects.filter(Q(pk__in=active) | chosen).order_by("last_name", "first_name")
+        self.fields["members"].help_text = "Hold Ctrl (Cmd on a Mac) to choose several. Only used for chosen people."
+
+    def clean_name(self):
+        return self.cleaned_data.get("name", "").strip()
+
+    def clean(self):
+        cleaned = super().clean()
+        audience = cleaned.get("audience")
+        if audience == MeetingSeries.Audience.OFFICE and not cleaned.get("office"):
+            self.add_error("office", "Choose the office whose staff attend.")
+        if audience == MeetingSeries.Audience.CHOSEN and not cleaned.get("members"):
+            self.add_error("members", "Choose at least one person.")
+        if audience != MeetingSeries.Audience.OFFICE:
+            cleaned["office"] = None
+        if audience != MeetingSeries.Audience.CHOSEN:
+            cleaned["members"] = Person.objects.none()
         return cleaned

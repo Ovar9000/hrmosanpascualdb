@@ -3,6 +3,7 @@
 from django.utils.functional import SimpleLazyObject
 from django.utils import timezone
 from .models import SalaryAction
+from .meetings import needs_attention as meetings_need_attention
 from .reminders import needs_attention
 from .permissions import can_view_office_tree, can_view_salary_actions, get_user_office
 
@@ -21,7 +22,9 @@ def org_chart_nav(request):
             "my_office": get_user_office(user) is not None,
             "salary": salary,
             "salary_due": salary and SalaryAction.objects.filter(status=SalaryAction.Status.DUE).exists(),
-            "attention": salary and needs_attention(timezone.localdate()),
+            "attention": salary and (
+                needs_attention(timezone.localdate()) or meetings_need_attention(timezone.localdate())
+            ),
         }
 
     return {"org_nav": SimpleLazyObject(links)}

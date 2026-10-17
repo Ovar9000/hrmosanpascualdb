@@ -156,6 +156,16 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | RM4 | **Who sees them:** HRMO and Auditor (`can_view_trackers`), because they use birthdates (R4) and pay eligibility (R6). All three sit with the salary tracker under one **Tracker** menu, which shows a dot when a salary case is due, a contract has lapsed, or an active GSIS member is past 65. Each list exports to Excel (formula-like text written as text, every export audit-logged, U1). | No |
 | RM5 | **Demo data:** `seed_demo_reminders` (DEBUG only, run by both demo setup scripts, once) moves two JO end dates (one lapsed, one soon), makes one employee 65 last month and one turn 65 in three months, and gives one department head 15 years of earlier service at age 61. Changed rows are tagged `[demo reminders]`. | No |
 
+## Required meetings
+
+| # | Decision | Survey? |
+|---|---|---|
+| MT1 | **Generic, set up by HRMO:** the HRMO head reported a required quarterly meeting but not which one, or who attends, so any meeting can be added (`/tracker/meetings/`): name, legal basis (the circular or ordinance), how often (monthly, quarterly by default, every six months, yearly), and who attends: **everyone** in active service, **one office**'s active staff, or **chosen people**. The office is kept only for one-office meetings and members only for chosen ones. Series are never deleted; unticking "Track" stops new periods and keeps history. | **Yes** (which meeting, its legal basis and attendees) |
+| MT2 | **Periods and status:** each series gets one `Meeting` per calendar period (quarters are Jan–Mar, Apr–Jun, …), created automatically from its start date and never twice. Status comes from the dates: not scheduled yet, scheduled, **held** (date, attendance, where the signed minutes and attendance sheet are filed, optional summary), **not held** with a reason, or **missed** once the period ends with neither. Recording uses the S2 version check and every change is audit-logged; a done period can be reopened. *Proven by* `RequiredMeetingsTestCase`. | Maybe |
+| MT3 | **Attendance:** for one office or chosen people, HRMO ticks who attended from the expected list (only people on it are accepted, R9); for everyone, HRMO enters a head count, since a 400-name checklist is not practical. The paper attendance sheet stays the legal record (F1). | Maybe |
+| MT4 | **Who sees it:** the tracker and meeting pages are for HRMO (edits) and Auditor (reads), like the other trackers. On the **calendar**, a meeting shows on its scheduled or held date, or on the period's last day as "Hold by today" if unscheduled; meetings for everyone are shown to every signed-in user, one-office meetings to that office and all-office roles, and chosen-people meetings to the members and all-office roles. The **Tracker** menu dot also lights when this period's meeting is not done and the period ends within 21 days. *Proven by* `RequiredMeetingsTestCase`. | No |
+| MT5 | **Demo data:** `seed_demo_reminders` adds "Quarterly HR meeting (sample)" for everyone from January: earlier quarters held, last quarter missed, this quarter not scheduled. Added once, by name. | No |
+
 ## Import / export
 
 | # | Decision | Survey? |

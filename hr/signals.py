@@ -23,6 +23,8 @@ from .models import (
     Engagement,
     LeaveCredit,
     LeaveRequest,
+    Meeting,
+    MeetingSeries,
     Office,
     Person,
     Project,
@@ -46,6 +48,8 @@ AUDITED_MODELS = (
     CalendarEvent,
     SalaryAction,
     ServiceInterruption,
+    MeetingSeries,
+    Meeting,
     User,
     Group,
 )

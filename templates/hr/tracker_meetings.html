@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Required meetings{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Required meetings</h1>
+    <div class="text-muted small">Meetings the LGU must hold on a schedule. Each period counts as done when it is
+      recorded as held (with attendance and where the minutes are filed) or excused with a reason. The menu shows a dot
+      when this period's meeting is not done and the period ends within {{ attention_days }} days.</div>
+  </div>
+  {% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'meeting_series_create' %}">+ Add a required meeting</a>{% endif %}
+</div>
+
+{% for row in rows %}
+<div class="card shadow-sm border-0 mb-3{% if not row.series.is_active %} opacity-75{% endif %}">
+  <div class="card-header bg-white py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <span class="fw-bold">{{ row.series.name }}</span>
+      <span class="text-muted small">· {{ row.series.get_frequency_display }} ·
+        {% if row.series.audience == "office" %}{{ row.series.office.name }}{% else %}{{ row.series.get_audience_display }}{% endif %}
+        {% if not row.series.is_active %}· no longer tracked{% endif %}</span>
+      {% if row.series.legal_basis %}<div class="small text-muted">Required by: {{ row.series.legal_basis }}</div>{% endif %}
+    </div>
+    {% if can_manage %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'meeting_series_edit' row.series.pk %}">Edit</a>{% endif %}
+  </div>
+  <div class="card-body py-2 small">
+    {% if row.current %}
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <span>This period ({{ row.current.period_label }}, ends {{ row.current.period_end|date:"M d" }}):</span>
+        <span class="badge {% if row.current_status == 'held' %}bg-success{% elif row.current_status == 'scheduled' %}bg-primary{% elif row.current_status == 'not_held' %}bg-secondary{% else %}bg-warning text-dark{% endif %}">{{ row.current_status.label }}</span>
+        {% if row.current.scheduled_on and row.current_status == "scheduled" %}<span>on {{ row.current.scheduled_on|date:"M d, Y" }}</span>{% endif %}
+        {% if row.current.held_on %}<span>on {{ row.current.held_on|date:"M d, Y" }}{% if row.current.attendance_count is not None %}, {{ row.current.attendance_count }} attended{% endif %}</span>{% endif %}
+        <a class="ms-auto btn btn-sm btn-outline-primary py-0" href="{% url 'meeting_detail' row.current.pk %}">Open</a>
+      </div>
+    {% else %}
+      <div class="text-muted">Tracking starts {{ row.series.starts_on|date:"M d, Y" }}.</div>
+    {% endif %}
+    {% if row.history %}
+      <div class="mt-2 text-muted">Earlier:
+        {% for m, st in row.history %}<a href="{% url 'meeting_detail' m.pk %}" class="text-decoration-none">{{ m.period_label }} {% if st == "held" %}✔ held{% elif st == "missed" %}✖ missed{% elif st == "not_held" %}– excused{% else %}{{ st.label }}{% endif %}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+      </div>
+    {% endif %}
+    {% if row.missed %}<div class="mt-1 text-danger">{{ row.missed }} period{{ row.missed|pluralize }} missed without a recorded reason.</div>{% endif %}
+  </div>
+</div>
+{% empty %}
+  <div class="card shadow-sm border-0"><div class="card-body text-muted">No required meetings yet.
+    {% if can_manage %}Add one with the button above: name, how often, and who attends.{% endif %}</div></div>
+{% endfor %}
+{% endblock %}

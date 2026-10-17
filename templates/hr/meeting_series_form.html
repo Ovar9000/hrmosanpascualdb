@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{% if series %}Edit {{ series.name }}{% else %}Add a required meeting{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'tracker_meetings' %}" class="btn btn-sm btn-outline-secondary">← Required meetings</a></div>
+<h1 class="h3 mb-3">{% if series %}Edit {{ series.name }}{% else %}Add a required meeting{% endif %}</h1>
+
+<form method="post" class="card shadow-sm border-0">
+  {% csrf_token %}
+  {{ form.version }}
+  <div class="card-body">
+    {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+    <div class="row g-3">
+      {% for field in form %}{% if field.name != "version" %}
+        <div class="{% if field.name == 'members' or field.name == 'notes' or field.name == 'name' or field.name == 'legal_basis' %}col-12{% else %}col-12 col-md-4{% endif %}"
+             {% if field.name == "office" %}data-audience="office"{% elif field.name == "members" %}data-audience="chosen"{% endif %}>
+          {% if field.name == "is_active" %}
+            <div class="form-check mt-md-4">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">Track this meeting</label></div>
+          {% else %}
+            <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+          {% endif %}
+          {% if field.errors %}<div class="invalid-feedback d-block">{{ field.errors|first }}</div>{% endif %}
+        </div>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
+  <div class="card-footer bg-white d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Save</button>
+    <a class="btn btn-outline-secondary" href="{% url 'tracker_meetings' %}">Cancel</a>
+  </div>
+</form>
+
+<script>
+  // Show the office or member picker only for the audience that uses it (the server checks either way).
+  (function () {
+    var audience = document.getElementById("{{ form.audience.id_for_label }}");
+    function sync() {
+      document.querySelectorAll("[data-audience]").forEach(function (el) {
+        el.hidden = el.getAttribute("data-audience") !== audience.value;
+      });
+    }
+    audience.addEventListener("change", sync);
+    sync();
+  })();
+</script>
+{% endblock %}
