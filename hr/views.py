@@ -236,22 +236,43 @@ def _office_tree_scope(user):
     return ids
 
 
+def _tree_view(request):
+    """Which office tree to draw (DECISIONS O6): ?office=<pk> makes that office the head,
+    ?all=1 draws everything, otherwise the municipality and its top offices.
+    Returns (focus office or None, whole, query string for the export links)."""
+    if request.GET.get("all"):
+        return None, True, "?all=1"
+    value = request.GET.get("office", "")
+    focus = Office.objects.filter(pk=value).first() if value.isdigit() else None
+    return focus, False, (f"?office={focus.pk}" if focus else "")
+
+
 @login_required
 def office_tree(request):
     """The municipal office tree, from Office.parent."""
     if not can_view_office_tree(request.user):
         raise PermissionDenied("You do not have access to the office tree.")
     scope = _office_tree_scope(request.user)
-    chart = orgchart.build_office_tree(detail_office_ids=scope, linked_office_ids=scope)
+    focus, whole, query = _tree_view(request)
+    chart = orgchart.build_office_tree(
+        detail_office_ids=scope, linked_office_ids=scope, focus=focus and focus.pk, whole=whole
+    )
+    heading = focus.name if focus else "Municipal office tree"
     return render(
         request,
         "hr/org_chart.html",
         {
-            "heading": "Municipal office tree",
-            "svg": orgchart.render_svg(chart, "Municipal office tree"),
-            "export_urls": {f: reverse("office_tree_export", args=[f]) for f in orgchart.EXPORTS},
+            "heading": heading,
+            "focus": focus,
+            "whole": whole,
+            "trail": chart.trail,
+            "legend": [(label, orgchart.STYLES[s], orgchart.FILLS.get(s, "#fff")) for label, s in chart.legend],
+            "svg": orgchart.render_svg(chart, f"Office tree: {heading}"),
+            "export_urls": {f: reverse("office_tree_export", args=[f]) + query for f in orgchart.EXPORTS},
             "is_tree": True,
             "own_office": get_user_office(request.user),
+            "focus_can_open": focus is not None and focus.pk in scope,
+            "whole_url": orgchart.tree_url(whole=True),
         },
     )
 
@@ -289,6 +310,7 @@ def office_chart(request, pk):
             "coworkers": coworkers,
             "can_edit": can_manage_hr_records(request.user),
             "can_view_tree": can_view_office_tree(request.user),
+            "tree_url": orgchart.tree_url(office.parent_id),  # this office among its siblings
         },
     )
 
@@ -325,10 +347,15 @@ def _export_response(request, fmt, chart, heading, note, filename, object_id):
 def office_tree_export(request, fmt):
     if not can_view_office_tree(request.user):
         raise PermissionDenied("You do not have access to the office tree.")
-    chart = orgchart.build_office_tree(detail_office_ids=_office_tree_scope(request.user))
+    focus, whole, _query = _tree_view(request)
+    chart = orgchart.build_office_tree(
+        detail_office_ids=_office_tree_scope(request.user), focus=focus and focus.pk, whole=whole
+    )
+    heading = focus.name if focus else "Municipal Government of San Pascual"
+    name = slugify(focus.acronym or focus.name) if focus else "san-pascual"
     return _export_response(
-        request, fmt, chart, "San Pascual municipal office tree", orgchart.export_note(),
-        f"san-pascual-office-tree-{timezone.localdate():%Y-%m-%d}", "",
+        request, fmt, chart, heading, orgchart.export_note("Organizational structure. "),
+        f"office-tree-{name}-{timezone.localdate():%Y-%m-%d}", focus.pk if focus else "",
     )
 
 

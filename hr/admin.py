@@ -10,6 +10,8 @@ from .models import (
     LeaveCredit,
     LeaveRequest,
     Office,
+    OrgUnit,
+    StructurePosition,
     Person,
     Project,
     UserProfile,
@@ -138,9 +140,22 @@ class SuperuserOnlyAdmin(admin.ModelAdmin):
 
 @admin.register(Office)
 class OfficeAdmin(SuperuserOnlyAdmin):
-    list_display = ("name", "acronym", "branch", "type", "parent", "head_title")
-    list_filter = ("branch", "type")
+    list_display = ("name", "acronym", "branch", "type", "parent", "coterminous", "head_title")
+    list_filter = ("branch", "type", "coterminous")
     search_fields = ("name", "acronym", "head_title")
+
+
+@admin.register(OrgUnit)
+class OrgUnitAdmin(SuperuserOnlyAdmin):
+    list_display = ("name", "office", "kind", "parent", "beside_head", "order")
+    list_filter = ("office", "kind")
+
+
+@admin.register(StructurePosition)
+class StructurePositionAdmin(SuperuserOnlyAdmin):
+    list_display = ("title", "salary_grade", "status", "office", "unit", "beside_head", "coterminous", "order")
+    list_filter = ("office", "status")
+    search_fields = ("title",)
 
 
 class EngagementInline(admin.TabularInline):

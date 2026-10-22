@@ -36,6 +36,7 @@ from hr.models import (
     Meeting,
     MeetingSeries,
     Office,
+    StructurePosition,
     Person,
     Project,
     SalaryAction,
@@ -3874,7 +3875,7 @@ class OrgChartTestCase(TestCase):
     def test_office_tree_follows_office_parents(self):
         from hr.orgchart import build_office_tree
 
-        chart = build_office_tree()
+        chart = build_office_tree(whole=True)
         self.assertEqual(len(chart.nodes), Office.objects.count() + 1)  # plus the municipality box
         self.assertEqual(len(chart.edges), Office.objects.count())
 
@@ -3921,6 +3922,114 @@ class OrgChartTestCase(TestCase):
         self.assertContains(resp, "Francisco Dagohoy")  # own office head
         self.assertContains(resp, "Office of the Municipal Treasurer")
         self.assertNotContains(resp, f"/offices/{self.office_b.pk}/chart/")
+
+    # --- The clicked office as the head (O6) and the Mayor's Office structure (O7) ----------
+
+    def test_top_level_has_the_departments_in_rows_beside_the_mayors_office(self):
+        from hr.orgchart import build_office_tree
+
+        chart = build_office_tree()
+        head = chart.nodes[0]
+        self.assertEqual(head.title, "Municipal Government of San Pascual")
+        offices = [e.child for e in chart.edges if e.parent is head]
+        self.assertEqual(len(offices), Office.objects.filter(parent=None).count())
+        self.assertEqual(offices[0].title, "Office of the Municipal Mayor")  # leads its branch
+        self.assertIn("Office of the Municipal Treasurer", [o.title for o in offices])
+        self.assertEqual(offices[0].more, "+ 7 divisions, 1 coterminous")
+        trunk = head.x + head.w / 2
+        last_row_y = max(o.y for o in offices)
+        for o in offices:  # the trunk only runs past rows through the gap between boxes
+            if o.y < last_row_y:
+                self.assertFalse(o.x < trunk < o.x + o.w, o.title)
+        self._assert_no_overlap(chart)
+
+    def test_clicking_the_mayors_office_shows_its_own_structure(self):
+        self.client.force_login(self.hrmo_user)
+        mayor = self.office_a.pk
+        top = self.client.get("/offices/chart/")
+        self.assertContains(top, f'href="/offices/chart/?office={mayor}"')  # the box opens it
+        resp = self.client.get(f"/offices/chart/?office={mayor}")
+        self.assertEqual(resp.context["heading"], "Office of the Municipal Mayor")
+        for text in ("Municipal Mayor I", "Executive Assistant II", "Local Special Bodies",
+                     "Cooperatives Development Division (CDD)", "Office of the Municipal Administrator"):
+            self.assertContains(resp, text)
+        self.assertNotContains(resp, "Local Government Unit")  # the municipality box is gone
+        self.assertNotContains(resp, "Office of the Municipal Treasurer")  # departments stay on top
+        self.assertContains(resp, f'href="/offices/{mayor}/chart/"')  # the head opens the staff chart
+        self.assertEqual(resp.context["legend"][1][0], "Proposed for creation")
+        self.assertIn(f"?office={mayor}", resp.context["export_urls"]["pptx"])
+        self.assertEqual([name for name, _url in resp.context["trail"]], ["Municipal Government of San Pascual", "Office of the Municipal Mayor"])
+        self.assertContains(self.client.get("/offices/chart/?office=nonsense"), "Local Government Unit")
+
+    def test_mayors_structure_follows_the_chart_and_its_legend(self):
+        from hr.orgchart import STYLES, build_office_tree
+
+        chart = build_office_tree(focus=self.office_a.pk)
+        head = chart.nodes[0]
+        self.assertEqual((head.title, head.subtitle, head.style), ("Municipal Mayor I", "SG 27", StructurePosition.Status.ELECTED))
+        by_child = {id(e.child): e for e in chart.edges}
+        side = [e.child for e in chart.edges if e.parent is head and e.kind.startswith("side-")]
+        self.assertEqual(
+            [(n.title, by_child[id(n)].kind, by_child[id(n)].dashed) for n in side],
+            [
+                ("Security Officer II", "side-left", False),
+                ("Senior Administrative Assistant III (Private Secretary II)", "side-left", False),
+                ("Executive Assistant II", "side-right", True),
+                ("Local Special Bodies", "side-right", True),
+                ("Office of the Municipal Administrator", "side-right", True),
+            ],
+        )
+        divisions = [e.child for e in chart.edges if e.parent is head and e.kind == "below"]
+        self.assertEqual(len(divisions), 7)
+        self.assertEqual(len({d.y for d in divisions}), 1)  # one row, as on the chart
+        self.assertTrue(all(d.y > max(n.y + n.h for n in side) for d in divisions))
+        security = next(d for d in divisions if d.title.startswith("Civil Security"))
+        self.assertEqual(
+            [(c.title.replace("\xa0", " "), c.style) for c in security.children],  # no-break spaces
+            [("Security Officer I · SG 11", "proposed"), ("Security Guard II · SG 5", "proposed"), ("Security Guard I · SG 3", "filled")],
+        )
+        self.assertEqual(STYLES[security.children[0].style], "#e03131")  # red: proposed for creation
+        self.assertEqual(STYLES[security.children[2].style], "#2f9e44")  # green: existing filled-up
+        self._assert_no_overlap(chart)
+
+    def test_structure_seed_keeps_admin_changes(self):
+        from hr.models import OrgUnit
+
+        self.assertEqual(OrgUnit.objects.filter(office=self.office_a, parent=None, beside_head=False).count(), 7)
+        self.assertEqual(StructurePosition.objects.filter(office=self.office_a).count(), 40)
+        StructurePosition.objects.filter(title="Messenger").update(status=StructurePosition.Status.PROPOSED)
+        call_command("seed_structure")
+        self.assertEqual(StructurePosition.objects.get(title="Messenger").status, StructurePosition.Status.PROPOSED)
+        call_command("seed_structure", "--replace")
+        self.assertEqual(StructurePosition.objects.get(title="Messenger").status, StructurePosition.Status.FILLED)
+
+    def test_slide_exports(self):
+        from pptx import Presentation
+        from hr.orgchart import SITE_LEFT, SITE_RIGHT, build_office_tree, render_png, render_pptx
+
+        chart = build_office_tree(focus=self.office_a.pk)
+        png = Image.open(BytesIO(render_png(chart, "Test")))
+        self.assertAlmostEqual(png.width / png.height, 16 / 9, places=2)
+        prs = Presentation(BytesIO(render_pptx(chart, "Test")))
+        self.assertAlmostEqual(prs.slide_width / prs.slide_height, 16 / 9, places=2)  # fits a normal slide
+        shapes = list(prs.slides[0].shapes)
+        names = {s.shape_id: s.name for s in shapes}
+        self.assertIn("Legend: Proposed for creation", names.values())
+        dashed = [s for s in shapes if s._element.tag.endswith("}cxnSp") and "prstDash" in s._element.xml]
+        self.assertEqual(len(dashed), 3)
+        ends = {names[d._element.nvCxnSpPr.cNvCxnSpPr.endCxn.id]: d._element.nvCxnSpPr.cNvCxnSpPr for d in dashed}
+        glue = ends["Office of the Municipal Administrator"]
+        self.assertEqual((names[glue.stCxn.id], glue.stCxn.idx), ("Municipal Mayor I", SITE_RIGHT))
+        self.assertEqual(glue.endCxn.idx, SITE_LEFT)
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/offices/chart/export/pptx/?office={self.office_a.pk}")
+        self.assertIn("office-tree-mo-", resp["Content-Disposition"])
+
+    def _assert_no_overlap(self, chart):
+        boxes = [(n.x, n.y, n.x + n.w, n.y + n.h, n.title) for n in chart.nodes]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                self.assertFalse(a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3], (a, b))
 
     # --- Exports (O4) --------------------------------------------------------------------
 

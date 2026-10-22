@@ -26,10 +26,12 @@ from .models import (
     Meeting,
     MeetingSeries,
     Office,
+    OrgUnit,
     Person,
     Project,
     SalaryAction,
     ServiceInterruption,
+    StructurePosition,
     UserProfile,
 )
 
@@ -44,6 +46,8 @@ AUDITED_MODELS = (
     Delegate,
     UserProfile,
     Office,
+    OrgUnit,
+    StructurePosition,
     Project,
     CalendarEvent,
     SalaryAction,

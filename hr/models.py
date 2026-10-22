@@ -40,6 +40,11 @@ class Office(models.Model):
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
     head_title = models.CharField(max_length=150, blank=True)
+    # Office tree (DECISIONS O6): drawn beside its parent's head, not in the row of divisions below.
+    coterminous = models.BooleanField(
+        default=False,
+        help_text="Coterminous with the head of the parent office: drawn beside that head on the office tree.",
+    )
     location = models.CharField(max_length=200, blank=True)
     contact = models.CharField(max_length=200, blank=True)
     notes = models.TextField(blank=True)
@@ -49,6 +54,62 @@ class Office(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class OrgUnit(models.Model):
+    """A division or section inside an office, or a body attached to its head, for the
+    office's structure chart (DECISIONS O7)."""
+
+    class Kind(models.TextChoices):
+        DIVISION = "division", "Division"
+        SECTION = "section", "Section"
+        BODY = "body", "Local special bodies"
+
+    office = models.ForeignKey(Office, on_delete=models.CASCADE, related_name="units")
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.CASCADE, related_name="children",
+        help_text="Empty: directly under the head of the office.",
+    )
+    name = models.CharField(max_length=200)
+    acronym = models.CharField(max_length=20, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.DIVISION)
+    beside_head = models.BooleanField(default=False, help_text="Drawn beside the head, not below it.")
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["office", "order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class StructurePosition(models.Model):
+    """A position on an office's approved structure (elected, existing filled-up or proposed for
+    creation), as drawn on its structure chart. Not an appointment: who holds it lives in
+    Engagement (DECISIONS O7)."""
+
+    class Status(models.TextChoices):
+        ELECTED = "elected", "Elected position"
+        FILLED = "filled", "Existing filled-up position"
+        PROPOSED = "proposed", "Proposed for creation"
+
+    office = models.ForeignKey(Office, on_delete=models.CASCADE, related_name="structure_positions")
+    unit = models.ForeignKey(
+        OrgUnit, null=True, blank=True, on_delete=models.CASCADE, related_name="positions",
+        help_text="Empty: the head of the office, or beside the head.",
+    )
+    title = models.CharField(max_length=200)
+    salary_grade = models.PositiveSmallIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    beside_head = models.BooleanField(default=False, help_text="Drawn beside the head, not below it.")
+    coterminous = models.BooleanField(default=False, help_text="Drawn with a dashed line.")
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["office", "order", "title"]
+
+    def __str__(self):
+        return f"{self.title} (SG {self.salary_grade})" if self.salary_grade else self.title
 
 
 # --- People ------------------------------------------------------------------
