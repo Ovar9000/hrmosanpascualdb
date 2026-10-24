@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}My leave{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">My leave</h1>
+    <div class="text-muted small">{{ person.full_name }} · balances include every approved leave; days on hold are applications still being signed.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'leave_card' person.pk %}">Leave card</a>
+    <a class="btn btn-primary" href="{% url 'leave_file' %}">+ File leave</a>
+  </div>
+</div>
+
+{% if summary.eligible %}
+<div class="row g-2 text-center mb-3">
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Vacation leave</div><div class="h3 mb-0 text-primary">{{ summary.vl|floatformat:3 }}</div><div class="small text-muted">{{ summary.vl_available|floatformat:3 }} available</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Sick leave</div><div class="h3 mb-0 text-primary">{{ summary.sl|floatformat:3 }}</div><div class="small text-muted">{{ summary.sl_available|floatformat:3 }} available</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Special privilege leave</div><div class="h3 mb-0">{{ summary.spl_left|floatformat:"-1" }}</div><div class="small text-muted">of {{ summary.spl_allowance|floatformat:"-1" }} days left this year</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100 {% if summary.forced_left %}border border-warning{% endif %}"><div class="card-body py-2"><div class="small text-muted">Forced leave to take</div><div class="h3 mb-0">{{ summary.forced_left|floatformat:"-1" }}</div><div class="small text-muted">by {{ summary.year_end|date:"M d" }} ({{ summary.forced_taken|floatformat:"-1" }} taken)</div></div></div></div>
+</div>
+{% else %}
+<div class="alert alert-light border small">Your appointment does not earn vacation and sick leave credits (Job Order and Contract of Service). Special leaves such as maternity, paternity and solo parent leave can still be filed.</div>
+{% endif %}
+
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-bold py-2">Applications</div>
+  <div class="list-group list-group-flush">
+    {% for req in page %}
+      <a href="{% url 'leave_detail' req.pk %}" class="list-group-item list-group-item-action">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+          <div>
+            <div class="fw-semibold">{{ req.type_label }} · {{ req.start_date|date:"M d, Y" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"M d, Y" }}{% endif %}</div>
+            <div class="small text-muted">{{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }} · filed {{ req.filed_at|date:"M d, Y" }}{% if req.days_without_pay %} · {{ req.days_without_pay|floatformat:"-1" }} without pay{% endif %}</div>
+          </div>
+          {% include "hr/_leave_steps.html" %}
+        </div>
+      </a>
+    {% empty %}
+      <div class="list-group-item text-muted small">No leave filed yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-2"><ul class="pagination pagination-sm">
+  {% if page.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page.previous_page_number }}">Newer</a></li>{% endif %}
+  {% if page.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page.next_page_number }}">Older</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endblock %}

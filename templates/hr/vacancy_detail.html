@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{{ vacancy.position_title }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% url 'vacancy_list' %}" class="btn btn-sm btn-outline-secondary">← Vacant positions</a>
+  {% if can_manage %}<a href="{% url 'vacancy_edit' vacancy.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+  <a href="{% url 'vacancy_print' vacancy.pk 'publication' %}" class="btn btn-sm btn-outline-secondary">Print request for publication</a>{% endif %}
+  {% if applicants is not None %}<a href="{% url 'vacancy_print' vacancy.pk 'resolution' %}" class="btn btn-sm btn-outline-secondary">Print HRMPSB resolution draft</a>{% endif %}
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+          <div>
+            <h1 class="h4 mb-1">{{ vacancy.position_title }}</h1>
+            <div class="text-muted small">{{ vacancy.office.name }} · Plantilla item no. {{ vacancy.item_number }}</div>
+          </div>
+          <span class="badge align-self-start {% if accepting %}text-bg-success{% elif vacancy.status == 'filled' %}text-bg-secondary{% else %}text-bg-warning{% endif %}">{{ vacancy.get_status_display }}</span>
+        </div>
+        <div class="d-flex flex-wrap gap-4 my-3">
+          <div><div class="small text-muted">Salary grade</div><div class="h5 mb-0">{{ vacancy.salary_grade }}</div></div>
+          <div><div class="small text-muted">Monthly salary</div><div class="h5 mb-0">₱{{ vacancy.monthly_salary|floatformat:"2g" }}</div></div>
+          {% if vacancy.deadline %}<div><div class="small text-muted">Apply until</div><div class="h5 mb-0">{{ vacancy.deadline|date:"M d, Y" }}</div>
+            {% if accepting %}<div class="small {% if days_left <= 3 %}text-danger{% else %}text-muted{% endif %}">{% if days_left == 0 %}today is the last day{% else %}{{ days_left }} day{{ days_left|pluralize }} left{% endif %}</div>{% endif %}</div>{% endif %}
+        </div>
+        <h2 class="h6">Qualification standards</h2>
+        <dl class="row small mb-0">
+          <dt class="col-sm-3 text-muted">Education</dt><dd class="col-sm-9">{{ vacancy.education|linebreaksbr }}</dd>
+          <dt class="col-sm-3 text-muted">Training</dt><dd class="col-sm-9">{{ vacancy.training|linebreaksbr }}</dd>
+          <dt class="col-sm-3 text-muted">Experience</dt><dd class="col-sm-9">{{ vacancy.experience|linebreaksbr }}</dd>
+          <dt class="col-sm-3 text-muted">Eligibility</dt><dd class="col-sm-9">{{ vacancy.eligibility|linebreaksbr }}</dd>
+          {% if vacancy.competencies %}<dt class="col-sm-3 text-muted">Competencies</dt><dd class="col-sm-9">{{ vacancy.competencies|linebreaksbr }}</dd>{% endif %}
+          <dt class="col-sm-3 text-muted">Place of assignment</dt><dd class="col-sm-9">{{ vacancy.office.name }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">How to apply</div>
+      <div class="card-body small">
+        <p>Send an application letter addressed to the head of office, with:</p>
+        <ol>{% for field, label in requirements %}<li>{{ label }}</li>{% endfor %}</ol>
+        <p class="mb-0">Hand them in or send them by courier to the Human Resource Management Office before the deadline. Applications with incomplete documents are not entertained. The LGU encourages all qualified applicants, including persons with disability and members of indigenous communities, to apply, and does not discriminate (EOP principle).</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-4">
+    {% if person %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        {% if my_application %}
+          <div class="fw-semibold text-success mb-1">✔ You signified interest on {{ my_application.signified_on|date:"M d, Y" }}</div>
+          <div class="small mb-1">Documents HRMO has received:</div>
+          <ul class="list-unstyled small mb-0">{% for label, done in my_docs %}<li>{% if done %}✔{% else %}○{% endif %} {{ label }}</li>{% endfor %}</ul>
+        {% elif accepting %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="apply">
+            <button class="btn btn-success w-100">I'm interested in this position</button></form>
+          <div class="small text-muted mt-2">Records your interest with today's date so HRMO can expect your documents. You still submit the documents listed.</div>
+        {% else %}
+          <div class="small text-muted">This vacancy is not accepting applications.</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    <div class="card border-0 shadow-sm small">
+      <div class="card-body">
+        {% if vacancy.published_on %}<div>Published {{ vacancy.published_on|date:"M d, Y" }}</div>{% endif %}
+        {% if vacancy.csc_received_on %}<div>Received by CSC {{ vacancy.csc_received_on|date:"M d, Y" }}</div>{% endif %}
+        {% if vacancy.posted_at %}<div class="text-muted mt-1">Posted at: {{ vacancy.posted_at }}</div>{% endif %}
+        {% if vacancy.board_met_on %}<div class="mt-1">HRMPSB met {{ vacancy.board_met_on|date:"M d, Y" }}{% if vacancy.board_venue %}, {{ vacancy.board_venue }}{% endif %}</div>{% endif %}
+        {% if vacancy.resolution_no %}<div>Resolution no. {{ vacancy.resolution_no }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if applicants is not None %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">Applicants ({{ applicants|length }})</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 small align-middle">
+      <thead class="table-light"><tr><th>Rank</th><th>Name</th><th>Signified</th><th class="text-center">PDS</th><th class="text-center">Rating</th><th class="text-center">Eligibility</th><th class="text-center">TOR</th><th>Meets QS</th><th>Remarks</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for a in applicants %}
+          <tr>
+            <td>{{ a.rank|default:"" }}</td>
+            <td>{{ a.full_name }}{% if a.person %} <span class="badge text-bg-light border">employee</span>{% endif %}{% if a.applied_online %} <span class="badge text-bg-light border">online</span>{% endif %}</td>
+            <td>{{ a.signified_on|date:"M d" }}</td>
+            <td class="text-center">{{ a.has_pds|yesno:"✔,○" }}</td><td class="text-center">{{ a.has_rating|yesno:"✔,○" }}</td>
+            <td class="text-center">{{ a.has_eligibility|yesno:"✔,○" }}</td><td class="text-center">{{ a.has_tor|yesno:"✔,○" }}</td>
+            <td>{% if a.meets_qs is None %}<span class="text-muted">not yet evaluated</span>{% elif a.meets_qs %}<span class="text-success">Yes</span>{% else %}<span class="text-danger">No</span>{% endif %}</td>
+            <td>{{ a.remarks }}</td>
+            {% if can_manage %}<td><a href="{% url 'applicant_edit' a.pk %}">Edit</a></td>{% endif %}
+          </tr>
+        {% empty %}<tr><td colspan="10" class="text-muted">No applicants yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% if can_manage %}
+<form method="post" class="card border-0 shadow-sm" novalidate>{% csrf_token %}<input type="hidden" name="action" value="add_applicant">
+  <div class="card-header bg-white fw-bold py-2">Add an applicant (letter received at HRMO)</div>
+  <div class="card-body">{% include "hr/_form_fields.html" with form=applicant_form %}</div>
+  <div class="card-footer bg-white"><button class="btn btn-sm btn-primary">Add applicant</button></div>
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

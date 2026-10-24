@@ -343,3 +343,84 @@ def can_view_trackers(user):
     """Contract renewals, retirement and year-end bonus lists (DECISIONS RM4): they use birthdates
     and pay eligibility, so the same audience as salary actions: HRMO and Auditor."""
     return can_view_salary_actions(user)
+
+
+# --- Leave, Plantilla report, vacancies and memos (DECISIONS L1-L9, RP1, V1-V5, M1-M4) --------
+
+
+def _no_hr_access(user):
+    return not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser)
+
+
+def can_view_leave_of(user, person):
+    """A person's leave card and applications (R4 leave balances): HRMO, Auditor and self, plus
+    leave approvers for the people they can already see."""
+    if _no_hr_access(user):
+        return False
+    if can_view_personal_details(user, person):
+        return True
+    return can_approve_leave(user) and get_visible_people(user).filter(pk=person.pk).exists()
+
+
+def can_view_leave_register(user):
+    """Every application, the balances board and the ledger tools: HRMO (edits) and Auditor (reads)."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user)
+
+
+def can_view_plantilla_report(user):
+    """The Plantilla of Personnel shows salaries and birthdates (R4, R6): HRMO and Auditor."""
+    return can_view_pay(user) and can_view_leave_register(user)
+
+
+def can_view_vacancies(user):
+    """Published vacancies are public notices (posted on the bulletin boards): every signed-in user."""
+    return not _no_hr_access(user)
+
+
+def can_view_applicants(user):
+    """Applicant names and documents: HRMO, Auditor and the Executive (the HRMPSB chair)."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user) or is_executive(user)
+
+
+def memo_is_for(memo, person):
+    """Whether a memo is addressed to this person (everyone in service, one office, or chosen)."""
+    if person is None:
+        return False
+    if memo.audience == memo.Audience.CHOSEN:
+        return memo.members.filter(pk=person.pk).exists()
+    active = person.engagements.filter(status=Engagement.Status.ACTIVE)
+    if memo.audience == memo.Audience.OFFICE:
+        active = active.filter(office_id=memo.office_id)
+    return active.exists()
+
+
+def can_view_memo(user, memo):
+    """Published memos: their addressees and all-office roles. Drafts: HRMO only."""
+    if _no_hr_access(user):
+        return False
+    if not memo.is_published:
+        return can_manage_hr_records(user)
+    if has_all_office_scope(user):
+        return True
+    if memo.audience == memo.Audience.OFFICE and memo.office_id:
+        own = get_user_office(user)
+        if own and own.pk == memo.office_id:
+            return True
+    person = getattr(getattr(user, "profile", None), "person", None)
+    return memo_is_for(memo, person)
+
+
+def memo_ack_scope(user):
+    """Whose acknowledgments the user may see: None for everyone (all-office roles), an office for
+    an Office Head (own office only), or False."""
+    if _no_hr_access(user):
+        return False
+    if has_all_office_scope(user):
+        return None
+    if is_office_head(user):
+        return get_user_office(user) or False
+    return False

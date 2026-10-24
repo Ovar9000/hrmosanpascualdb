@@ -129,6 +129,11 @@
           {{ form.item_number }}
           {% if form.item_number.errors %}<div class="invalid-feedback d-block">{{ form.item_number.errors|first }}</div>{% endif %}
         </div>
+        <div class="col-12 col-md-4">
+          <label for="{{ form.appointment_status.id_for_label }}" class="form-label fw-semibold">Appointment status</label>
+          {{ form.appointment_status }}
+          <div class="form-text">Shown on the Plantilla of Personnel (P, T or CO).</div>
+        </div>
       </div>
 
       <!-- Section: Project Assignment (Only for Project-based) -->

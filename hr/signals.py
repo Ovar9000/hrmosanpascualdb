@@ -16,15 +16,19 @@ from .audit import (
     serialize_field_value,
 )
 from .models import (
+    Applicant,
     AuditLog,
     CalendarEvent,
     Delegate,
     Document,
     Engagement,
+    LeaveApprovalStep,
     LeaveCredit,
     LeaveRequest,
     Meeting,
     MeetingSeries,
+    Memo,
+    MemoAcknowledgment,
     Office,
     OrgUnit,
     Person,
@@ -33,6 +37,7 @@ from .models import (
     ServiceInterruption,
     StructurePosition,
     UserProfile,
+    Vacancy,
 )
 
 User = get_user_model()
@@ -54,6 +59,11 @@ AUDITED_MODELS = (
     ServiceInterruption,
     MeetingSeries,
     Meeting,
+    LeaveApprovalStep,
+    Vacancy,
+    Applicant,
+    Memo,
+    MemoAcknowledgment,
     User,
     Group,
 )

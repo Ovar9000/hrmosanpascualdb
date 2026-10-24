@@ -142,6 +142,10 @@ Write-Step "Salary actions: sample long careers, then the daily check"
 $salary = Invoke-Manage seed_demo_salary_history
 Write-Ok ($salary | Select-Object -Last 1)
 
+Write-Step "Leave applications, vacancies and memos"
+$board = Invoke-Manage seed_demo_board
+Write-Ok (($board | Select-Object -Last 1) -replace '^Board demo data: ', '')
+
 # --- 5. Sample upload files -----------------------------------------------------------
 Write-Step "Writing sample upload files to demo_files\"
 New-Item -ItemType Directory -Force -Path demo_files | Out-Null

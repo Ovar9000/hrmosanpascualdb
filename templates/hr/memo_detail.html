@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ memo.number }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% url 'memo_list' %}" class="btn btn-sm btn-outline-secondary">← Memos</a>
+  {% if can_manage %}<a href="{% url 'memo_edit' memo.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>{% endif %}
+  {% if memo.scan %}<a href="{% url 'memo_scan' memo.pk %}" class="btn btn-sm btn-outline-secondary">Download signed copy</a>{% endif %}
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <article class="card border-0 shadow-sm">
+      <div class="card-body">
+        <div class="text-muted small fst-italic">{{ memo.number }}{% if not memo.is_published %} · <span class="badge text-bg-secondary">Draft</span>{% endif %}</div>
+        <div class="small">{{ memo.dated|date:"d F Y" }}</div>
+        <dl class="row small mt-3 mb-2">
+          <dt class="col-2">TO:</dt><dd class="col-10 text-uppercase">{{ memo.addressed_to }}</dd>
+          <dt class="col-2">SUBJECT:</dt><dd class="col-10 fw-bold text-uppercase">{{ memo.subject }}</dd>
+        </dl>
+        <hr>
+        <div style="white-space: pre-line">{{ memo.body }}</div>
+        {% if memo.signed_by %}<div class="mt-4 fw-bold">{{ memo.signed_by }}</div>{% endif %}
+        {% if memo.released_on %}<div class="small text-muted mt-2">Released by the Office of the Mayor on {{ memo.released_on|date:"M d, Y" }}</div>{% endif %}
+      </div>
+    </article>
+  </div>
+  <div class="col-12 col-lg-4">
+    {% if memo.comply_by %}
+      <div class="card border-0 shadow-sm mb-3 {% if memo.comply_by >= today %}border-start border-4 border-danger{% endif %}"><div class="card-body py-2">
+        <div class="small text-muted">Comply by</div><div class="h5 mb-0">{{ memo.comply_by|date:"l, M d, Y" }}</div></div></div>
+    {% endif %}
+    {% if is_addressee and memo.requires_ack %}
+      <div class="card border-0 shadow-sm mb-3"><div class="card-body">
+        {% if ack %}
+          <div class="text-success fw-semibold">✔ You acknowledged this on {{ ack.acknowledged_at|date:"M d, Y g:i A" }}</div>
+        {% elif memo.is_published %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="ack">
+            <button class="btn btn-success w-100">I have read and understood this memo</button></form>
+          <div class="small text-muted mt-2">This takes the place of signing the routing list.</div>
+        {% endif %}
+      </div></div>
+    {% endif %}
+    {% if progress and memo.requires_ack %}
+      <div class="card border-0 shadow-sm"><div class="card-body">
+        <div class="small text-muted">Acknowledged{% if progress.office %} in {{ progress.office.name }}{% endif %}</div>
+        <div class="h5 mb-1">{{ progress.done }} of {{ progress.total }}</div>
+        <div class="progress mb-2" role="progressbar" aria-label="Acknowledged" aria-valuenow="{{ progress.pct }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar bg-success" style="width: {{ progress.pct }}%"></div></div>
+        <a class="small" href="{% url 'memo_acks' memo.pk %}">See who has not yet</a>
+      </div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

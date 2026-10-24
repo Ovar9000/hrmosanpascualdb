@@ -32,6 +32,28 @@
           {% elif not perms.hr.manage_projects or perms.hr.view_hr_records %}
             <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices</a></li>
           {% endif %}
+          {% if board_nav.show %}
+            {% if board_nav.person or board_nav.approver or board_nav.register %}
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Leave{% if board_nav.inbox %} <span class="badge rounded-pill text-bg-warning" title="Waiting for your signature">{{ board_nav.inbox }}</span>{% endif %}</a>
+              <ul class="dropdown-menu">
+                {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_leave' %}">My leave</a></li>
+                <li><a class="dropdown-item" href="{% url 'leave_file' %}">File leave</a></li>{% endif %}
+                {% if board_nav.approver %}<li><a class="dropdown-item" href="{% url 'leave_inbox' %}">Waiting for me{% if board_nav.inbox %} ({{ board_nav.inbox }}){% endif %}</a></li>{% endif %}
+                {% if board_nav.register %}<li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{% url 'leave_register' %}">Leave register</a></li>
+                <li><a class="dropdown-item" href="{% url 'leave_balances' %}">Leave balances list</a></li>{% endif %}
+              </ul>
+            </li>
+            {% endif %}
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Bulletin{% if board_nav.unread %} <span class="badge rounded-pill text-bg-danger" title="Memos to acknowledge">{{ board_nav.unread }}</span>{% endif %}</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{% url 'memo_list' %}">Memos{% if board_nav.unread %} ({{ board_nav.unread }} new){% endif %}</a></li>
+                <li><a class="dropdown-item" href="{% url 'vacancy_list' %}">Vacant positions</a></li>
+              </ul>
+            </li>
+          {% endif %}
           {% if org_nav.salary %}
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tracker{% if org_nav.salary_due or org_nav.attention %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
@@ -41,6 +63,8 @@
                 <li><a class="dropdown-item" href="{% url 'tracker_retirement' %}">Retirement</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_year_end_bonus' %}">Year-end bonus</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_meetings' %}">Required meetings</a></li>
+                {% if board_nav.plantilla %}<li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a></li>{% endif %}
               </ul>
             </li>
           {% endif %}

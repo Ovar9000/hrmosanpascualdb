@@ -1,0 +1,33 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Request for publication · {{ vacancy.position_title }}{% endblock %}
+{% block back %}{% url 'vacancy_detail' vacancy.pk %}{% endblock %}
+{% block page_size %}size: legal landscape;{% endblock %}
+{% block style %}
+  .pub { font-size: 9pt; }
+  .pub th { text-align: center; vertical-align: middle !important; }
+  .pub td { text-align: center; vertical-align: middle !important; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet landscape pub">
+  <div class="text-center fw-bold">Request for Publication of Vacant Positions</div>
+  <p class="mt-3">To: CIVIL SERVICE COMMISSION (CSC)</p>
+  <p>We hereby request the publication on the CSC Job Portal of the following vacant positions, which are authorized to be filled at the <strong><u>LGU-San Pascual, Masbate</u></strong>:</p>
+  <div class="d-flex justify-content-end mb-2"><div class="text-center" style="min-width:260px"><div class="sig">Administrative Officer / HRMO</div>Date: {{ vacancy.published_on|date:"F d, Y"|default:"__________" }}</div></div>
+  <table class="form-table">
+    <thead>
+      <tr><th rowspan="2">No.</th><th rowspan="2">Position Title (Parenthetical Title, if applicable)</th><th rowspan="2">Plantilla Item No.</th><th rowspan="2">Salary/ Job/ Pay Grade</th><th rowspan="2">Monthly Salary</th><th colspan="5">Qualification Standards</th><th rowspan="2">Place of Assignment</th></tr>
+      <tr><th>Education</th><th>Training</th><th>Experience</th><th>Eligibility</th><th>Competency / Area of Specialization / Residency Requirement (if applicable)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>{{ vacancy.position_title }}</td><td>{{ vacancy.item_number }}</td><td>{{ vacancy.salary_grade }}</td><td>{{ vacancy.monthly_salary|floatformat:"2g" }}</td>
+        <td>{{ vacancy.education|linebreaksbr }}</td><td>{{ vacancy.training|linebreaksbr }}</td><td>{{ vacancy.experience|linebreaksbr }}</td>
+        <td>{{ vacancy.eligibility|linebreaksbr }}</td><td>{{ vacancy.competencies|linebreaksbr }}</td><td>{{ vacancy.office.name }}</td></tr>
+    </tbody>
+  </table>
+  <p class="mt-2">Interested and qualified applicants should signify their interest in writing through an application letter addressed to the head of office. Applicants must attach the following documents to the application letter and send these to the address below not later than <strong><u>{{ vacancy.deadline|date:"F d, Y"|default:"__________" }}</u></strong>.</p>
+  <ol>{% for field, label in requirements %}<li>{{ label }}</li>{% endfor %}</ol>
+  <p class="small-print">This Office highly encourages all interested and qualified applicants to apply, which include persons with disability (PWD) and members of the indigenous communities, irrespective of sexual orientation and gender identities and/or expression, civil status, religion, and political affiliation. This Office does not discriminate in the selection of employees based on the aforementioned pursuant to Equal Opportunities for Employment Principle (EOP).</p>
+  <p>QUALIFIED APPLICANTS are advised to hand in or send through courier/email their application to the head of office / human resource management office / records office, as the case may be.</p>
+  <p class="fw-bold mt-3">APPLICATIONS WITH INCOMPLETE DOCUMENTS SHALL NOT BE ENTERTAINED.</p>
+</div>
+{% endblock %}

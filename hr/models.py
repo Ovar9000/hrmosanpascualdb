@@ -318,10 +318,19 @@ class Engagement(models.Model):
         help_text="Eligible to earn leave credits. Default True for Plantilla/Casual, editable by HRMO.",
     )
 
+    class AppointmentStatus(models.TextChoices):
+        PERMANENT = "P", "Permanent"
+        TEMPORARY = "T", "Temporary"
+        COTERMINOUS = "CO", "Coterminous"
+
     # Plantilla only (DECISIONS D5).
     salary_grade = models.PositiveSmallIntegerField(null=True, blank=True)
     step = models.PositiveSmallIntegerField(null=True, blank=True)
     item_number = models.CharField(max_length=50, blank=True)
+    # Status column of the Plantilla of Personnel (DECISIONS RP1).
+    appointment_status = models.CharField(
+        "Appointment status", max_length=2, choices=AppointmentStatus.choices, blank=True,
+    )
 
     # Project-based only.
     project = models.ForeignKey(
@@ -510,40 +519,82 @@ class Document(models.Model):
         return self.get_doc_type_display()
 
 
-# --- Leave (kept simple until the survey, DECISIONS L1-L3) -------------------
+# --- Leave (CS Form No. 6, Revised 2020; DECISIONS L1-L9) --------------------
 
 
 class LeaveType(models.TextChoices):
+    """Section 6.A of CS Form No. 6 (Revised 2020), in the form's order."""
+
     VACATION = "vl", "Vacation leave"
-    SICK = "sl", "Sick leave"
-    SPECIAL_PRIVILEGE = "spl", "Special privilege leave"
     MANDATORY = "fl", "Mandatory/forced leave"
+    SICK = "sl", "Sick leave"
     MATERNITY = "maternity", "Maternity leave"
     PATERNITY = "paternity", "Paternity leave"
+    SPECIAL_PRIVILEGE = "spl", "Special privilege leave"
     SOLO_PARENT = "solo_parent", "Solo parent leave"
+    STUDY = "study", "Study leave"
+    VAWC = "vawc", "10-day VAWC leave"
+    REHABILITATION = "rehab", "Rehabilitation privilege"
+    SPECIAL_WOMEN = "slbw", "Special leave benefits for women"
+    CALAMITY = "calamity", "Special emergency (calamity) leave"
+    ADOPTION = "adoption", "Adoption leave"
+    WELLNESS = "wellness", "Wellness leave"
     OTHER = "other", "Other"
+
+
+class LeaveDetail(models.TextChoices):
+    """Section 6.B of CS Form No. 6: where, what illness, or what the leave is for."""
+
+    WITHIN_PH = "within_ph", "Within the Philippines"
+    ABROAD = "abroad", "Abroad"
+    IN_HOSPITAL = "in_hospital", "In hospital"
+    OUT_PATIENT = "out_patient", "Out patient"
+    WOMEN_ILLNESS = "women_illness", "Illness (special leave benefits for women)"
+    MASTERS = "masters", "Completion of Master's degree"
+    BAR_REVIEW = "bar_review", "BAR/Board examination review"
+    MONETIZATION = "monetization", "Monetization of leave credits"
+    TERMINAL = "terminal", "Terminal leave"
 
 
 class LeaveRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         APPROVED = "approved", "Approved"
-        REJECTED = "rejected", "Rejected"
+        REJECTED = "rejected", "Disapproved"
         CANCELLED = "cancelled", "Cancelled"
 
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="leave_requests")
+    # The office the leave is filed in (its head recommends it), kept even if the person transfers.
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="leave_requests"
+    )
+    position_title = models.CharField(max_length=150, blank=True)
     leave_type = models.CharField(max_length=20, choices=LeaveType.choices)
+    leave_type_other = models.CharField("Other leave (specify)", max_length=100, blank=True)
+    detail = models.CharField("Details of leave", max_length=20, choices=LeaveDetail.choices, blank=True)
+    detail_text = models.CharField("Specify", max_length=200, blank=True)
     start_date = models.DateField()
     end_date = models.DateField()
-    # Entered by the employee, not computed (weekends/holidays rules TBD by survey).
+    # Suggested from the dates (weekdays less holidays), editable for half days (L4).
     days = models.DecimalField("Working days", max_digits=5, decimal_places=1)
     reason = models.TextField(blank=True)
+    commutation_requested = models.BooleanField("Commutation requested", default=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     filed_at = models.DateTimeField(auto_now_add=True)
+    filed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Who entered it: the employee, or HRMO for a paper form.",
+    )
     approver = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
     decided_at = models.DateTimeField(null=True, blank=True)
+    # 7.A and 7.C, filled in when HRMO certifies the credits (L5).
+    certified_balances = models.JSONField(default=dict, blank=True)
+    days_with_pay = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    days_without_pay = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ["-filed_at"]
@@ -564,6 +615,58 @@ class LeaveRequest(models.Model):
 
     def __str__(self):
         return f"{self.person} – {self.get_leave_type_display()} {self.start_date}"
+
+    @property
+    def type_label(self):
+        if self.leave_type == LeaveType.OTHER and self.leave_type_other:
+            return self.leave_type_other
+        return self.get_leave_type_display()
+
+    @property
+    def current_step(self):
+        if self.status != self.Status.PENDING:
+            return None
+        return next((s for s in self.steps.all() if s.status == LeaveApprovalStep.Status.PENDING), None)
+
+
+class LeaveApprovalStep(models.Model):
+    """One signature box of section 7 of CS Form No. 6, in the configured order (DECISIONS L1)."""
+
+    class Kind(models.TextChoices):
+        RECOMMEND = "recommend", "Recommendation (office head)"
+        CERTIFY = "certify", "Certification of leave credits (HRMO)"
+        APPROVE = "approve", "Approval (Municipal Mayor)"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting"
+        DONE = "done", "Done"
+        DISAPPROVED = "disapproved", "Disapproved"
+        SKIPPED = "skipped", "Not needed"
+
+    request = models.ForeignKey(LeaveRequest, on_delete=models.CASCADE, related_name="steps")
+    order = models.PositiveSmallIntegerField()
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    acted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    acted_at = models.DateTimeField(null=True, blank=True)
+    # HRMO recorded it from the wet-signed paper form, for signatories without an account (L6).
+    from_paper = models.BooleanField(default=False)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["request", "order"]
+        constraints = [
+            models.UniqueConstraint(fields=["request", "order"], name="leavestep_one_per_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.request} · {self.get_kind_display()}: {self.get_status_display()}"
+
+    @property
+    def short_label(self):
+        return {"recommend": "Office head", "certify": "HRMO", "approve": "Mayor"}[self.kind]
 
 
 class LeaveCredit(models.Model):
@@ -889,6 +992,214 @@ class Meeting(models.Model):
         if today > self.period_end:
             return self.Status.MISSED
         return self.Status.SCHEDULED if self.scheduled_on else self.Status.DUE
+
+
+# --- Vacancies and the selection board (DECISIONS V1-V5) ------------------------------
+
+
+class Vacancy(models.Model):
+    """A vacant plantilla item HRMO publishes (CS request for publication), through HRMPSB to filling."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft (not published)"
+        OPEN = "open", "Open for applications"
+        SCREENING = "screening", "Closed: HRMPSB screening"
+        FILLED = "filled", "Filled"
+        CANCELLED = "cancelled", "Cancelled"
+
+    VISIBLE_STATUSES = [Status.OPEN, Status.SCREENING, Status.FILLED]
+
+    office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="vacancies",
+                               verbose_name="Place of assignment")
+    position_title = models.CharField(max_length=150, help_text="With the parenthetical title, if any.")
+    item_number = models.CharField("Plantilla item no.", max_length=50)
+    salary_grade = models.PositiveSmallIntegerField()
+    monthly_salary = models.DecimalField(max_digits=12, decimal_places=2)
+    education = models.TextField()
+    training = models.TextField(default="None required")
+    experience = models.TextField(default="None required")
+    eligibility = models.TextField()
+    competencies = models.TextField("Competency / area of specialization", blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    published_on = models.DateField("Published from", null=True, blank=True)
+    deadline = models.DateField("Applications until", null=True, blank=True)
+    csc_received_on = models.DateField("Received by CSC", null=True, blank=True)
+    posted_at = models.TextField(
+        "Posted at", blank=True,
+        help_text="Where the notice is posted, e.g. the HRMO bulletin board and the other boards.",
+    )
+    # HRMPSB deliberation (the resolution's heading and number).
+    board_met_on = models.DateField("HRMPSB met on", null=True, blank=True)
+    board_venue = models.CharField("HRMPSB venue", max_length=200, blank=True)
+    resolution_no = models.CharField("Resolution no.", max_length=50, blank=True)
+    filled_by = models.ForeignKey(
+        Engagement, null=True, blank=True, on_delete=models.SET_NULL, related_name="filled_vacancies",
+        help_text="The appointment that filled the item.",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "vacancies"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(salary_grade__range=(1, 33)),
+                name="vacancy_salary_grade_range",
+                violation_error_message="Salary grade must be 1 to 33.",
+            ),
+            models.CheckConstraint(
+                condition=Q(deadline__isnull=True) | Q(published_on__isnull=True) | Q(deadline__gte=F("published_on")),
+                name="vacancy_deadline_after_publication",
+                violation_error_message="The deadline cannot be before the publication date.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.position_title} ({self.item_number})"
+
+    def is_accepting(self, today):
+        return self.status == self.Status.OPEN and (self.deadline is None or today <= self.deadline)
+
+
+class Applicant(models.Model):
+    """Someone who signified interest in a vacancy, with the documents the notice asks for (V3)."""
+
+    REQUIREMENTS = [
+        ("has_pds", "Personal Data Sheet with work experience sheet and photo (CS Form No. 212)"),
+        ("has_rating", "Performance rating in the last rating period (if applicable)"),
+        ("has_eligibility", "Proof of eligibility / rating / license"),
+        ("has_tor", "Transcript of records"),
+    ]
+
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.PROTECT, related_name="applicants")
+    person = models.ForeignKey(
+        Person, null=True, blank=True, on_delete=models.PROTECT, related_name="applications",
+        help_text="Set when a current employee applies.",
+    )
+    last_name = models.CharField(max_length=100)
+    first_name = models.CharField(max_length=100)
+    middle_name = models.CharField(max_length=100, blank=True)
+    mobile = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    signified_on = models.DateField("Signified interest on")
+    applied_online = models.BooleanField(default=False)
+    has_pds = models.BooleanField("PDS", default=False)
+    has_rating = models.BooleanField("Performance rating", default=False)
+    has_eligibility = models.BooleanField("Eligibility", default=False)
+    has_tor = models.BooleanField("Transcript", default=False)
+    meets_qs = models.BooleanField("Meets the qualification standards", null=True, blank=True)
+    rank = models.PositiveSmallIntegerField(null=True, blank=True)
+    remarks = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vacancy", "rank", "last_name", "first_name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["vacancy", "person"], condition=Q(person__isnull=False),
+                name="applicant_once_per_employee",
+                violation_error_message="This employee already applied for this vacancy.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.full_name} for {self.vacancy}"
+
+    @property
+    def full_name(self):
+        middle = f" {self.middle_name[0]}." if self.middle_name else ""
+        return f"{self.last_name}, {self.first_name}{middle}"
+
+    @property
+    def display_name(self):
+        middle = f" {self.middle_name[0]}." if self.middle_name else ""
+        return f"{self.first_name}{middle} {self.last_name}"
+
+    @property
+    def complete(self):
+        return all(getattr(self, field) for field, _ in self.REQUIREMENTS)
+
+
+# --- Office memoranda with online acknowledgment (DECISIONS M1-M4) --------------------
+
+
+def memo_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    return f"memos/{date.today():%Y/%m}/{uuid.uuid4().hex}{ext}"
+
+
+class Memo(models.Model):
+    """An office memorandum or advisory and who has acknowledged reading it."""
+
+    Audience = MeetingSeries.Audience
+
+    number = models.CharField(max_length=100, help_text="e.g. HRMO Memorandum No. 010, series of 2026")
+    dated = models.DateField()
+    subject = models.CharField(max_length=255)
+    addressed_to = models.CharField(
+        max_length=255, help_text="As written on the memo, e.g. All appointive employees and JO/COS personnel."
+    )
+    audience = models.CharField(max_length=20, choices=Audience.choices, default=Audience.EVERYONE)
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="memos",
+        help_text="Required when the audience is one office.",
+    )
+    members = models.ManyToManyField(Person, blank=True, related_name="memos_addressed")
+    body = models.TextField(help_text="The text of the memo, or a summary of it if a scan is attached.")
+    scan = models.FileField(
+        upload_to=memo_upload_path, blank=True,
+        validators=[FileExtensionValidator(["pdf", "jpg", "jpeg", "png"]), validate_file_size],
+        help_text="Optional scan of the signed memo (PDF, JPG or PNG).",
+    )
+    scan_name = models.CharField(max_length=255, blank=True)
+    signed_by = models.CharField(max_length=200, blank=True, help_text="Name and title of the signatory.")
+    released_on = models.DateField(null=True, blank=True, help_text="Date released by the Office of the Mayor.")
+    comply_by = models.DateField("Comply by", null=True, blank=True, help_text="Deadline the memo sets, if any.")
+    requires_ack = models.BooleanField("Ask everyone to acknowledge", default=True)
+    is_published = models.BooleanField("Published", default=True, help_text="Untick to keep it as a draft.")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-dated", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(audience="office") | Q(office__isnull=False),
+                name="memo_office_audience_has_office",
+                violation_error_message="Choose the office the memo is for.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.number}: {self.subject}"
+
+
+class MemoAcknowledgment(models.Model):
+    """An employee's "I have read and understood this memo", replacing the routing slip (M2)."""
+
+    memo = models.ForeignKey(Memo, on_delete=models.PROTECT, related_name="acknowledgments")
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="memo_acknowledgments")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    acknowledged_at = models.DateTimeField(auto_now_add=True)
+    # HRMO recorded a signature from the paper routing list.
+    from_paper = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-acknowledged_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["memo", "person"], name="memoack_once_per_person"),
+        ]
+
+    def __str__(self):
+        return f"{self.person} read {self.memo.number}"
 
 
 # --- User Profile -----------------------------------------------------------

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Leave card · {{ person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← {{ person.full_name }}</a></div>
+<h1 class="h3 mb-1">Leave card</h1>
+<p class="text-muted small">{{ person.full_name }} · {{ person.employee_no }}. Every credit earned, adjusted or charged, newest first, with the running balance.</p>
+
+<div class="row g-2 text-center mb-3">
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="small text-muted">Vacation leave</div><div class="h4 mb-0 text-primary">{{ summary.vl|floatformat:3 }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="small text-muted">Sick leave</div><div class="h4 mb-0 text-primary">{{ summary.sl|floatformat:3 }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="small text-muted">Total</div><div class="h4 mb-0">{{ summary.total|floatformat:3 }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="small text-muted">On hold (pending)</div><div class="h4 mb-0">{{ summary.vl_held|add:summary.sl_held|floatformat:"-1" }}</div></div></div></div>
+</div>
+
+{% if can_manage %}
+<form method="post" class="card border-0 shadow-sm mb-3">{% csrf_token %}
+  <div class="card-header bg-white fw-bold py-2">Add an entry</div>
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-end small">
+      <div class="col-6 col-md-2">{{ form.leave_type }}</div>
+      <div class="col-6 col-md-2">{{ form.days }}</div>
+      <div class="col-6 col-md-2">{{ form.as_of }}</div>
+      <div class="col-12 col-md-4">{{ form.note }}</div>
+      <div class="col-6 col-md-2"><button class="btn btn-sm btn-primary w-100">Add</button></div>
+    </div>
+    {% for f in form %}{% for e in f.errors %}<div class="text-danger small">{{ f.label }}: {{ e }}</div>{% endfor %}{% endfor %}
+    <div class="form-text">Beginning balances, corrections and earned credits. Approved leave is charged automatically.</div>
+  </div>
+</form>
+{% endif %}
+
+<div class="table-responsive card border-0 shadow-sm">
+  <table class="table table-sm mb-0 small align-middle">
+    <thead class="table-light"><tr><th>As of</th><th>Entry</th><th class="text-end">VL</th><th class="text-end">SL</th><th class="text-end">VL balance</th><th class="text-end">SL balance</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="text-nowrap">{{ r.entry.as_of|date:"M d, Y" }}</td>
+          <td>{% if r.entry.leave_request %}<a href="{% url 'leave_detail' r.entry.leave_request_id %}">{{ r.entry.note }}</a>{% else %}{{ r.entry.note|default:"—" }}{% endif %}</td>
+          <td class="text-end font-monospace">{% if r.entry.leave_type == "vl" %}{{ r.entry.days|floatformat:3 }}{% endif %}</td>
+          <td class="text-end font-monospace">{% if r.entry.leave_type == "sl" %}{{ r.entry.days|floatformat:3 }}{% endif %}</td>
+          <td class="text-end font-monospace">{{ r.vl|floatformat:3 }}</td>
+          <td class="text-end font-monospace">{{ r.sl|floatformat:3 }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6" class="text-muted">No entries yet.{% if can_manage %} Start with the beginning balance from the paper leave card.{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

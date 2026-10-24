@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{% if vacancy %}Edit vacancy{% else %}Post a vacancy{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if vacancy %}{% url 'vacancy_detail' vacancy.pk %}{% else %}{% url 'vacancy_list' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<h1 class="h3 mb-1">{% if vacancy %}Edit {{ vacancy.position_title }}{% else %}Post a vacancy{% endif %}</h1>
+<p class="text-muted small">The fields of the CS request for publication of vacant positions. Save as a draft first; set it to "Open" when it is published, and it appears for every employee and on the calendar.</p>
+<form method="post" class="card border-0 shadow-sm" novalidate>{% csrf_token %}
+  <div class="card-body">{% include "hr/_form_fields.html" %}</div>
+  <div class="card-footer bg-white"><button class="btn btn-primary">Save</button></div>
+</form>
+{% endblock %}

@@ -8,7 +8,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, MeetingSeries, Person, Project, ServiceInterruption,
+    FAKE_ID_FIELDS, Applicant, CalendarEvent, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
+    MeetingSeries, Memo, Person, Project, ServiceInterruption, Vacancy,
 )
 from .permissions import can_view_ids, can_view_pay
 
@@ -174,6 +175,7 @@ class EngagementForm(forms.ModelForm):
             "salary_grade",
             "step",
             "item_number",
+            "appointment_status",
             "project",
             "notes",
         ]
@@ -191,6 +193,7 @@ class EngagementForm(forms.ModelForm):
             "salary_grade": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "33"}),
             "step": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "8"}),
             "item_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. SP-MO-001"}),
+            "appointment_status": forms.Select(attrs={"class": "form-select"}),
             "project": forms.Select(attrs={"class": "form-select"}),
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
         }
@@ -271,6 +274,7 @@ class EngagementForm(forms.ModelForm):
         else:
             if salary_grade or step or item_number:
                 raise ValidationError("Salary grade, step, and item number must be empty for non-Plantilla engagements.")
+            cleaned_data["appointment_status"] = ""
 
         # Project-based validations
         if eng_type == Engagement.Type.PROJECT_BASED:
@@ -689,5 +693,224 @@ class MeetingSeriesForm(forms.ModelForm):
         if audience != MeetingSeries.Audience.OFFICE:
             cleaned["office"] = None
         if audience != MeetingSeries.Audience.CHOSEN:
+            cleaned["members"] = Person.objects.none()
+        return cleaned
+
+
+# --- Leave (DECISIONS L4-L7) -----------------------------------------------------------
+
+
+class LeaveRequestForm(forms.ModelForm):
+    """CS Form No. 6, sections 6.A to 6.D. The employee files their own; HRMO may enter a paper
+    form for anyone in active service (`for_hrmo`)."""
+
+    person = forms.ModelChoiceField(
+        queryset=Person.objects.none(), required=False, label="Employee",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta:
+        model = LeaveRequest
+        fields = ["leave_type", "leave_type_other", "detail", "detail_text", "start_date", "end_date", "days",
+                  "reason", "commutation_requested"]
+        widgets = {
+            "leave_type": forms.Select(attrs={"class": "form-select"}),
+            "leave_type_other": forms.TextInput(attrs={"class": "form-control"}),
+            "detail": forms.Select(attrs={"class": "form-select"}),
+            "detail_text": forms.TextInput(attrs={"class": "form-control", "placeholder": "Country, or the illness"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "days": forms.NumberInput(attrs={"class": "form-control", "step": "0.5", "min": "0.5"}),
+            "reason": forms.Textarea(attrs={"class": "form-control", "rows": 2,
+                                            "placeholder": "Optional. Not printed on the form."}),
+            "commutation_requested": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        }
+
+    def __init__(self, *args, person=None, for_hrmo=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.person_obj = person
+        self.for_hrmo = for_hrmo
+        self.fields["days"].required = False
+        self.fields["days"].help_text = "Filled in from the dates (weekdays less holidays). Change it for half days."
+        self.fields["detail"].required = False
+        if for_hrmo:
+            active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+            self.fields["person"].queryset = Person.objects.filter(pk__in=active).order_by("last_name", "first_name")
+            self.fields["person"].required = True
+        else:
+            del self.fields["person"]
+
+    def clean(self):
+        from . import leave
+
+        cleaned = super().clean()
+        person = cleaned.get("person") if self.for_hrmo else self.person_obj
+        self.person_obj = person
+        leave_type = cleaned.get("leave_type")
+        start, end = cleaned.get("start_date"), cleaned.get("end_date")
+        if start and end and end < start:
+            self.add_error("end_date", "The last day cannot be before the first day.")
+            return cleaned
+        if leave_type == LeaveType.OTHER and not cleaned.get("leave_type_other", "").strip():
+            self.add_error("leave_type_other", "Say what leave this is.")
+        if leave_type != LeaveType.OTHER:
+            cleaned["leave_type_other"] = ""
+        detail = cleaned.get("detail", "")
+        allowed = leave.DETAILS.get(leave_type, [])
+        if detail and detail not in allowed:
+            self.add_error("detail", "That detail does not apply to this leave type.")
+        elif allowed and not detail and leave_type != LeaveType.OTHER:
+            self.add_error("detail", "Choose one (section 6.B of the form).")
+        if detail in leave.DETAILS_TO_SPECIFY and not cleaned.get("detail_text", "").strip():
+            self.add_error("detail_text", "Please specify (the country, or the illness).")
+        if not detail:
+            cleaned["detail_text"] = ""
+        if (person and leave_type in (*leave.CHARGED_TO, LeaveType.SPECIAL_PRIVILEGE)
+                and not person.earns_leave_credits()):
+            self.add_error("leave_type", "No leave credits: this appointment does not earn leave. Ask HRMO.")
+        if start and end:
+            days = cleaned.get("days")
+            span = (end - start).days + 1
+            if days is None:
+                days = leave.working_days(start, end)
+                if not days:
+                    self.add_error("end_date", "There are no working days in these dates.")
+                    return cleaned
+                cleaned["days"] = days
+            elif days <= 0 or days > span or (days * 2) % 1:
+                self.add_error("days", f"Enter whole or half days, up to {span}.")
+        return cleaned
+
+
+class LeaveCreditForm(forms.ModelForm):
+    """HRMO's manual ledger entry: beginning balance, correction, or credits earned (L2)."""
+
+    class Meta:
+        model = LeaveCredit
+        fields = ["leave_type", "days", "as_of", "note"]
+        widgets = {
+            "leave_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "days": forms.NumberInput(attrs={"class": "form-control form-control-sm", "step": "0.001"}),
+            "as_of": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "note": forms.TextInput(attrs={"class": "form-control form-control-sm",
+                                           "placeholder": "e.g. Beginning balance per leave card"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["leave_type"].choices = [(LeaveType.VACATION, "Vacation leave"), (LeaveType.SICK, "Sick leave")]
+        self.fields["note"].required = True
+        self.fields["days"].help_text = "Negative to deduct."
+
+    def clean_days(self):
+        days = self.cleaned_data.get("days")
+        if not days:
+            raise ValidationError("Enter the number of days (negative to deduct).")
+        return days
+
+
+# --- Vacancies and HRMPSB (DECISIONS V1-V5) ----------------------------------------------
+
+
+def _bootstrap(form):
+    """Bootstrap classes on every visible widget, for the longer HRMO forms."""
+    for field in form.fields.values():
+        widget = field.widget
+        if isinstance(widget, forms.HiddenInput):
+            continue
+        if isinstance(widget, forms.CheckboxInput):
+            widget.attrs.setdefault("class", "form-check-input")
+        elif isinstance(widget, (forms.Select, forms.SelectMultiple)):
+            widget.attrs.setdefault("class", "form-select")
+        else:
+            widget.attrs.setdefault("class", "form-control")
+        if isinstance(widget, forms.Textarea):
+            widget.attrs.setdefault("rows", 2)
+
+
+class VacancyForm(forms.ModelForm):
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Vacancy
+        fields = ["office", "position_title", "item_number", "salary_grade", "monthly_salary", "education",
+                  "training", "experience", "eligibility", "competencies", "status", "published_on", "deadline",
+                  "csc_received_on", "posted_at", "board_met_on", "board_venue", "resolution_no", "notes"]
+        widgets = {name: forms.DateInput(attrs={"type": "date"}) for name in
+                   ("published_on", "deadline", "csc_received_on", "board_met_on")}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        _bootstrap(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("status") == Vacancy.Status.OPEN and not cleaned.get("deadline"):
+            self.add_error("deadline", "An open vacancy needs the last day to apply.")
+        return cleaned
+
+
+class ApplicantForm(forms.ModelForm):
+    class Meta:
+        model = Applicant
+        fields = ["last_name", "first_name", "middle_name", "mobile", "email", "signified_on", "has_pds",
+                  "has_rating", "has_eligibility", "has_tor", "meets_qs", "rank", "remarks"]
+        widgets = {
+            "signified_on": forms.DateInput(attrs={"type": "date"}),
+            "meets_qs": forms.NullBooleanSelect(),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _bootstrap(self)
+
+
+# --- Memos (DECISIONS M1-M4) ---------------------------------------------------------------
+
+
+class MemoForm(forms.ModelForm):
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Memo
+        fields = ["number", "dated", "subject", "addressed_to", "audience", "office", "members", "body", "scan",
+                  "signed_by", "released_on", "comply_by", "requires_ack", "is_published"]
+        widgets = {
+            "dated": forms.DateInput(attrs={"type": "date"}),
+            "released_on": forms.DateInput(attrs={"type": "date"}),
+            "comply_by": forms.DateInput(attrs={"type": "date"}),
+            "body": forms.Textarea(attrs={"rows": 10}),
+            "members": forms.SelectMultiple(attrs={"size": 10}),
+            "scan": forms.FileInput(attrs={"accept": ".pdf,.jpg,.jpeg,.png"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+        chosen = Q(pk__in=self.instance.members.values("pk")) if self.instance.pk else Q(pk__in=[])
+        self.fields["members"].queryset = Person.objects.filter(Q(pk__in=active) | chosen).order_by("last_name", "first_name")
+        self.fields["members"].help_text = "Only used for chosen people. Hold Ctrl (Cmd on a Mac) to choose several."
+        _bootstrap(self)
+
+    def clean_scan(self):
+        f = self.cleaned_data.get("scan")
+        if f and hasattr(f, "content_type"):  # a new upload, not the stored file
+            validate_uploaded_document_file(f)
+        return f
+
+    def clean(self):
+        cleaned = super().clean()
+        audience = cleaned.get("audience")
+        if audience == Memo.Audience.OFFICE and not cleaned.get("office"):
+            self.add_error("office", "Choose the office the memo is for.")
+        if audience == Memo.Audience.CHOSEN and not cleaned.get("members"):
+            self.add_error("members", "Choose at least one person.")
+        if audience != Memo.Audience.OFFICE:
+            cleaned["office"] = None
+        if audience != Memo.Audience.CHOSEN:
             cleaned["members"] = Person.objects.none()
         return cleaned

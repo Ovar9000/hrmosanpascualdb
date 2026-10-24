@@ -33,3 +33,6 @@ account_slips*.html
 
 # Sample upload files written by scripts/demo_setup.ps1
 demo_files/
+
+# Photos of office boards and forms (real names, salaries, birth dates)
+docs/IMG_*.jpg

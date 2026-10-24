@@ -1,7 +1,30 @@
 from django.urls import path
-from . import views
+from . import board_views, views
 
 urlpatterns = [
+    path("leave/", board_views.my_leave, name="my_leave"),
+    path("leave/new/", board_views.leave_file, name="leave_file"),
+    path("leave/days/", board_views.leave_days, name="leave_days"),
+    path("leave/inbox/", board_views.leave_inbox, name="leave_inbox"),
+    path("leave/register/", board_views.leave_register, name="leave_register"),
+    path("leave/balances/", board_views.leave_balances, name="leave_balances"),
+    path("leave/credits/monthly/", board_views.leave_post_credits, name="leave_post_credits"),
+    path("leave/card/<int:person_pk>/", board_views.leave_card, name="leave_card"),
+    path("leave/<int:pk>/", board_views.leave_detail, name="leave_detail"),
+    path("leave/<int:pk>/print/", board_views.leave_print, name="leave_print"),
+    path("reports/plantilla/", board_views.plantilla_report, name="plantilla_report"),
+    path("vacancies/", board_views.vacancy_list, name="vacancy_list"),
+    path("vacancies/new/", board_views.vacancy_form, name="vacancy_create"),
+    path("vacancies/<int:pk>/", board_views.vacancy_detail, name="vacancy_detail"),
+    path("vacancies/<int:pk>/edit/", board_views.vacancy_form, name="vacancy_edit"),
+    path("vacancies/<int:pk>/print/<str:which>/", board_views.vacancy_print, name="vacancy_print"),
+    path("vacancies/applicants/<int:pk>/", board_views.applicant_edit, name="applicant_edit"),
+    path("memos/", board_views.memo_list, name="memo_list"),
+    path("memos/new/", board_views.memo_form, name="memo_create"),
+    path("memos/<int:pk>/", board_views.memo_detail, name="memo_detail"),
+    path("memos/<int:pk>/edit/", board_views.memo_form, name="memo_edit"),
+    path("memos/<int:pk>/acknowledgments/", board_views.memo_acks, name="memo_acks"),
+    path("memos/<int:pk>/scan/", board_views.memo_scan, name="memo_scan"),
     path("offices/", views.office_list, name="office_list"),
     path("offices/<int:pk>/", views.office_detail, name="office_detail"),
     path("offices/chart/", views.office_tree, name="office_tree"),

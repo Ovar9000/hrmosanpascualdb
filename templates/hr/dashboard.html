@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}My HR{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{% if person %}Hello, {{ person.first_name }}{% else %}My HR{% endif %}</h1>
+    <div class="text-muted small">{{ today|date:"l, F j, Y" }}{% if my.eng %} · {{ my.eng.position_title }}, {{ my.eng.office.name }}{% endif %}</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    {% if my and my.eng %}<a class="btn btn-primary" href="{% url 'leave_file' %}">+ File leave</a>{% endif %}
+    {% if can_view_people %}<a class="btn btn-outline-secondary" href="{% url 'person_list' %}">Personnel</a>{% endif %}
+  </div>
+</div>
+
+{% if inbox %}
+<div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2">
+  <div><strong>{{ inbox|length }} leave application{{ inbox|length|pluralize }}</strong> waiting for your signature.</div>
+  <a class="btn btn-sm btn-warning" href="{% url 'leave_inbox' %}">Open approvals</a>
+</div>
+{% endif %}
+
+{% if unread %}
+<div class="card border-primary shadow-sm mb-3">
+  <div class="card-header bg-primary-subtle fw-bold py-2 d-flex justify-content-between">
+    <span>Memos for you to read</span><a class="small" href="{% url 'memo_list' %}?show=unread">All unread</a>
+  </div>
+  <ul class="list-group list-group-flush">
+    {% for memo in unread %}
+      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+        <a href="{% url 'memo_detail' memo.pk %}" class="text-decoration-none"><span class="fw-semibold">{{ memo.subject }}</span>
+          <span class="text-muted small d-block">{{ memo.number }} · {{ memo.dated|date:"M d, Y" }}</span></a>
+        {% if memo.comply_by %}<span class="badge {% if memo.comply_by < today %}text-bg-danger{% else %}text-bg-warning{% endif %} align-self-center">Comply by {{ memo.comply_by|date:"M d" }}</span>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  {% if my %}
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between">
+        <span>My leave</span><a class="small" href="{% url 'my_leave' %}">Leave card and history</a>
+      </div>
+      <div class="card-body">
+        {% with s=my.summary %}
+        {% if s.eligible %}
+          <div class="row g-2 text-center mb-3">
+            <div class="col-6 col-md-3"><div class="border rounded p-2 bg-light h-100"><div class="small text-muted">Vacation</div><div class="h4 mb-0 text-primary">{{ s.vl_available|floatformat:3 }}</div>{% if s.vl_held %}<div class="small text-muted">{{ s.vl_held }} on hold</div>{% endif %}</div></div>
+            <div class="col-6 col-md-3"><div class="border rounded p-2 bg-light h-100"><div class="small text-muted">Sick</div><div class="h4 mb-0 text-primary">{{ s.sl_available|floatformat:3 }}</div>{% if s.sl_held %}<div class="small text-muted">{{ s.sl_held }} on hold</div>{% endif %}</div></div>
+            <div class="col-6 col-md-3"><div class="border rounded p-2 bg-light h-100"><div class="small text-muted">Special privilege</div><div class="h4 mb-0">{{ s.spl_left|floatformat:"-1" }} <span class="small text-muted">of {{ s.spl_allowance|floatformat:"-1" }}</span></div><div class="small text-muted">left this year</div></div></div>
+            <div class="col-6 col-md-3"><div class="border rounded p-2 h-100 {% if s.forced_left %}border-warning bg-warning-subtle{% else %}bg-light{% endif %}"><div class="small text-muted">Forced leave</div><div class="h4 mb-0">{{ s.forced_left|floatformat:"-1" }}</div><div class="small text-muted">{% if s.forced_left %}days to take by Dec 31{% else %}done for the year{% endif %}</div></div></div>
+          </div>
+          {% if s.forced_left %}<p class="small mb-3">With {{ s.vl|floatformat:"-1" }} days of vacation leave, you must take {{ s.forced_left|floatformat:"-1" }} more day{{ s.forced_left|pluralize }} of leave before {{ s.year_end|date:"F j" }}, or they are forfeited.</p>{% endif %}
+        {% else %}
+          <p class="text-muted small">Your appointment does not earn vacation and sick leave credits. You can still file special leaves (maternity, paternity, solo parent and others).</p>
+        {% endif %}
+        {% endwith %}
+        {% for req in my.open %}
+          <a href="{% url 'leave_detail' req.pk %}" class="d-block border rounded p-2 mb-2 text-decoration-none text-body">
+            <div class="d-flex flex-wrap justify-content-between gap-2">
+              <span class="fw-semibold">{{ req.type_label }} · {{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %} ({{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }})</span>
+              {% include "hr/_leave_steps.html" %}
+            </div>
+          </a>
+        {% empty %}
+          {% if my.upcoming %}{% else %}<p class="small text-muted mb-0">No applications in progress. Filing online takes a minute: the days are counted for you and you can follow every signature.</p>{% endif %}
+        {% endfor %}
+        {% for req in my.upcoming %}
+          <div class="small">✔ Approved: <a href="{% url 'leave_detail' req.pk %}">{{ req.type_label }}, {{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %}</a></div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="col-12 {% if my %}col-lg-5{% endif %}">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between">
+        <span>Vacant positions</span><a class="small" href="{% url 'vacancy_list' %}">All vacancies</a>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for vac in open_vacancies %}
+          <li class="list-group-item"><a href="{% url 'vacancy_detail' vac.pk %}" class="fw-semibold text-decoration-none">{{ vac.position_title }}</a>
+            <div class="small text-muted">SG {{ vac.salary_grade }} · {{ vac.office.name }} · apply by {{ vac.deadline|date:"M d" }}</div></li>
+        {% empty %}
+          <li class="list-group-item small text-muted">No open vacancies right now.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% if holidays %}
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between"><span>Coming up</span><a class="small" href="{% url 'calendar' %}">Calendar</a></div>
+      <ul class="list-group list-group-flush small">
+        {% for h in holidays %}<li class="list-group-item">{{ h.start_date|date:"D, M d" }} · {{ h.title }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if hrmo %}
+<h2 class="h5 mt-4">HRMO desk</h2>
+<div class="row g-2 mb-2">
+  <div class="col-6 col-md-3"><a class="card text-decoration-none h-100" href="{% url 'leave_register' %}?waiting=certify"><div class="card-body py-2"><div class="h4 mb-0">{{ hrmo.certify }}</div><div class="small text-muted">leave to certify</div></div></a></div>
+  <div class="col-6 col-md-3"><a class="card text-decoration-none h-100" href="{% url 'leave_register' %}?status=pending"><div class="card-body py-2"><div class="h4 mb-0">{{ hrmo.pending }}</div><div class="small text-muted">applications in progress</div></div></a></div>
+  <div class="col-6 col-md-3"><a class="card text-decoration-none h-100" href="{% url 'calendar_day' today|date:'Y-m-d' %}"><div class="card-body py-2"><div class="h4 mb-0">{{ hrmo.on_leave_today }}</div><div class="small text-muted">on leave today</div></div></a></div>
+  <div class="col-6 col-md-3"><a class="card text-decoration-none h-100" href="{% url 'vacancy_list' %}"><div class="card-body py-2"><div class="h4 mb-0">{{ hrmo.vacancies }}</div><div class="small text-muted">vacancies open or in screening</div></div></a></div>
+</div>
+<div class="d-flex flex-wrap gap-2 small">
+  {% if hrmo.can_manage %}<a class="btn btn-sm btn-outline-primary" href="{% url 'leave_file' %}?paper=1">Enter a paper leave form</a>
+  <a class="btn btn-sm btn-outline-primary" href="{% url 'leave_post_credits' %}?month={{ hrmo.last_month|date:'Y-m' }}">Post monthly leave credits</a>
+  <a class="btn btn-sm btn-outline-primary" href="{% url 'memo_create' %}">Issue a memo</a>
+  <a class="btn btn-sm btn-outline-primary" href="{% url 'vacancy_create' %}">Post a vacancy</a>{% endif %}
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'leave_balances' %}">Leave balances list</a>
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a>
+</div>
+{% endif %}
+{% endblock %}

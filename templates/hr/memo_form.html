@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{% if memo %}Edit memo{% else %}Issue a memo{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if memo %}{% url 'memo_detail' memo.pk %}{% else %}{% url 'memo_list' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<h1 class="h3 mb-1">{% if memo %}Edit {{ memo.number }}{% else %}Issue a memo{% endif %}</h1>
+<p class="text-muted small">Type the memo or a summary, and attach the scan of the signed copy. Everyone it is addressed to sees it on their home page and can acknowledge it with one click; you see who has not.</p>
+<form method="post" enctype="multipart/form-data" class="card border-0 shadow-sm" novalidate>{% csrf_token %}
+  <div class="card-body">
+    {% include "hr/_form_fields.html" %}
+    {% if memo.scan %}<div class="small mt-2">Current scan: <a href="{% url 'memo_scan' memo.pk %}">{{ memo.scan_name|default:"download" }}</a>. Choose a file only to replace it.</div>{% endif %}
+  </div>
+  <div class="card-footer bg-white"><button class="btn btn-primary">Save</button></div>
+</form>
+{% endblock %}

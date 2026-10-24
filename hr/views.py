@@ -46,11 +46,13 @@ from .models import (
     LeaveType,
     Meeting,
     MeetingSeries,
+    Memo,
     Office,
     Person,
     Project,
     SalaryAction,
     UserProfile,
+    Vacancy,
 )
 from .permissions import (
     can_manage_hr_records,
@@ -99,10 +101,15 @@ class PasswordChangeView(auth_views.PasswordChangeView):
 
 @login_required
 def home(request):
-    """Landing page: Project Maintainers with no personnel access go to Projects."""
+    """Landing page: Project Maintainers with no personnel access go to Projects; everyone else gets
+    the My HR dashboard (DECISIONS L8)."""
     if can_manage_projects(request.user) and not get_visible_people(request.user).exists():
         return redirect("project_list")
-    return redirect("person_list")
+    if is_sysadmin(request.user) and not request.user.is_superuser:
+        return redirect("person_list")
+    from .board_views import dashboard
+
+    return dashboard(request)
 
 
 @login_required
@@ -1404,7 +1411,7 @@ def _require_tracker_view(request):
         raise PermissionDenied("These lists are for HRMO and Auditor only.")
 
 
-def _xlsx_response(request, filename, sheet, headers, rows, audit_repr):
+def _xlsx_response(request, filename, sheet, headers, rows, audit_repr, model_name="Engagement"):
     """An Excel file of a reminder list. Text that looks like a formula is written as text (U1)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
@@ -1423,7 +1430,7 @@ def _xlsx_response(request, filename, sheet, headers, rows, audit_repr):
     ws.freeze_panes = "A2"
     buf = BytesIO()
     book.save(buf)
-    log_audit_event(action=AuditLog.Action.EXPORT, model_name="Engagement", object_repr=audit_repr[:255], request=request)
+    log_audit_event(action=AuditLog.Action.EXPORT, model_name=model_name, object_repr=audit_repr[:255], request=request)
     response = HttpResponse(
         buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
@@ -1703,6 +1710,8 @@ CALENDAR_KINDS = {
     "loyalty": ("Loyalty", "cal-loyalty", "loyalty awards"),
     "retirement": ("Retires", "cal-retire", "retirements"),
     "required_meeting": ("Required", "cal-required", "required meetings"),
+    "vacancy": ("Apply by", "cal-deadline", "application deadlines"),
+    "memo": ("Comply", "cal-deadline", "memo deadlines"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1716,6 +1725,7 @@ CALENDAR_FILTERS = [
     ("salary", "Salary increases and loyalty"),
     ("retirement", "Retirements (age 65)"),
     ("required_meeting", "Required meetings"),
+    ("bulletin", "Vacancy and memo deadlines"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1728,6 +1738,8 @@ CALENDAR_LEGEND = [
     ("Loyalty award due (HRMO, Auditor)", "Loyalty", "cal-loyalty"),
     ("Compulsory retirement at 65 (HRMO, Auditor)", "Retires", "cal-retire"),
     ("Required meeting (date, or the last day to hold it)", "Required", "cal-required"),
+    ("Last day to apply for a vacancy", "Apply by", "cal-deadline"),
+    ("Deadline set by a memo addressed to you", "Comply", "cal-deadline"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1827,7 +1839,7 @@ def _calendar_items(user, first, last, shown, office=None):
         for leave in leaves:
             pending = " (pending)" if leave.status == LeaveRequest.Status.PENDING else ""
             full = f"{leave.person.full_name} · {leave.get_leave_type_display()}{pending}"
-            url = reverse("person_detail", args=[leave.person_id])
+            url = reverse("leave_detail", args=[leave.pk])
             for day in span(leave.start_date, leave.end_date):
                 add(day, "leave", _short_name(leave.person) + pending, full, url)
 
@@ -1909,6 +1921,25 @@ def _calendar_items(user, first, last, shown, office=None):
             elif not item.not_held_reason:
                 add(item.period_end, "required_meeting", f"Hold by today: {item.series.name}",
                     f"Last day to hold {label} (not scheduled yet)", url)
+
+    # Vacancy deadlines are public notices; memo deadlines show to the memo's addressees and
+    # all-office roles (V2, M4).
+    if "bulletin" in shown:
+        from . import board
+
+        vacancies = Vacancy.objects.filter(status=Vacancy.Status.OPEN, deadline__range=(first, last))
+        if office:
+            vacancies = vacancies.filter(office=office)
+        for vac in vacancies.select_related("office"):
+            add(vac.deadline, "vacancy", vac.position_title, f"Last day to apply: {vac.position_title} ({vac.office.name})",
+                reverse("vacancy_detail", args=[vac.pk]), office_name=vac.office.name)
+        memos = Memo.objects.filter(is_published=True, comply_by__range=(first, last))
+        if not has_all_office_scope(user):
+            person = getattr(getattr(user, "profile", None), "person", None)
+            memos = board.memos_for_person(person).filter(comply_by__range=(first, last))
+        for memo in memos:
+            add(memo.comply_by, "memo", memo.subject, f"Comply by today: {memo.number}, {memo.subject}",
+                reverse("memo_detail", args=[memo.pk]))
 
     # 65th birthdays of active GSIS members: birthdates are personal details, so HRMO and Auditor (RM2).
     if "retirement" in shown and can_view_trackers(user):

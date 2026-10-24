@@ -2,7 +2,7 @@ import ast
 import hashlib
 import threading
 import time
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 from PIL import Image
@@ -24,6 +24,7 @@ from hr.forms import (
     PersonForm,
 )
 from hr.models import (
+    Applicant,
     AuditLog,
     CalendarEvent,
     Delegate,
@@ -35,6 +36,7 @@ from hr.models import (
     LeaveType,
     Meeting,
     MeetingSeries,
+    Memo,
     Office,
     StructurePosition,
     Person,
@@ -43,6 +45,7 @@ from hr.models import (
     SalaryCheckRun,
     ServiceInterruption,
     UserProfile,
+    Vacancy,
 )
 from hr.sequences import get_next_employee_no, sync_employee_sequence
 from hr.permissions import (
@@ -4745,3 +4748,353 @@ class SalaryCheckSchedulingTestCase(TestCase):
         with patch("hr.salary_actions.run_check", side_effect=RuntimeError("boom")):
             command._salary_check()
         self.assertIn("skipped: boom", err.getvalue())
+
+
+class LeaveWorkflowTestCase(TestCase):
+    """L1-L9: filing CS Form No. 6 online, the approval chain, the ledger and who sees what."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        self.eng_a.leave_eligible = True
+        self.eng_a.save()
+        LeaveCredit.objects.create(person=self.person_a, leave_type=LeaveType.VACATION, days=Decimal("10"),
+                                   as_of=date(2026, 1, 1), note="Beginning balance")
+        LeaveCredit.objects.create(person=self.person_a, leave_type=LeaveType.SICK, days=Decimal("5"),
+                                   as_of=date(2026, 1, 1), note="Beginning balance")
+
+    def _file(self, user, **data):
+        payload = {"leave_type": "vl", "detail": "within_ph", "detail_text": "", "start_date": "2026-11-02",
+                   "end_date": "2026-11-04", "days": "", "reason": "", "leave_type_other": ""}
+        payload.update(data)
+        self.client.force_login(user)
+        return self.client.post("/leave/new/" + ("?paper=1" if "person" in data else ""), payload)
+
+    def _act(self, user, req, action="done", **extra):
+        self.client.force_login(user)
+        req.refresh_from_db()
+        return self.client.post(f"/leave/{req.pk}/", {"action": action, "version": req.version, **extra})
+
+    def test_working_days_skip_weekends_and_holidays(self):
+        from hr.leave import working_days
+
+        self.assertEqual(working_days(date(2026, 11, 2), date(2026, 11, 6)), 5)
+        self.assertEqual(working_days(date(2026, 10, 31), date(2026, 11, 1)), 0)
+        CalendarEvent.objects.create(title="Holiday", kind=CalendarEvent.Kind.HOLIDAY, start_date=date(2026, 11, 4))
+        self.assertEqual(working_days(date(2026, 11, 2), date(2026, 11, 6)), 4)
+        self.client.force_login(self.emp_a_user)
+        data = self.client.get("/leave/days/?start=2026-11-02&end=2026-11-06").json()
+        self.assertEqual(data, {"days": 4, "holidays": ["2026-11-04"]})
+
+    def test_employee_files_and_the_chain_runs_to_a_ledger_deduction(self):
+        from hr.leave import balance
+
+        resp = self._file(self.emp_a_user)
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self.assertRedirects(resp, f"/leave/{req.pk}/", fetch_redirect_response=False)
+        self.assertEqual((req.days, req.office, req.position_title), (Decimal("3"), self.office_a, "Executive Assistant IV"))
+        self.assertEqual([s.kind for s in req.steps.all()], ["recommend", "certify", "approve"])
+        self.assertTrue(AuditLog.objects.filter(model_name="LeaveApprovalStep").exists())
+
+        # Nobody signs their own leave, and the Mayor cannot skip ahead of the office head.
+        self._act(self.emp_a_user, req)
+        self._act(self.mayor, req)
+        self.assertEqual(req.current_step.kind, "recommend")
+
+        self.client.force_login(self.head_a)
+        self.assertContains(self.client.get("/leave/inbox/"), self.person_a.full_name)
+        self._act(self.head_a, req)
+        self._act(self.hrmo_user, req)
+        req.refresh_from_db()
+        self.assertEqual((req.days_with_pay, req.days_without_pay), (Decimal("3"), Decimal("0")))
+        self.assertEqual(req.certified_balances["vl"], "10.000")
+        self.assertFalse(LeaveCredit.objects.filter(leave_request=req).exists())  # nothing until approval
+        self._act(self.mayor, req)
+        req.refresh_from_db()
+        self.assertEqual(req.status, LeaveRequest.Status.APPROVED)
+        self.assertEqual(balance(self.person_a, LeaveType.VACATION), Decimal("7"))
+
+    def test_only_the_office_head_of_the_filing_office_recommends(self):
+        from hr.leave import LeaveError, act, can_act, file_request
+
+        head_b = get_user_model().objects.create_user("head_b", "hb@test.com", "x")
+        head_b.groups.add(Group.objects.get(name=ROLE_OFFICE_HEAD))
+        UserProfile.objects.create(user=head_b, office=self.office_b)
+        req = file_request(LeaveRequest(person=self.person_a, leave_type="vl", detail="within_ph",
+                                        start_date=date(2026, 11, 2), end_date=date(2026, 11, 2), days=1), None)
+        self.assertEqual(can_act(head_b, req.current_step), (False, False))
+        with self.assertRaises(LeaveError):
+            act(req, head_b, "done")
+        self.assertEqual(can_act(self.head_a, req.current_step), (True, False))
+        # HRMO may only record the paper form for another signatory (L6).
+        self.assertEqual(can_act(self.hrmo_user, req.current_step), (True, True))
+
+    def test_disapproval_needs_a_reason_and_closes_without_charging(self):
+        self._file(self.emp_a_user)
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self._act(self.head_a, req, "disapproved")
+        req.refresh_from_db()
+        self.assertEqual(req.status, LeaveRequest.Status.PENDING)
+        self._act(self.head_a, req, "disapproved", note="Year-end audit week")
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.decision_note), (LeaveRequest.Status.REJECTED, "Year-end audit week"))
+        self.assertFalse(LeaveCredit.objects.filter(leave_request=req).exists())
+
+    def test_sick_leave_beyond_its_balance_is_charged_to_vacation_then_without_pay(self):
+        from hr.leave import act, balance, file_request
+
+        req = file_request(LeaveRequest(person=self.person_a, leave_type="sl", detail="out_patient", detail_text="Flu",
+                                        start_date=date(2026, 11, 2), end_date=date(2026, 11, 24), days=Decimal("17")),
+                           None)
+        for user in (self.head_a, self.hrmo_user, self.mayor):
+            act(req, user, "done")
+            req.save()
+        self.assertEqual((req.days_with_pay, req.days_without_pay), (Decimal("15"), Decimal("2")))
+        self.assertEqual(balance(self.person_a, LeaveType.SICK), Decimal("0"))
+        self.assertEqual(balance(self.person_a, LeaveType.VACATION), Decimal("0"))
+
+    def test_hrmo_cancels_approved_leave_and_the_days_come_back(self):
+        from hr.leave import LeaveError, act, balance, cancel, file_request
+
+        req = file_request(LeaveRequest(person=self.person_a, leave_type="vl", detail="within_ph",
+                                        start_date=date(2026, 11, 2), end_date=date(2026, 11, 3), days=2), None)
+        for user in (self.head_a, self.hrmo_user, self.mayor):
+            act(req, user, "done")
+            req.save()
+        self.assertEqual(balance(self.person_a, LeaveType.VACATION), Decimal("8"))
+        with self.assertRaises(LeaveError):
+            cancel(req, self.emp_a_user)
+        self._act(self.hrmo_user, req, "cancel")  # no reason: refused
+        req.refresh_from_db()
+        self.assertEqual(req.status, LeaveRequest.Status.APPROVED)
+        self._act(self.hrmo_user, req, "cancel", note="Recalled to work")
+        req.refresh_from_db()
+        self.assertEqual(req.status, LeaveRequest.Status.CANCELLED)
+        self.assertEqual(balance(self.person_a, LeaveType.VACATION), Decimal("10"))
+
+    def test_stale_version_saves_nothing(self):
+        self._file(self.emp_a_user)
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self.client.force_login(self.head_a)
+        self.client.post(f"/leave/{req.pk}/", {"action": "done", "version": req.version + 5})
+        self.assertEqual(req.current_step.kind, "recommend")
+
+    def test_who_can_see_an_application(self):
+        self._file(self.emp_a_user)
+        req = LeaveRequest.objects.get(person=self.person_a)
+        for user, code in ((self.emp_a_user, 200), (self.head_a, 200), (self.mayor, 200), (self.hrmo_user, 200),
+                           (self.auditor_user, 200), (self.staff_a, 403), (self.sysadmin, 403)):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get(f"/leave/{req.pk}/").status_code, code, user.username)
+        self.client.force_login(self.staff_a)
+        self.assertEqual(self.client.get(f"/leave/{req.pk}/print/").status_code, 403)
+        self.client.force_login(self.head_a)
+        for path in ("/leave/register/", "/leave/balances/"):
+            self.assertEqual(self.client.get(path).status_code, 403, path)
+
+    def test_printed_form_is_filled_in_and_logged(self):
+        self._file(self.emp_a_user, commutation_requested="on")
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self._act(self.head_a, req)
+        self._act(self.hrmo_user, req)
+        self.client.force_login(self.emp_a_user)
+        resp = self.client.get(f"/leave/{req.pk}/print/")
+        self.assertContains(resp, "APPLICATION FOR LEAVE")
+        self.assertContains(resp, "Executive Assistant IV")
+        self.assertContains(resp, "10.000")  # 7.A total earned
+        self.assertContains(resp, "7.000")   # 7.A balance after this application
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, model_name="LeaveRequest").exists())
+
+    def test_no_credit_leave_for_appointments_without_leave(self):
+        user_b = get_user_model().objects.create_user("emp_b", "b@test.com", "x")
+        UserProfile.objects.create(user=user_b, person=self.person_b)
+        self.assertContains(self._file(user_b), "does not earn leave")
+        self._file(user_b, leave_type="paternity", detail="")
+        self.assertEqual(LeaveRequest.objects.get(person=self.person_b).leave_type, "paternity")
+
+    def test_hrmo_enters_a_paper_form_and_records_paper_signatures(self):
+        self._file(self.hrmo_user, person=self.person_a.pk)
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self.assertEqual(req.filed_by, self.hrmo_user)
+        self._act(self.hrmo_user, req)
+        step = req.steps.get(kind="recommend")
+        self.assertEqual((step.status, step.from_paper), ("done", True))
+        self.client.force_login(self.emp_a_user)
+        self.assertNotContains(self.client.get("/leave/new/?paper=1"), 'name="person"')  # employees file their own
+
+    def test_an_office_heads_own_leave_skips_the_recommendation(self):
+        from hr.leave import file_request
+
+        self.emp_a_user.profile.delete()  # the head's own account is the one linked to person A
+        self.head_a.profile.person = self.person_a
+        self.head_a.profile.save()
+        req = file_request(LeaveRequest(person=self.person_a, leave_type="vl", detail="within_ph",
+                                        start_date=date(2026, 11, 2), end_date=date(2026, 11, 2), days=1), None)
+        self.assertEqual(req.steps.get(kind="recommend").status, "skipped")
+        self.assertEqual(req.current_step.kind, "certify")
+
+    def test_monthly_credits_are_posted_once(self):
+        from hr.leave import post_monthly_credits
+
+        self.assertEqual(len(post_monthly_credits(2026, 9)), 1)
+        self.assertEqual(post_monthly_credits(2026, 9), [])
+        self.assertEqual(LeaveCredit.objects.filter(note="Earned September 2026").count(), 2)
+        self.client.force_login(self.staff_a)
+        self.assertEqual(self.client.post("/leave/credits/monthly/", {"month": "2026-09"}).status_code, 403)
+
+    def test_balances_list_prints_and_exports(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get("/leave/balances/?print=1")
+        self.assertContains(resp, self.person_a.full_name)
+        self.assertContains(resp, "15.00")
+        self.assertEqual(self.client.get("/leave/balances/?export=xlsx").status_code, 200)
+        self.assertNotContains(self.client.get("/leave/balances/"), self.person_b.full_name)  # earns no leave
+
+    def test_my_hr_home_page(self):
+        self.client.force_login(self.emp_a_user)
+        resp = self.client.get("/")
+        self.assertContains(resp, "My leave")
+        self.assertContains(resp, "10.000")
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/"), "HRMO desk")
+        self.client.force_login(self.sysadmin)
+        self.assertEqual(self.client.get("/").status_code, 302)
+
+
+class PlantillaVacancyMemoTestCase(TestCase):
+    """RP1, V1-V5 and M1-M4: the Plantilla report, vacancies and the HRMPSB, memos with acknowledgment."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        from django.utils import timezone
+
+        self.setUp_roles()
+        self.today = timezone.localdate()
+        self.vacancy = Vacancy.objects.create(
+            office=self.office_a, position_title="Clerk I", item_number="SP-MO-099", salary_grade=3,
+            monthly_salary=Decimal("14000"), education="Two years of college", eligibility="Subprofessional",
+            status=Vacancy.Status.OPEN, published_on=self.today, deadline=self.today + timedelta(days=5),
+        )
+
+    def _employee_b(self):
+        user_b = get_user_model().objects.create_user("emp_b", "b@test.com", "x")
+        UserProfile.objects.create(user=user_b, person=self.person_b)
+        return user_b
+
+    def test_plantilla_lists_filled_and_vacant_items_for_hrmo_and_auditor_only(self):
+        self.eng_a.appointment_status = Engagement.AppointmentStatus.PERMANENT
+        self.eng_a.save()
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get("/reports/plantilla/")
+        self.assertContains(resp, "SP-MO-001")
+        self.assertContains(resp, "SP-MO-099")
+        self.assertContains(resp, "(Vacant)")
+        self.assertContains(resp, "600,000.00")  # 50,000 a month
+        self.assertContains(resp, "01/01/2025")  # original appointment
+        self.assertNotContains(resp, "Revenue Collector I")  # casual, not plantilla
+        self.assertEqual(self.client.get("/reports/plantilla/?export=xlsx").status_code, 200)
+        self.assertEqual(self.client.get("/reports/plantilla/?print=1").status_code, 200)
+        for user in (self.mayor, self.head_a, self.emp_a_user):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/reports/plantilla/").status_code, 403, user.username)
+
+    def test_vacancies_are_public_notices_and_employees_apply_online(self):
+        draft = Vacancy.objects.create(office=self.office_a, position_title="Driver", item_number="SP-MO-100",
+                                       salary_grade=3, monthly_salary=Decimal("14000"), education="HS", eligibility="-")
+        self.client.force_login(self.emp_a_user)
+        self.assertContains(self.client.get("/vacancies/"), "Clerk I")
+        self.assertEqual(self.client.get(f"/vacancies/{draft.pk}/").status_code, 404)
+        self.client.post(f"/vacancies/{self.vacancy.pk}/", {"action": "apply"})
+        self.client.post(f"/vacancies/{self.vacancy.pk}/", {"action": "apply"})
+        applicant = Applicant.objects.get(vacancy=self.vacancy)
+        self.assertEqual((applicant.person, applicant.applied_online), (self.person_a, True))
+        resp = self.client.get(f"/vacancies/{self.vacancy.pk}/")
+        self.assertContains(resp, "You signified interest")
+        self.assertNotContains(resp, "Applicants (")
+        self.assertEqual(self.client.post(f"/vacancies/{self.vacancy.pk}/", {"action": "add_applicant"}).status_code, 403)
+        self.client.force_login(self.head_a)
+        self.assertNotContains(self.client.get(f"/vacancies/{self.vacancy.pk}/"), "Applicants (")
+        self.client.force_login(self.mayor)
+        self.assertContains(self.client.get(f"/vacancies/{self.vacancy.pk}/"), "Applicants (1)")
+
+    def test_applications_close_after_the_deadline(self):
+        self.vacancy.published_on = self.today - timedelta(days=10)
+        self.vacancy.deadline = self.today - timedelta(days=1)
+        self.vacancy.save()
+        self.client.force_login(self.emp_a_user)
+        self.client.post(f"/vacancies/{self.vacancy.pk}/", {"action": "apply"})
+        self.assertFalse(Applicant.objects.exists())
+
+    def test_resolution_draft_names_the_qualified_applicants(self):
+        for last, ok in (("Reyes", True), ("Santos", True), ("Cruz", False)):
+            Applicant.objects.create(vacancy=self.vacancy, last_name=last, first_name="Ana", signified_on=self.today,
+                                     meets_qs=ok)
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/vacancies/{self.vacancy.pk}/print/resolution/")
+        self.assertContains(resp, "Ana Reyes and Ana Santos")
+        self.assertContains(resp, "respectively")
+        self.assertContains(self.client.get(f"/vacancies/{self.vacancy.pk}/print/publication/"), "SP-MO-099")
+        self.client.force_login(self.emp_a_user)
+        self.assertEqual(self.client.get(f"/vacancies/{self.vacancy.pk}/print/resolution/").status_code, 403)
+
+    def test_memo_reaches_its_audience_and_is_acknowledged_once(self):
+        memo = Memo.objects.create(number="Memo 1", dated=self.today, subject="Fiesta schedule", addressed_to="MO staff",
+                                   audience=Memo.Audience.OFFICE, office=self.office_a, body="Text",
+                                   comply_by=self.today + timedelta(days=2))
+        self.client.force_login(self._employee_b())
+        self.assertEqual(self.client.get(f"/memos/{memo.pk}/").status_code, 403)
+        self.assertNotContains(self.client.get("/memos/"), "Fiesta schedule")
+
+        self.client.force_login(self.emp_a_user)
+        self.assertContains(self.client.get("/"), "Fiesta schedule")  # on the home page until read
+        self.client.post(f"/memos/{memo.pk}/", {"action": "ack"})
+        self.client.post(f"/memos/{memo.pk}/", {"action": "ack"})
+        self.assertEqual(memo.acknowledgments.count(), 1)
+        self.assertNotContains(self.client.get("/"), "Fiesta schedule")
+        self.assertEqual(self.client.get(f"/memos/{memo.pk}/acknowledgments/").status_code, 403)
+
+        self.client.force_login(self.head_a)
+        self.assertContains(self.client.get(f"/memos/{memo.pk}/acknowledgments/"), "1 of 1 acknowledged")
+
+    def test_hrmo_records_paper_signatures_only_for_addressees(self):
+        memo = Memo.objects.create(number="Memo 2", dated=self.today, subject="ICAS", addressed_to="All", body="Text")
+        self.client.force_login(self.hrmo_user)
+        self.client.post(f"/memos/{memo.pk}/acknowledgments/", {"person": [self.person_b.pk, 999999]})
+        self.assertEqual(list(memo.acknowledgments.values_list("person_id", "from_paper")), [(self.person_b.pk, True)])
+        self.client.force_login(self.head_a)
+        resp = self.client.post(f"/memos/{memo.pk}/acknowledgments/", {"person": [self.person_a.pk]})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_memo_scan_must_be_a_real_file(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post("/memos/new/", {
+            "number": "Memo 3", "dated": self.today.isoformat(), "subject": "S", "addressed_to": "All",
+            "audience": "everyone", "body": "B", "requires_ack": "on", "is_published": "on",
+            "scan": SimpleUploadedFile("memo.pdf", b"not a pdf", content_type="application/pdf"),
+        })
+        self.assertContains(resp, "not a valid PDF")
+        self.assertFalse(Memo.objects.exists())
+
+    def test_calendar_shows_vacancy_and_memo_deadlines(self):
+        Memo.objects.create(number="Memo 4", dated=self.today, subject="Submit ICAS forms", addressed_to="MO",
+                            audience=Memo.Audience.OFFICE, office=self.office_a, body="B", comply_by=self.vacancy.deadline)
+        url = f"/calendar/day/{self.vacancy.deadline.isoformat()}/"
+        self.client.force_login(self.emp_a_user)
+        resp = self.client.get(url)
+        self.assertContains(resp, "Last day to apply: Clerk I")
+        self.assertContains(resp, "Submit ICAS forms")
+        self.client.force_login(self._employee_b())
+        self.assertNotContains(self.client.get(url), "Submit ICAS forms")
+
+    def test_seed_demo_board_adds_once(self):
+        from io import StringIO
+
+        with override_settings(DEBUG=True):
+            call_command("seed_demo_board", stdout=StringIO())
+            out = StringIO()
+            call_command("seed_demo_board", stdout=out)
+        self.assertIn("already added", out.getvalue())
+        self.assertEqual(Vacancy.objects.filter(notes__startswith="[demo board]").count(), 2)
+        self.assertTrue(Memo.objects.filter(number__endswith="(sample)").exists())

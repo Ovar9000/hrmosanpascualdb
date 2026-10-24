@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Leave balances{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ title }}</h1>
+    <div class="text-muted small">Everyone with an active leave-eligible appointment{% if office %} in {{ office.name }}{% endif %}. Always current: no retyping before posting it on the board.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}&export=xlsx">Excel</a>
+    <a class="btn btn-sm btn-primary" href="?{{ qs }}&print=1">Print for the bulletin board</a>
+  </div>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="as_of">As of</label><input class="form-control form-control-sm" type="date" id="as_of" name="as_of" value="{{ as_of|date:'Y-m-d' }}"></div>
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <button class="btn btn-sm btn-outline-primary">Show</button>
+</form>
+<div class="table-responsive card border-0 shadow-sm">
+  <table class="table table-sm table-hover mb-0 small align-middle">
+    <thead class="table-light"><tr><th></th><th>Name</th><th class="text-end">Vacation leave</th><th class="text-end">Sick leave</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+        <tr><td class="text-muted">{{ forloop.counter }}</td><td><a href="{% url 'leave_card' r.person.pk %}" class="text-decoration-none">{{ r.person.full_name }}</a></td>
+          <td class="text-end font-monospace">{{ r.vl|floatformat:2 }}</td><td class="text-end font-monospace">{{ r.sl|floatformat:2 }}</td><td class="text-end font-monospace fw-semibold">{{ r.total|floatformat:2 }}</td></tr>
+      {% empty %}<tr><td colspan="5" class="text-muted">Nobody with leave credits.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

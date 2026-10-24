@@ -83,6 +83,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "hr.context_processors.org_chart_nav",
+                "hr.context_processors.board_nav",
             ],
         },
     },
@@ -130,6 +131,11 @@ SALARY_TRACKING_START = os.environ.get("SALARY_TRACKING_START", "2026-10-01")
 SALARY_LOOKAHEAD_DAYS = int(os.environ.get("SALARY_LOOKAHEAD_DAYS", "90"))
 # Contract renewals list (DECISIONS RM1): appointments ending within this many days.
 RENEWAL_LOOKAHEAD_DAYS = int(os.environ.get("RENEWAL_LOOKAHEAD_DAYS", "45"))
+# Leave approval order (DECISIONS L1): the signature boxes of CS Form No. 6, section 7, in the order
+# they are signed. Any order of recommend, certify and approve; approve must be one of them.
+LEAVE_APPROVAL_STEPS = [
+    s.strip() for s in os.environ.get("LEAVE_APPROVAL_STEPS", "recommend,certify,approve").split(",") if s.strip()
+]
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

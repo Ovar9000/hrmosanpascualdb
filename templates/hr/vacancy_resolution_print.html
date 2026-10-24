@@ -1,0 +1,42 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}HRMPSB resolution · {{ vacancy.position_title }}{% endblock %}
+{% block back %}{% url 'vacancy_detail' vacancy.pk %}{% endblock %}
+{% block style %}
+  .res { font-size: 11pt; line-height: 1.45; }
+  .res p { text-align: justify; text-indent: 3em; }
+  .res .center { text-align: center; text-indent: 0; }
+  .res table td, .res table th { font-size: 9.5pt; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait res">
+  <p class="center">Republic of the Philippines<br>Province of Masbate<br>Municipality of San Pascual</p>
+  <p class="center fw-bold">HUMAN RESOURCE MERIT AND PERSONNEL SELECTION BOARD</p>
+  <p class="center fst-italic">Excerpt from the minutes of the meeting of the Human Resource Merit and Personnel Selection Board held on {{ vacancy.board_met_on|date:"F d, Y"|default:"__________" }}{% if vacancy.board_venue %} at {{ vacancy.board_venue }}{% endif %}.</p>
+  <p class="center fw-bold">HRMPSB Resolution No. {{ vacancy.resolution_no|default:"___" }}, series of {{ vacancy.board_met_on|date:"Y"|default:"____" }}</p>
+  <p>WHEREAS, the HRMPSB deliberated on the application for the position of:</p>
+  <p class="center">(a) {{ vacancy.position_title }} – at the {{ vacancy.office.name }} with item no. {{ vacancy.item_number }}</p>
+  <p>WHEREAS, the position of {{ vacancy.position_title }} was published through the Civil Service Commission Bulletin{% if vacancy.published_on %} on {{ vacancy.published_on|date:"F d, Y" }}{% endif %}{% if vacancy.deadline %} until {{ vacancy.deadline|date:"F d, Y" }}{% endif %}{% if posted_at %}; and posted at the {{ posted_at }}{% endif %};</p>
+  <p>WHEREAS, the Qualification Standards for the position are as follows:</p>
+  <div style="margin-left:4em">{{ vacancy.position_title }}<br>
+    (a) {{ vacancy.education }}<br>(b) {{ vacancy.training }}<br>(c) {{ vacancy.experience }}<br>(d) {{ vacancy.eligibility }}</div>
+  <p class="mt-2">WHEREAS, {{ draft.named }} signified {% if draft.respectively %}their intentions{% else %}their intention{% endif %} to the abovementioned position{% if draft.signified %} on {{ draft.signified }}{% if draft.respectively %}, respectively{% endif %}{% endif %}.</p>
+  <p>WHEREAS, after careful evaluation of the qualification of the candidates, per attached proof of qualifications in consonance with pertinent policies governing personnel hiring and movement, the above-named candidates met the minimum qualifications for the positions and the agency's requirements;</p>
+  <p>RESOLVED, the Board will submit the result of the applicants to the Municipal Mayor for consideration;</p>
+  <p>RESOLVED FINALLY, copy of this resolution be posted for information of all concerned.</p>
+  <p>We HEREBY CERTIFY that the foregoing resolution is duly approved.</p>
+  <div class="d-flex justify-content-end mt-4"><div class="text-center" style="min-width:240px"><div class="sig">Municipal Mayor<br>HRMPSB Chairman</div></div></div>
+  <div class="mt-4" style="max-width:240px"><div>Attested by:</div><div class="sig">HRMO</div></div>
+
+  <div style="page-break-before: always" class="pt-3">
+    <p class="center fw-bold">Applicants for {{ vacancy.position_title }} ({{ vacancy.item_number }})</p>
+    <table class="form-table">
+      <thead><tr><th>Name</th><th>Signified</th><th>Meets QS</th><th>Rank</th><th>Remarks</th></tr></thead>
+      <tbody>{% for a in applicants %}<tr><td>{{ a.full_name }}</td><td>{{ a.signified_on|date:"M d, Y" }}</td><td>{% if a.meets_qs is None %}–{% else %}{{ a.meets_qs|yesno:"Yes,No" }}{% endif %}</td><td class="text-center">{{ a.rank|default:"" }}</td><td>{{ a.remarks|default:"None" }}</td></tr>{% endfor %}</tbody>
+    </table>
+    <div class="row mt-4 small-print">
+      <div class="col-4"><div class="sig">Member</div></div><div class="col-4"><div class="sig">Member</div></div><div class="col-4"><div class="sig">First / Second Level Representative</div></div>
+    </div>
+  </div>
+  <p class="small-print mt-3">Draft generated from the HR records system. Edit as needed before signing; the signed resolution is the record.</p>
+</div>
+{% endblock %}

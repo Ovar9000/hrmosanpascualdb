@@ -1,0 +1,102 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}CS Form No. 6 · {{ req.person.last_name }}{% endblock %}
+{% block back %}{% url 'leave_detail' req.pk %}{% endblock %}
+{% block style %}
+  .cs6 { font-size: 9.5pt; }
+  .cs6 h1 { font-size: 15pt; font-weight: bold; text-align: center; margin: 6px 0; }
+  .cs6 .section { text-align: center; font-weight: bold; font-size: 10.5pt; }
+  .cs6 .ref { font-size: 7.5pt; font-style: italic; }
+  .cs6 td.half { width: 50%; }
+  .cs6 .credits td { text-align: center; }
+  .filled { font-weight: bold; }
+{% endblock %}
+
+{% block sheet %}
+<div class="sheet portrait cs6">
+  <div class="d-flex justify-content-between">
+    <div class="small-print"><em>Civil Service Form No. 6<br>Revised 2020</em></div>
+    <div class="small-print text-end">Application #{{ req.pk }}<br>Filed {{ req.filed_at|date:"M d, Y" }}</div>
+  </div>
+  <div class="text-center small-print">Republic of the Philippines<br>Municipality of San Pascual<br>Bolod, San Pascual, Masbate</div>
+  <h1>APPLICATION FOR LEAVE</h1>
+
+  <table class="form-table">
+    <tr>
+      <td style="width:35%">1. OFFICE/DEPARTMENT<br><span class="filled">{{ req.office.name|default:"" }}</span></td>
+      <td colspan="3">2. NAME: <span class="small-print">(Last) (First) (Middle)</span><br>
+        <span class="filled">{{ req.person.last_name }}{% if req.person.suffix %} {{ req.person.suffix }}{% endif %}, {{ req.person.first_name }} {{ req.person.middle_name }}</span></td>
+    </tr>
+    <tr>
+      <td>3. DATE OF FILING <span class="filled">{{ req.filed_at|date:"F d, Y" }}</span></td>
+      <td colspan="2">4. POSITION <span class="filled">{{ req.position_title }}</span></td>
+      <td style="width:20%">5. SALARY <span class="line" style="min-width:70px">&nbsp;</span></td>
+    </tr>
+    <tr><td colspan="4" class="section">6. DETAILS OF APPLICATION</td></tr>
+    <tr>
+      <td colspan="2" class="half">6.A TYPE OF LEAVE TO BE AVAILED OF<br>
+        {% for value, label in types %}
+          <div><span class="box">{% if req.leave_type == value %}✔{% endif %}</span>{{ label }}</div>
+        {% endfor %}
+        <div>Others: <span class="line filled">{% if req.leave_type == "other" %}{{ req.leave_type_other }}{% endif %}</span></div>
+      </td>
+      <td colspan="2" class="half">6.B DETAILS OF LEAVE
+        <div class="mt-1"><em>In case of Vacation/Special Privilege Leave:</em></div>
+        <div><span class="box">{% if req.detail == "within_ph" %}✔{% endif %}</span>Within the Philippines <span class="line filled">{% if req.detail == "within_ph" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div><span class="box">{% if req.detail == "abroad" %}✔{% endif %}</span>Abroad (Specify) <span class="line filled">{% if req.detail == "abroad" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="mt-1"><em>In case of Sick Leave:</em></div>
+        <div><span class="box">{% if req.detail == "in_hospital" %}✔{% endif %}</span>In Hospital (Specify Illness) <span class="line filled">{% if req.detail == "in_hospital" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div><span class="box">{% if req.detail == "out_patient" %}✔{% endif %}</span>Out Patient (Specify Illness) <span class="line filled">{% if req.detail == "out_patient" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="mt-1"><em>In case of Special Leave Benefits for Women:</em></div>
+        <div>(Specify Illness) <span class="line filled">{% if req.detail == "women_illness" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="mt-1"><em>In case of Study Leave:</em></div>
+        <div><span class="box">{% if req.detail == "masters" %}✔{% endif %}</span>Completion of Master's Degree</div>
+        <div><span class="box">{% if req.detail == "bar_review" %}✔{% endif %}</span>BAR/Board Examination Review</div>
+        <div class="mt-1"><em>Other purpose:</em></div>
+        <div><span class="box">{% if req.detail == "monetization" %}✔{% endif %}</span>Monetization of Leave Credits</div>
+        <div><span class="box">{% if req.detail == "terminal" %}✔{% endif %}</span>Terminal Leave</div>
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2">6.C NUMBER OF WORKING DAYS APPLIED FOR<br><span class="filled">{{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }}</span>
+        <div class="mt-2">INCLUSIVE DATES<br><span class="filled">{{ req.start_date|date:"F d, Y" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"F d, Y" }}{% endif %}</span></div></td>
+      <td colspan="2">6.D COMMUTATION
+        <div><span class="box">{% if not req.commutation_requested %}✔{% endif %}</span>Not Requested</div>
+        <div><span class="box">{% if req.commutation_requested %}✔{% endif %}</span>Requested</div>
+        <div class="sig">(Signature of Applicant)</div></td>
+    </tr>
+    <tr><td colspan="4" class="section">7. DETAILS OF ACTION ON APPLICATION</td></tr>
+    <tr>
+      <td colspan="2">7.A CERTIFICATION OF LEAVE CREDITS<br>
+        As of <span class="line filled">{% if req.certified_balances.as_of %}{{ steps.certify.acted_at|date:"F d, Y" }}{% endif %}</span>
+        <table class="form-table credits mt-1">
+          <tr><td></td><td>Vacation Leave</td><td>Sick Leave</td></tr>
+          <tr><td class="text-start">Total Earned</td><td class="filled">{{ vl|default_if_none:""|floatformat:3 }}</td><td class="filled">{{ sl|default_if_none:""|floatformat:3 }}</td></tr>
+          <tr><td class="text-start">Less this application</td><td class="filled">{{ less_vl|default_if_none:""|floatformat:"-1" }}</td><td class="filled">{{ less_sl|default_if_none:""|floatformat:"-1" }}</td></tr>
+          <tr><td class="text-start">Balance</td><td class="filled">{% if vl is not None %}{{ vl_balance|floatformat:3 }}{% endif %}</td><td class="filled">{% if sl is not None %}{{ sl_balance|floatformat:3 }}{% endif %}</td></tr>
+        </table>
+        <div class="sig">{% with s=steps.certify %}{% if s.acted_by %}<span class="filled">{{ s.acted_by.get_full_name|default:s.acted_by.username|upper }}</span><br>{% endif %}{% endwith %}(Authorized Officer, HRMO)</div>
+      </td>
+      <td colspan="2">7.B RECOMMENDATION
+        {% with s=steps.recommend %}
+        <div><span class="box">{% if s.status == "done" %}✔{% endif %}</span>For approval</div>
+        <div><span class="box">{% if s.status == "disapproved" %}✔{% endif %}</span>For disapproval due to <span class="line filled">{% if s.status == "disapproved" %}{{ s.note }}{% endif %}</span></div>
+        <div class="sig">{% if s.acted_by %}<span class="filled">{{ s.acted_by.get_full_name|default:s.acted_by.username|upper }}</span><br>{% endif %}(Authorized Officer)</div>
+        {% endwith %}
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2">7.C APPROVED FOR:
+        <div><span class="line filled" style="min-width:50px">{% if req.status == "approved" %}{{ req.days_with_pay|floatformat:"-1" }}{% endif %}</span> days with pay</div>
+        <div><span class="line filled" style="min-width:50px">{% if req.status == "approved" and req.days_without_pay %}{{ req.days_without_pay|floatformat:"-1" }}{% endif %}</span> days without pay</div>
+        <div><span class="line" style="min-width:50px">&nbsp;</span> others (Specify)</div></td>
+      <td colspan="2">7.D DISAPPROVED DUE TO:
+        <div class="line filled d-block" style="min-height:2.5em">{% if req.status == "rejected" and steps.approve.status == "disapproved" %}{{ steps.approve.note }}{% endif %}</div></td>
+    </tr>
+    <tr><td colspan="4" class="text-center pt-4">
+      {% with s=steps.approve %}<div class="sig mx-auto" style="max-width:260px">{% if s.acted_by %}<span class="filled">{{ s.acted_by.get_full_name|default:s.acted_by.username|upper }}</span><br>{% endif %}Municipal Mayor</div>{% endwith %}
+    </td></tr>
+  </table>
+  <p class="small-print mt-2">Printed from the HR records system. The wet-signed form is the official record.
+    {% if req.status == "pending" %}Status when printed: waiting for {{ req.current_step.short_label|lower }}.{% else %}Status when printed: {{ req.get_status_display|lower }}.{% endif %}</p>
+</div>
+{% endblock %}

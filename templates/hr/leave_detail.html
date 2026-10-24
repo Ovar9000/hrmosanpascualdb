@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Leave #{{ req.pk }} · {{ req.person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% if is_applicant %}{% url 'my_leave' %}{% elif can_register %}{% url 'leave_register' %}{% else %}{% url 'leave_inbox' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a>
+  <a href="{% url 'leave_print' req.pk %}" class="btn btn-sm btn-outline-primary">Print CS Form No. 6</a>
+  <a href="{% url 'leave_card' req.person.pk %}" class="btn btn-sm btn-outline-secondary">Leave card</a>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between gap-2">
+      <div>
+        <div class="text-muted small">Application for leave #{{ req.pk }} · filed {{ req.filed_at|date:"M d, Y g:i A" }}{% if req.filed_by and not is_applicant and req.filed_by.profile.person_id != req.person_id %} by {{ req.filed_by.get_full_name|default:req.filed_by.username }} (paper form){% endif %}</div>
+        <h1 class="h4 mb-1">{{ req.type_label }} · {{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }}</h1>
+        <div>{{ req.start_date|date:"l, M d, Y" }}{% if req.end_date != req.start_date %} to {{ req.end_date|date:"l, M d, Y" }}{% endif %}</div>
+        <div class="text-muted small">{{ req.person.full_name }}{% if req.position_title %} · {{ req.position_title }}{% endif %}{% if req.office %} · {{ req.office.name }}{% endif %}</div>
+      </div>
+      <div class="text-end">{% include "hr/_leave_steps.html" %}
+        {% if turn_text %}<div class="small text-muted mt-1">{{ turn_text }}</div>{% endif %}</div>
+    </div>
+    <hr>
+    <dl class="row small mb-0">
+      {% if req.detail %}<dt class="col-sm-3 text-muted">Details (6.B)</dt><dd class="col-sm-9">{{ req.get_detail_display }}{% if req.detail_text %}: {{ req.detail_text }}{% endif %}</dd>{% endif %}
+      <dt class="col-sm-3 text-muted">Commutation (6.D)</dt><dd class="col-sm-9">{{ req.commutation_requested|yesno:"Requested,Not requested" }}</dd>
+      {% if req.reason %}<dt class="col-sm-3 text-muted">Note</dt><dd class="col-sm-9">{{ req.reason|linebreaksbr }}</dd>{% endif %}
+      {% if req.days_with_pay is not None %}<dt class="col-sm-3 text-muted">Certified (7.C)</dt><dd class="col-sm-9">{{ req.days_with_pay|floatformat:"-1" }} day(s) with pay{% if req.days_without_pay %}, <span class="text-danger">{{ req.days_without_pay|floatformat:"-1" }} without pay</span>{% endif %}</dd>{% endif %}
+      {% if req.decision_note %}<dt class="col-sm-3 text-muted">{% if req.status == "rejected" %}Disapproved due to{% else %}Note{% endif %}</dt><dd class="col-sm-9">{{ req.decision_note }}</dd>{% endif %}
+    </dl>
+  </div>
+</div>
+
+{% for w in warnings %}<div class="alert alert-warning small py-2 mb-2">{{ w }}</div>{% endfor %}
+
+{% if can_act %}
+<div class="card border-warning shadow-sm mb-3">
+  <div class="card-header bg-warning-subtle fw-bold py-2">Your action: {{ current.get_kind_display }}</div>
+  <div class="card-body">
+    {% if paper_only %}<div class="alert alert-light border small">You are recording this from the <strong>signed paper form</strong>, for a signatory without an account. It will show as "recorded by HRMO from paper".</div>{% endif %}
+    {% if office_on_leave %}
+      <div class="small mb-3"><strong>Also on leave from this office on these days:</strong>
+        <ul class="mb-0">{% for o in office_on_leave %}<li>{{ o.person.full_name }} · {{ o.start_date|date:"M d" }}{% if o.end_date != o.start_date %}–{{ o.end_date|date:"M d" }}{% endif %} ({{ o.get_status_display|lower }})</li>{% endfor %}</ul></div>
+    {% endif %}
+    <div class="small mb-3">Credits now: vacation {{ summary.vl|floatformat:3 }}, sick {{ summary.sl|floatformat:3 }}{% if summary.vl_held or summary.sl_held %} (on hold for pending applications, this one included: {{ summary.vl_held|floatformat:"-1" }} VL, {{ summary.sl_held|floatformat:"-1" }} SL){% endif %}.</div>
+    <form method="post">{% csrf_token %}
+      <input type="hidden" name="version" value="{{ req.version }}">
+      {% if current.kind == "certify" %}
+      <div class="row g-2 mb-2">
+        <div class="col-6 col-md-3"><label class="form-label small fw-semibold" for="with_pay">Days with pay</label>
+          <input class="form-control" type="number" step="0.5" min="0" name="with_pay" id="with_pay" value="{{ with_pay|floatformat:'-1' }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label small fw-semibold" for="without_pay">Days without pay</label>
+          <input class="form-control" type="number" step="0.5" min="0" name="without_pay" id="without_pay" value="{{ without_pay|floatformat:'-1' }}"></div>
+        <div class="col-12 col-md-6 small text-muted align-self-end">Worked out from the available credits. Change it if the leave card says otherwise.</div>
+      </div>
+      {% endif %}
+      <label class="form-label small fw-semibold" for="note">Remarks {% if current.kind != "certify" %}(required to disapprove){% endif %}</label>
+      <textarea class="form-control mb-2" name="note" id="note" rows="2"></textarea>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-success" name="action" value="done">{% if current.kind == "recommend" %}Recommend for approval{% elif current.kind == "certify" %}Certify credits{% else %}Approve{% endif %}</button>
+        {% if current.kind != "certify" %}<button class="btn btn-outline-danger" name="action" value="disapproved">{% if current.kind == "recommend" %}Recommend disapproval{% else %}Disapprove{% endif %}</button>{% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Signatures (section 7)</div>
+  <ul class="list-group list-group-flush small">
+    {% for step in steps %}
+      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+        <div><span class="fw-semibold">{{ step.order }}. {{ step.get_kind_display }}</span>
+          {% if step.note %}<div class="text-muted">{{ step.note }}</div>{% endif %}</div>
+        <div class="text-end">
+          {% if step.status == "done" or step.status == "disapproved" %}
+            <span class="badge {% if step.status == 'done' %}text-bg-success{% else %}text-bg-danger{% endif %}">{% if step.status == 'done' %}{% if step.kind == 'recommend' %}Recommended{% elif step.kind == 'certify' %}Certified{% else %}Approved{% endif %}{% else %}Disapproved{% endif %}</span>
+            <div class="text-muted">{{ step.acted_by.get_full_name|default:step.acted_by.username }} · {{ step.acted_at|date:"M d, Y g:i A" }}{% if step.from_paper %} · recorded by HRMO from paper{% endif %}</div>
+          {% elif step.status == "skipped" %}<span class="badge text-bg-light border">Not needed</span>
+          {% elif current and current.pk == step.pk %}<span class="badge text-bg-warning">Waiting</span>
+          {% else %}<span class="badge text-bg-light border text-muted">Later</span>{% endif %}
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+{% if credit_entries %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Charged to the leave card</div>
+  <ul class="list-group list-group-flush small">
+    {% for c in credit_entries %}<li class="list-group-item d-flex justify-content-between"><span>{{ c.get_leave_type_display }} · {{ c.note }}</span><span class="font-monospace">{{ c.days|floatformat:3 }}</span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if can_cancel %}
+<form method="post" class="card border-0 shadow-sm">{% csrf_token %}
+  <div class="card-body">
+    <input type="hidden" name="version" value="{{ req.version }}">
+    {% if req.status == "approved" %}
+      <label class="form-label small fw-semibold" for="cancel-note">Cancel approved leave (puts the days back on the leave card)</label>
+      <input class="form-control form-control-sm mb-2" name="note" id="cancel-note" placeholder="Reason, e.g. leave not taken: recalled to work" required>
+    {% endif %}
+    <button class="btn btn-sm btn-outline-danger" name="action" value="cancel" onclick="return confirm('Cancel this application?')">{% if req.status == "approved" %}Cancel approved leave{% else %}Withdraw application{% endif %}</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

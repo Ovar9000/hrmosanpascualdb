@@ -3,18 +3,23 @@ from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin, UserAdmin as
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import PermissionDenied
 from .models import (
+    Applicant,
     AuditLog,
     Delegate,
     Document,
     Engagement,
+    LeaveApprovalStep,
     LeaveCredit,
     LeaveRequest,
+    Memo,
+    MemoAcknowledgment,
     Office,
     OrgUnit,
     StructurePosition,
     Person,
     Project,
     UserProfile,
+    Vacancy,
 )
 
 from .accounts import require_password_change
@@ -204,6 +209,33 @@ class LeaveRequestAdmin(SuperuserOnlyAdmin):
     list_display = ("person", "leave_type", "start_date", "end_date", "days", "status", "approver")
     list_filter = ("leave_type", "status")
     search_fields = ("person__last_name", "person__first_name")
+
+
+@admin.register(LeaveApprovalStep)
+class LeaveApprovalStepAdmin(SuperuserOnlyAdmin):
+    list_display = ("request", "order", "kind", "status", "acted_by", "acted_at", "from_paper")
+    list_filter = ("kind", "status")
+
+
+@admin.register(Vacancy)
+class VacancyAdmin(SuperuserOnlyAdmin):
+    list_display = ("position_title", "item_number", "office", "status", "deadline")
+    list_filter = ("status", "office")
+
+
+@admin.register(Applicant)
+class ApplicantAdmin(SuperuserOnlyAdmin):
+    list_display = ("last_name", "first_name", "vacancy", "signified_on", "meets_qs", "rank")
+
+
+@admin.register(Memo)
+class MemoAdmin(SuperuserOnlyAdmin):
+    list_display = ("number", "subject", "dated", "audience", "is_published")
+
+
+@admin.register(MemoAcknowledgment)
+class MemoAcknowledgmentAdmin(SuperuserOnlyAdmin):
+    list_display = ("memo", "person", "acknowledged_at", "from_paper")
 
 
 @admin.register(LeaveCredit)
