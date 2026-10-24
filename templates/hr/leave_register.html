@@ -41,7 +41,7 @@
         <tr>
           <td><a href="{% url 'leave_detail' req.pk %}">{{ req.pk }}</a></td>
           <td><a href="{% url 'leave_detail' req.pk %}" class="text-decoration-none">{{ req.person.full_name }}</a></td>
-          <td>{{ req.office.acronym|default:req.office.name|default:"" }}</td>
+          <td>{% if req.office %}{{ req.office.acronym|default:req.office.name }}{% endif %}</td>
           <td>{{ req.type_label }}</td>
           <td class="text-nowrap">{{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %}, {{ req.start_date|date:"Y" }}</td>
           <td class="text-end">{{ req.days|floatformat:"-1" }}{% if req.days_without_pay %} <span class="text-danger" title="without pay">({{ req.days_without_pay|floatformat:"-1" }} LWOP)</span>{% endif %}</td>

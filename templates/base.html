@@ -17,35 +17,29 @@
       </button>
       <div class="collapse navbar-collapse" id="nav">
         <ul class="navbar-nav me-auto">
-          {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}
-            <li class="nav-item"><a class="nav-link" href="{% url 'person_list' %}">Personnel</a></li>
-          {% endif %}
-          {% if org_nav.tree or org_nav.my_office %}
+          {# At most four menus for everyone (People, Leave, Bulletin, Calendar) plus Tools for roles with more. #}
+          {% if not perms.hr.manage_projects or perms.hr.view_hr_records or org_nav.tree or org_nav.my_office %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Offices</a>
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">People</a>
               <ul class="dropdown-menu">
+                {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}<li><a class="dropdown-item" href="{% url 'person_list' %}">Personnel</a></li>
+                <li><a class="dropdown-item" href="{% url 'office_list' %}">Offices</a></li>{% endif %}
                 {% if org_nav.my_office %}<li><a class="dropdown-item" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
                 {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
-                {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}<li><a class="dropdown-item" href="{% url 'office_list' %}">Offices Directory</a></li>{% endif %}
               </ul>
             </li>
-          {% elif not perms.hr.manage_projects or perms.hr.view_hr_records %}
-            <li class="nav-item"><a class="nav-link" href="{% url 'office_list' %}">Offices</a></li>
           {% endif %}
-          {% if board_nav.show %}
-            {% if board_nav.person or board_nav.approver or board_nav.register %}
+          {% if board_nav.person or board_nav.approver %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Leave{% if board_nav.inbox %} <span class="badge rounded-pill text-bg-warning" title="Waiting for your signature">{{ board_nav.inbox }}</span>{% endif %}</a>
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Leave{% if board_nav.inbox %} <span class="badge rounded-pill text-bg-warning" title="Waiting for your signature">{{ board_nav.inbox }}</span>{% endif %}</a>
               <ul class="dropdown-menu">
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_leave' %}">My leave</a></li>
                 <li><a class="dropdown-item" href="{% url 'leave_file' %}">File leave</a></li>{% endif %}
                 {% if board_nav.approver %}<li><a class="dropdown-item" href="{% url 'leave_inbox' %}">Waiting for me{% if board_nav.inbox %} ({{ board_nav.inbox }}){% endif %}</a></li>{% endif %}
-                {% if board_nav.register %}<li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="{% url 'leave_register' %}">Leave register</a></li>
-                <li><a class="dropdown-item" href="{% url 'leave_balances' %}">Leave balances list</a></li>{% endif %}
               </ul>
             </li>
-            {% endif %}
+          {% endif %}
+          {% if board_nav.show %}
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Bulletin{% if board_nav.unread %} <span class="badge rounded-pill text-bg-danger" title="Memos to acknowledge">{{ board_nav.unread }}</span>{% endif %}</a>
               <ul class="dropdown-menu">
@@ -54,32 +48,38 @@
               </ul>
             </li>
           {% endif %}
-          {% if org_nav.salary %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'calendar' %}">Calendar</a></li>
+          {% if org_nav.salary or board_nav.register or perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tracker{% if org_nav.salary_due or org_nav.attention %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
+              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
               <ul class="dropdown-menu">
-                <li><a class="dropdown-item" href="{% url 'salary_action_list' %}">Salary increases &amp; loyalty</a></li>
+                {% if org_nav.salary %}
+                <li><h6 class="dropdown-header">Trackers</h6></li>
+                <li><a class="dropdown-item" href="{% url 'salary_action_list' %}">Salary increases &amp; loyalty{% if org_nav.salary_due %} <span class="badge text-bg-warning">due</span>{% endif %}</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_renewals' %}">Contract renewals</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_retirement' %}">Retirement</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_year_end_bonus' %}">Year-end bonus</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_meetings' %}">Required meetings</a></li>
-                {% if board_nav.plantilla %}<li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a></li>{% endif %}
+                {% endif %}
+                {% if board_nav.register %}
+                <li><h6 class="dropdown-header">Reports</h6></li>
+                <li><a class="dropdown-item" href="{% url 'leave_register' %}">Leave register</a></li>
+                <li><a class="dropdown-item" href="{% url 'leave_balances' %}">Leave balances list</a></li>
+                {% if board_nav.plantilla %}<li><a class="dropdown-item" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a></li>{% endif %}
+                {% endif %}
+                {% if perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
+                <li><h6 class="dropdown-header">Records</h6></li>
+                {% if perms.hr.view_project %}<li><a class="dropdown-item" href="{% url 'project_list' %}">Projects</a></li>{% endif %}
+                {% if perms.hr.view_audit_log or user.is_superuser %}<li><a class="dropdown-item" href="{% url 'audit_list' %}">Audit Trail</a></li>{% endif %}
+                {% if user.is_staff %}<li><a class="dropdown-item" href="{% url 'admin:index' %}">Admin</a></li>{% endif %}
+                {% endif %}
               </ul>
             </li>
-          {% endif %}
-          {% if perms.hr.view_project %}
-            <li class="nav-item"><a class="nav-link" href="{% url 'project_list' %}">Projects</a></li>
-          {% endif %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'calendar' %}">Calendar</a></li>
-          {% if perms.hr.view_audit_log or user.is_superuser %}
-            <li class="nav-item"><a class="nav-link" href="{% url 'audit_list' %}">Audit Trail</a></li>
           {% endif %}
 
           {% block nav %}{% endblock %}
         </ul>
         <ul class="navbar-nav">
-          {% if user.is_staff %}<li class="nav-item"><a class="nav-link" href="{% url 'admin:index' %}">Admin</a></li>{% endif %}
           <li class="nav-item"><a class="nav-link" href="{% url 'password_change' %}">{{ user.get_username }}</a></li>
           <li class="nav-item">
             <form method="post" action="{% url 'logout' %}">{% csrf_token %}

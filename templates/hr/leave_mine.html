@@ -7,8 +7,9 @@
     <h1 class="h3 mb-0">My leave</h1>
     <div class="text-muted small">{{ person.full_name }} · balances include every approved leave; days on hold are applications still being signed.</div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex flex-wrap gap-2">
     <a class="btn btn-outline-secondary" href="{% url 'leave_card' person.pk %}">Leave card</a>
+    <a class="btn btn-outline-secondary" href="{% url 'leave_print_blank' %}?autoprint=1" title="CS Form No. 6 with your name, office and position, to fill in by hand">🖨 Blank form</a>
     <a class="btn btn-primary" href="{% url 'leave_file' %}">+ File leave</a>
   </div>
 </div>
@@ -28,15 +29,18 @@
   <div class="card-header bg-white fw-bold py-2">Applications</div>
   <div class="list-group list-group-flush">
     {% for req in page %}
-      <a href="{% url 'leave_detail' req.pk %}" class="list-group-item list-group-item-action">
-        <div class="d-flex flex-wrap justify-content-between gap-2">
+      <div class="list-group-item">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
           <div>
-            <div class="fw-semibold">{{ req.type_label }} · {{ req.start_date|date:"M d, Y" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"M d, Y" }}{% endif %}</div>
+            <a href="{% url 'leave_detail' req.pk %}" class="fw-semibold text-decoration-none">{{ req.type_label }} · {{ req.start_date|date:"M d, Y" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"M d, Y" }}{% endif %}</a>
             <div class="small text-muted">{{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }} · filed {{ req.filed_at|date:"M d, Y" }}{% if req.days_without_pay %} · {{ req.days_without_pay|floatformat:"-1" }} without pay{% endif %}</div>
           </div>
-          {% include "hr/_leave_steps.html" %}
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            {% include "hr/_leave_steps.html" %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'leave_print' req.pk %}?autoprint=1" title="Print CS Form No. 6 filled in">🖨 Print</a>
+          </div>
         </div>
-      </a>
+      </div>
     {% empty %}
       <div class="list-group-item text-muted small">No leave filed yet.</div>
     {% endfor %}

@@ -4,7 +4,7 @@
 {% block content %}
 <div class="mb-3 d-flex flex-wrap gap-2">
   <a href="{% if is_applicant %}{% url 'my_leave' %}{% elif can_register %}{% url 'leave_register' %}{% else %}{% url 'leave_inbox' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a>
-  <a href="{% url 'leave_print' req.pk %}" class="btn btn-sm btn-outline-primary">Print CS Form No. 6</a>
+  <a href="{% url 'leave_print' req.pk %}?autoprint=1" class="btn btn-sm btn-primary">🖨 Print CS Form No. 6</a>
   <a href="{% url 'leave_card' req.person.pk %}" class="btn btn-sm btn-outline-secondary">Leave card</a>
 </div>
 
@@ -75,7 +75,7 @@
         <div class="text-end">
           {% if step.status == "done" or step.status == "disapproved" %}
             <span class="badge {% if step.status == 'done' %}text-bg-success{% else %}text-bg-danger{% endif %}">{% if step.status == 'done' %}{% if step.kind == 'recommend' %}Recommended{% elif step.kind == 'certify' %}Certified{% else %}Approved{% endif %}{% else %}Disapproved{% endif %}</span>
-            <div class="text-muted">{{ step.acted_by.get_full_name|default:step.acted_by.username }} · {{ step.acted_at|date:"M d, Y g:i A" }}{% if step.from_paper %} · recorded by HRMO from paper{% endif %}</div>
+            <div class="text-muted">{% if step.acted_by %}{{ step.acted_by.get_full_name|default:step.acted_by.username }} · {% endif %}{{ step.acted_at|date:"M d, Y g:i A" }}{% if step.from_paper %} · recorded by HRMO from paper{% endif %}</div>
           {% elif step.status == "skipped" %}<span class="badge text-bg-light border">Not needed</span>
           {% elif current and current.pk == step.pk %}<span class="badge text-bg-warning">Waiting</span>
           {% else %}<span class="badge text-bg-light border text-muted">Later</span>{% endif %}

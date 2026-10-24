@@ -136,6 +136,11 @@ RENEWAL_LOOKAHEAD_DAYS = int(os.environ.get("RENEWAL_LOOKAHEAD_DAYS", "45"))
 LEAVE_APPROVAL_STEPS = [
     s.strip() for s in os.environ.get("LEAVE_APPROVAL_STEPS", "recommend,certify,approve").split(",") if s.strip()
 ]
+# Names printed under the signature lines of CS Form No. 6 (DECISIONS L6), as on the LGU's paper form.
+# Blank prints an empty line for the name.
+LEAVE_FORM_CERTIFIER = os.environ.get("LEAVE_FORM_CERTIFIER", "")
+LEAVE_FORM_CERTIFIER_TITLE = os.environ.get("LEAVE_FORM_CERTIFIER_TITLE", "Administrative Officer V")
+LEAVE_FORM_MAYOR = os.environ.get("LEAVE_FORM_MAYOR", "")
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

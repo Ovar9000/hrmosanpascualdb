@@ -5,6 +5,7 @@ urlpatterns = [
     path("leave/", board_views.my_leave, name="my_leave"),
     path("leave/new/", board_views.leave_file, name="leave_file"),
     path("leave/days/", board_views.leave_days, name="leave_days"),
+    path("leave/print/blank/", board_views.leave_print_blank, name="leave_print_blank"),
     path("leave/inbox/", board_views.leave_inbox, name="leave_inbox"),
     path("leave/register/", board_views.leave_register, name="leave_register"),
     path("leave/balances/", board_views.leave_balances, name="leave_balances"),

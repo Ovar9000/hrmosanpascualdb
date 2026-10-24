@@ -1,14 +1,15 @@
 {% comment %}Where an application is, like a parcel tracker: pass `req`.{% endcomment %}
-<ol class="leave-steps list-unstyled d-flex flex-wrap gap-1 mb-0 small" aria-label="Approval progress">
-  <li class="badge rounded-pill text-bg-success">✔ Filed</li>
+{# align-items/self keep the pills one line tall when the row around them is taller #}
+<ol class="leave-steps list-unstyled d-flex flex-wrap align-items-center align-self-center gap-1 mb-0 small text-nowrap" aria-label="Approval progress">
+  <li class="badge rounded-pill text-bg-success">✓ Filed</li>
   {% for step in req.steps.all %}
-    {% if step.status == "done" %}<li class="badge rounded-pill text-bg-success" title="{{ step.get_kind_display }}">✔ {{ step.short_label }}</li>
+    {% if step.status == "done" %}<li class="badge rounded-pill text-bg-success" title="{{ step.get_kind_display }}">✓ {{ step.short_label }}</li>
     {% elif step.status == "skipped" %}<li class="badge rounded-pill text-bg-light border text-muted" title="{{ step.note }}">– {{ step.short_label }}</li>
-    {% elif step.status == "disapproved" %}<li class="badge rounded-pill text-bg-danger" title="{{ step.note }}">✖ {{ step.short_label }}</li>
+    {% elif step.status == "disapproved" %}<li class="badge rounded-pill text-bg-danger" title="{{ step.note }}">✕ {{ step.short_label }}</li>
     {% elif req.status == "pending" and req.current_step.pk == step.pk %}<li class="badge rounded-pill text-bg-warning" title="Waiting here">⏳ {{ step.short_label }}</li>
     {% else %}<li class="badge rounded-pill text-bg-light border text-muted">○ {{ step.short_label }}</li>{% endif %}
   {% endfor %}
-  {% if req.status == "approved" %}<li class="badge rounded-pill text-bg-success">✔ Approved</li>
+  {% if req.status == "approved" %}<li class="badge rounded-pill text-bg-success">✓ Approved</li>
   {% elif req.status == "rejected" %}<li class="badge rounded-pill text-bg-danger">Disapproved</li>
   {% elif req.status == "cancelled" %}<li class="badge rounded-pill text-bg-secondary">Cancelled</li>{% endif %}
 </ol>

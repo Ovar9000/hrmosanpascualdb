@@ -172,6 +172,8 @@ def leave_file(request):
                                       "You can follow it here; print the form when you need a signed copy.")
             for warning in warnings:
                 messages.warning(request, warning)
+            if request.POST.get("then") == "print":
+                return redirect(f"{reverse('leave_print', args=[req.pk])}?autoprint=1")
             return redirect("leave_detail", pk=req.pk)
     else:
         start = timezone.localdate() + timedelta(days=7)
@@ -258,16 +260,10 @@ def leave_detail(request, pk):
 
 
 @login_required
-def leave_print(request, pk):
-    """CS Form No. 6 filled in from the application, for wet signatures (F1)."""
-    _no_sysadmin(request)
-    req = get_object_or_404(LeaveRequest.objects.select_related("person", "office"), pk=pk)
-    if not can_view_leave_of(request.user, req.person):
-        raise PermissionDenied("You cannot see this leave application.")
-    steps = {s.kind: s for s in req.steps.select_related("acted_by")}
-    log_audit_event(action=AuditLog.Action.EXPORT, model_name="LeaveRequest", object_id=req.pk,
-                    object_repr=f"CS Form No. 6 print: {req}"[:255], request=request)
-    eng = req.person.engagements.filter(office=req.office).order_by("-start_date").first() if req.office else None
+def _print_form(request, req, steps):
+    """CS Form No. 6 laid out like the LGU's paper form, front and instructions (L6)."""
+    from django.conf import settings
+
     balances = req.certified_balances or {}
     vl = _decimal(balances.get("vl", "")) if balances else None
     sl = _decimal(balances.get("sl", "")) if balances else None
@@ -278,16 +274,49 @@ def leave_print(request, pk):
         less_sl = min(req.days_with_pay, max(sl, Decimal("0")))
         if req.days_with_pay > less_sl:
             less_vl = req.days_with_pay - less_sl
+    types = [(value, label, leave.LEGAL_BASIS.get(value, "")) for value, label in LeaveType.choices
+             if value != LeaveType.OTHER]
     return render(request, "hr/leave_print.html", {
         "req": req,
         "steps": steps,
-        "types": [(value, label) for value, label in LeaveType.choices if value != LeaveType.OTHER],
-        "eng": eng,
-        "show_salary": False,  # salary on the printed form is filled by hand (R6)
+        "types": types,
+        "instructions": [(label, leave.GUIDANCE[value]) for value, label, _basis in types],
         "vl": vl, "sl": sl, "less_vl": less_vl, "less_sl": less_sl,
         "vl_balance": (vl - less_vl) if vl is not None and less_vl is not None else vl,
         "sl_balance": (sl - less_sl) if sl is not None and less_sl is not None else sl,
+        "certifier": settings.LEAVE_FORM_CERTIFIER, "certifier_title": settings.LEAVE_FORM_CERTIFIER_TITLE,
+        "mayor": settings.LEAVE_FORM_MAYOR,
+        "autoprint": request.GET.get("autoprint") == "1",
+        # Salary is left for the employee to write: pay is HRMO and Auditor only, even on one's own record (R6).
     })
+
+
+@login_required
+def leave_print(request, pk):
+    """CS Form No. 6 filled in from the application, for wet signatures (F1)."""
+    _no_sysadmin(request)
+    req = get_object_or_404(LeaveRequest.objects.select_related("person", "office"), pk=pk)
+    if not can_view_leave_of(request.user, req.person):
+        raise PermissionDenied("You cannot see this leave application.")
+    log_audit_event(action=AuditLog.Action.EXPORT, model_name="LeaveRequest", object_id=req.pk,
+                    object_repr=f"CS Form No. 6 print: {req}"[:255], request=request)
+    return _print_form(request, req, {s.kind: s for s in req.steps.select_related("acted_by")})
+
+
+@login_required
+def leave_print_blank(request):
+    """A blank CS Form No. 6 with the employee's name, office and position, to fill in by hand (L6).
+    HRMO can print one for anyone in active service with ?person=<id>."""
+    _no_sysadmin(request)
+    person = _own_person(request.user)
+    if request.GET.get("person", "").isdigit() and can_manage_hr_records(request.user):
+        person = get_object_or_404(Person, pk=int(request.GET["person"]))
+    if person is None:
+        raise PermissionDenied("Your account is not linked to a personnel record. Ask HRMO.")
+    eng = leave.current_engagement(person)
+    blank = LeaveRequest(person=person, office=eng.office if eng else None,
+                         position_title=eng.position_title if eng else "")
+    return _print_form(request, blank, {})
 
 
 @login_required

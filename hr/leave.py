@@ -53,6 +53,24 @@ GUIDANCE = {
     LeaveType.OTHER: "Say what leave this is. HRMO will confirm the rules that apply.",
 }
 
+# The legal basis printed under each type in section 6.A of the 2026 San Pascual form (L6).
+LEGAL_BASIS = {
+    LeaveType.VACATION: "Sec. 51, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.MANDATORY: "Sec. 25, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.SICK: "Sec. 43, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.MATERNITY: "R.A. No. 11210 / IRR issued by CSC, DOLE and SSS",
+    LeaveType.PATERNITY: "R.A. No. 8187 / CSC MC No. 71, s. 1998, as amended",
+    LeaveType.SPECIAL_PRIVILEGE: "Sec. 21, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.SOLO_PARENT: "RA No. 8972 / CSC MC No. 8, s. 2004",
+    LeaveType.STUDY: "Sec. 68, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.VAWC: "RA No. 9262 / CSC MC No. 15, s. 2005",
+    LeaveType.REHABILITATION: "Sec. 55, Rule XVI, Omnibus Rules Implementing E.O. No. 292",
+    LeaveType.SPECIAL_WOMEN: "RA No. 9710 / CSC MC No. 25, s. 2010",
+    LeaveType.CALAMITY: "CSC MC No. 2, s. 2012, as amended",
+    LeaveType.ADOPTION: "R.A. No. 8552",
+    LeaveType.WELLNESS: "CSC MC 01 s. 2026 Policy",
+}
+
 # The section 6.B choices that fit each leave type.
 TRAVEL = [LeaveDetail.WITHIN_PH, LeaveDetail.ABROAD]
 PURPOSE = [LeaveDetail.MONETIZATION, LeaveDetail.TERMINAL]

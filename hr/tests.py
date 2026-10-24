@@ -4961,6 +4961,44 @@ class LeaveWorkflowTestCase(TestCase):
         self.client.force_login(self.sysadmin)
         self.assertEqual(self.client.get("/").status_code, 302)
 
+    def test_file_and_print_opens_the_filled_in_form(self):
+        resp = self._file(self.emp_a_user, then="print")
+        req = LeaveRequest.objects.get(person=self.person_a)
+        self.assertRedirects(resp, f"/leave/{req.pk}/print/?autoprint=1", fetch_redirect_response=False)
+        page = self.client.get(f"/leave/{req.pk}/print/?autoprint=1")
+        self.assertContains(page, "window.print()")
+        self.assertContains(page, "Sec. 51, Rule XVI, Omnibus Rules Implementing E.O. No. 292")  # 6.A legal basis
+        self.assertContains(page, "INSTRUCTIONS AND REQUIREMENTS")
+
+    @override_settings(LEAVE_FORM_MAYOR="Juana Dela Cruz")
+    def test_blank_form_has_the_employees_details_only(self):
+        self.client.force_login(self.emp_a_user)
+        page = self.client.get("/leave/print/blank/")
+        self.assertContains(page, "Rizal")
+        self.assertContains(page, "Executive Assistant IV")
+        self.assertContains(page, "Blank form")
+        self.assertContains(page, "Juana Dela Cruz")
+        self.assertNotContains(page, "✔")  # nothing ticked
+        # HRMO prints one for an employee; others cannot pick a person.
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get(f"/leave/print/blank/?person={self.person_b.pk}"), "Bonifacio")
+        self.client.force_login(self.head_a)
+        self.assertEqual(self.client.get(f"/leave/print/blank/?person={self.person_b.pk}").status_code, 403)
+
+    def test_register_lists_leave_recorded_without_an_office(self):
+        # Leave entered before Step 8 (e.g. by seed_fake) has no office or steps.
+        LeaveRequest.objects.create(person=self.person_a, leave_type="vl", start_date=date(2026, 4, 10),
+                                    end_date=date(2026, 4, 10), days=1, status=LeaveRequest.Status.APPROVED)
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/leave/register/"), self.person_a.full_name)
+
+    def test_menu_has_at_most_six_items(self):
+        for user in (self.superuser, self.hrmo_user, self.auditor_user, self.mayor, self.head_a, self.emp_a_user):
+            self.client.force_login(user)
+            html = self.client.get("/calendar/").content.decode()
+            menu = html.split('<ul class="navbar-nav me-auto">', 1)[1].split('<ul class="navbar-nav">', 1)[0]
+            self.assertLessEqual(menu.count('<li class="nav-item'), 6, user.username)  # dropdown entries are not nav-items
+
 
 class PlantillaVacancyMemoTestCase(TestCase):
     """RP1, V1-V5 and M1-M4: the Plantilla report, vacancies and the HRMPSB, memos with acknowledgment."""

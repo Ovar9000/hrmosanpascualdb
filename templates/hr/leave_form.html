@@ -4,7 +4,8 @@
 {% block content %}
 <div class="mb-3"><a href="{% if for_hrmo %}{% url 'leave_register' %}{% else %}{% url 'my_leave' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
 <h1 class="h3 mb-1">{% if for_hrmo %}Enter a paper leave form{% else %}Application for leave{% endif %}</h1>
-<p class="text-muted small">CS Form No. 6, Revised 2020. {% if for_hrmo %}For an employee who filed on paper: it then follows the same signatures.{% else %}It goes to your office head, then HRMO, then the Mayor; you can follow each step and print the filled-in form for signing.{% endif %}</p>
+<p class="text-muted small">CS Form No. 6, Revised 2020. {% if for_hrmo %}For an employee who filed on paper: it then follows the same signatures.{% else %}Fill it in here and print it filled in for signing. It also goes to your office head, then HRMO, then the Mayor, and you can follow each step.
+  Prefer to write it by hand? <a href="{% url 'leave_print_blank' %}">Print a blank form with your name, office and position</a>.{% endif %}</p>
 
 <div class="row g-3">
   <div class="col-12 col-lg-8">
@@ -65,9 +66,10 @@
           </div>
         </div>
       </div>
-      <div class="card-footer bg-white d-flex gap-2">
-        <button class="btn btn-primary" type="submit">File application</button>
-        <span class="small text-muted align-self-center">Nothing is deducted until the Mayor approves it.</span>
+      <div class="card-footer bg-white d-flex flex-wrap gap-2 align-items-center">
+        <button class="btn btn-primary" type="submit" name="then" value="print">File and print the form</button>
+        <button class="btn btn-outline-primary" type="submit">File only</button>
+        <span class="small text-muted">Prints CS Form No. 6 filled in, ready to sign. Nothing is deducted until the Mayor approves it.</span>
       </div>
     </form>
   </div>
