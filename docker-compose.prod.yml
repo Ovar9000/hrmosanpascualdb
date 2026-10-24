@@ -1,0 +1,127 @@
+# Server stack for a single VPS (DigitalOcean droplet, README "Run it on a DigitalOcean droplet").
+#   db      - PostgreSQL. Not reachable from outside the server.
+#   migrate - one-shot: creates/updates the hr_app role, migrates, runs the salary check, exits.
+#             The only service that gets the owner password (DECISIONS H2).
+#   web     - gunicorn from the Docker image (H6), connected as the restricted app role.
+#   caddy   - the only public service: HTTPS certificates and reverse proxy to web.
+# Run with:  docker compose -f docker-compose.prod.yml up -d --build
+# Values come from .env on the server (scripts/vps_make_env.sh writes one).
+
+x-django-env: &django-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set in .env}
+  DJANGO_DEBUG: "0"
+  DJANGO_HTTPS: "1"
+  DJANGO_ALLOWED_HOSTS: ${SITE_ADDRESS:?set in .env}
+  DJANGO_CSRF_TRUSTED_ORIGINS: https://${SITE_ADDRESS}
+  # Caddy's fixed address below, and nothing else (DECISIONS H8). Caddy replaces any
+  # X-Forwarded-For sent by the visitor with the visitor's own address.
+  TRUSTED_PROXIES: 172.30.0.10
+  CLIENT_IP_HEADER: ""
+  PROTOTYPE_FAKE_DATA_ONLY: ${PROTOTYPE_FAKE_DATA_ONLY:-1}
+  MIN_EMPLOYEE_AGE: ${MIN_EMPLOYEE_AGE:-18}
+  MAX_EMPLOYEE_AGE: ${MAX_EMPLOYEE_AGE:-90}
+  ONE_TIME_PASSWORD_DAYS: ${ONE_TIME_PASSWORD_DAYS:-14}
+  SALARY_TRACKING_START: ${SALARY_TRACKING_START:-2026-10-01}
+  SALARY_LOOKAHEAD_DAYS: ${SALARY_LOOKAHEAD_DAYS:-90}
+  RENEWAL_LOOKAHEAD_DAYS: ${RENEWAL_LOOKAHEAD_DAYS:-45}
+  LEAVE_APPROVAL_STEPS: ${LEAVE_APPROVAL_STEPS:-recommend,certify,approve}
+  LEAVE_FORM_CERTIFIER: ${LEAVE_FORM_CERTIFIER:-}
+  LEAVE_FORM_CERTIFIER_TITLE: ${LEAVE_FORM_CERTIFIER_TITLE:-Administrative Officer V}
+  LEAVE_FORM_MAYOR: ${LEAVE_FORM_MAYOR:-}
+  MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-5242880}
+  DB_HOST: db
+  DB_NAME: ${POSTGRES_DB:?set in .env}
+
+x-django-app: &django-app
+  build: .
+  image: sanpascual-hr:latest
+  volumes:
+    - media:/data/media
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    <<: *django-app
+    restart: "no"
+    environment:
+      <<: *django-env
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+    command: python manage.py prepare_database
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *django-app
+    restart: unless-stopped
+    environment:
+      <<: *django-env
+      DB_USER: ${APP_DB_USER}
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+      PORT: "8000"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-3}
+    # No ports: only Caddy reaches it, over the internal network.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      default:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      web:
+        condition: service_healthy
+
+networks:
+  default:
+    ipam:
+      config:
+        # Other containers get addresses from ip_range, so none can take Caddy's.
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:
+  caddy_config:

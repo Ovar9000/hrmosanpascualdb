@@ -240,9 +240,9 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 ---
 
-## Hosted review demo (Railway, Oct–Nov 2026)
+## Hosted review demo (DigitalOcean or Railway, Oct–Nov 2026)
 
-A copy of the prototype runs on Railway so the HRMO officer can explore it and give feedback. Fake data only. Setup steps: README "Run it on Railway (review demo)".
+A copy of the prototype runs on a hosted server so the HRMO officer can explore it and give feedback. Fake data only. Setup steps: README "Run it on a DigitalOcean droplet (review demo)" (or "Run it on Railway").
 
 | # | Decision | Survey? |
 |---|---|---|
@@ -252,6 +252,8 @@ A copy of the prototype runs on Railway so the HRMO officer can explore it and g
 | H4 | **Demo accounts on the review server.** `create_demo_users` and `seed_demo_calendar` refuse to run unless DEBUG is on, to keep known demo usernames off real servers. For the review they are run once with `DJANGO_DEBUG=1` set for that command only (`scripts/railway_demo_setup.sh`); the website itself keeps `DJANGO_DEBUG=0`. Covered by the H3 end date. | No |
 | H5 | **Client IP behind Railway's edge.** Railway documents `X-Real-IP` as the client address and `X-Forwarded-Proto` as always `https`, but publishes no proxy address range; its edge has been observed connecting from `100.0.0.0/8`, and `X-Forwarded-For` can end in a CDN hop. So the review uses `TRUSTED_PROXIES=100.0.0.0/8` with the new `CLIENT_IP_HEADER=X-Real-IP` setting: the header is read only from a trusted proxy, otherwise the existing right-to-left `X-Forwarded-For` walk applies (U5). Must be checked after deploy: the audit log has to show the visitor's public IP, not a `100.x` address, or all users share one lockout counter. *Proven by* `HostedDeploymentTestCase.test_client_ip_header_from_trusted_proxy_only`. | No |
 | H6 | **Production server in the Docker image.** The image now runs gunicorn on `$PORT`, collects static files at build time and serves them with WhiteNoise (no reverse proxy needed). `docker-compose.yml` still runs `runserver` for development. `/healthz/` answers Railway's health probe before the host check and HTTPS redirect, and returns 503 if the database is unreachable. The container starts as root only so `docker/entrypoint.sh` can give the root-owned volume at `/data/media` to the `app` user, then drops to `app`. *Proven by* `HostedDeploymentTestCase`. | No |
+| H7 | **Host: a DigitalOcean droplet instead of Railway.** Decided 2026-10-24: Railway did not accept the developer's payment method. One $12/month droplet (2 GB, Singapore, Ubuntu 24.04) runs `docker-compose.prod.yml`: PostgreSQL, the one-shot `migrate` service (same split as H2: only it gets the owner password), gunicorn `web` and Caddy for HTTPS. Only ports 22, 80 and 443 are open; SSH is key-only. Nightly `pg_dump` plus uploads archive on the droplet (`scripts/vps_backup.sh`), with DigitalOcean droplet backups for losing the droplet itself. Unlike Railway, OS updates and backups are the developer's job. H3 and H4 apply unchanged: **destroy the droplet on 2026-11-13.** Still not the production hosting decision (Go-Live Checklist item 8). | No |
+| H8 | **Client IP behind Caddy on the droplet.** The compose network has the fixed subnet `172.30.0.0/24`, Caddy the fixed address `172.30.0.10` (other containers draw from `172.30.0.128/25`), and `web` publishes no port, so every request reaches it from Caddy; `TRUSTED_PROXIES=172.30.0.10` only (not the subnet, which includes the Docker gateway), no `CLIENT_IP_HEADER`. Caddy (no `trusted_proxies` configured) discards a visitor's own `X-Forwarded-For` and sends just the visitor's address, which the U5 right-to-left walk then picks. Must be checked after deploy the same way as H5: the audit log shows the visitor's public IP, not `172.30.0.x`. | No |
 
 ---
 
