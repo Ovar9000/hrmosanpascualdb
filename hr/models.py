@@ -539,6 +539,8 @@ class LeaveType(models.TextChoices):
     CALAMITY = "calamity", "Special emergency (calamity) leave"
     ADOPTION = "adoption", "Adoption leave"
     WELLNESS = "wellness", "Wellness leave"
+    # Not on the form's list: printed under "Others" (DECISIONS CT4).
+    CTO = "cto", "Compensatory time-off (CTO)"
     OTHER = "other", "Other"
 
 
@@ -1515,6 +1517,9 @@ class PdsTraining(models.Model):
     hours = models.PositiveIntegerField("Number of hours", null=True, blank=True)
     kind = models.CharField("Type of L&D", max_length=20, choices=Kind.choices, blank=True)
     sponsor = models.CharField("Conducted/sponsored by", max_length=255, blank=True)
+    # Recorded by HRMO for everyone who attended (LD2): read-only to the employee, and not a change
+    # they must send for verification.
+    by_hrmo = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-date_from", "pk"]
@@ -1566,6 +1571,119 @@ class PdsSubmission(models.Model):
 
     def __str__(self):
         return f"PDS of {self.person} submitted {self.submitted_at:%Y-%m-%d}"
+
+
+# --- Performance ratings, SPMS (DECISIONS SP1-SP5) ------------------------------------------
+
+
+class PerformanceRating(models.Model):
+    """One person's final IPCR rating for one semester."""
+
+    class Semester(models.IntegerChoices):
+        FIRST = 1, "January to June"
+        SECOND = 2, "July to December"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="ratings")
+    year = models.PositiveSmallIntegerField()
+    semester = models.PositiveSmallIntegerField(choices=Semester.choices)
+    rating = models.DecimalField("Final rating", max_digits=4, decimal_places=3)
+    office = models.ForeignKey(Office, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+                               help_text="Where the person was rated.")
+    notes = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-year", "-semester"]
+        constraints = [
+            models.UniqueConstraint(fields=["person", "year", "semester"], name="rating_one_per_period"),
+            models.CheckConstraint(condition=Q(rating__gte=1) & Q(rating__lte=5), name="rating_1_to_5",
+                                   violation_error_message="A rating is from 1.000 to 5.000."),
+        ]
+
+    def __str__(self):
+        return f"{self.person} {self.year}-{self.semester}: {self.rating}"
+
+    @property
+    def adjectival(self):
+        from .spms import adjectival
+
+        return adjectival(self.rating)
+
+
+# --- SALN filing (DECISIONS SN1-SN4) ----------------------------------------------------------
+
+
+class SalnFiling(models.Model):
+    """Whether a person filed their Statement of Assets, Liabilities and Net Worth for a year.
+    Only the filing is tracked; the SALN itself stays on paper with HRMO."""
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="saln_filings")
+    year = models.PositiveSmallIntegerField(help_text="The year covered (assets as of December 31).")
+    reported_at = models.DateTimeField(null=True, blank=True, help_text="When the person said they submitted it.")
+    received_on = models.DateField(null=True, blank=True, help_text="When HRMO received it.")
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-year"]
+        constraints = [models.UniqueConstraint(fields=["person", "year"], name="saln_one_per_year")]
+
+    def __str__(self):
+        return f"SALN {self.year} of {self.person}"
+
+
+# --- Compensatory overtime credits (DECISIONS CT1-CT5) ----------------------------------------
+
+
+class CocEntry(models.Model):
+    """Hours of compensatory overtime credit earned (positive) or used as CTO (negative)."""
+
+    class Kind(models.TextChoices):
+        EARNED = "earned", "Earned"
+        USED = "used", "Used as CTO"
+
+    class DayKind(models.TextChoices):
+        WORKDAY = "workday", "Working day (after office hours)"
+        RESTDAY = "restday", "Weekend, holiday or day off"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="coc_entries")
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    date = models.DateField(help_text="Day worked, or first day of the CTO.")
+    hours_worked = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    day_kind = models.CharField(max_length=10, choices=DayKind.choices, blank=True)
+    hours = models.DecimalField("COC hours", max_digits=6, decimal_places=2)
+    expires_on = models.DateField(null=True, blank=True)
+    reference = models.CharField(max_length=100, blank=True, help_text="Office order or certificate of COC no.")
+    leave_request = models.ForeignKey(LeaveRequest, null=True, blank=True, on_delete=models.PROTECT,
+                                      related_name="coc_entries")
+    void = models.BooleanField(default=False, help_text="CTO cancelled: the hours count again.")
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(kind="earned", hours__gt=0, expires_on__isnull=False)
+                           | Q(kind="used", hours__lt=0, leave_request__isnull=False)),
+                name="coc_entry_shape",
+                violation_error_message="Earned hours are positive with an expiry; used hours are negative with a CTO.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} {self.hours} h, {self.person}"
+
+
 # --- User Profile -----------------------------------------------------------
 
 

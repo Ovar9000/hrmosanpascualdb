@@ -133,13 +133,15 @@ def pds_overview(request, pk):
     })
 
 
-def _formset(person, section, data=None):
+def _formset(person, section, data=None, hide_hrmo=False):
     editor = EDITORS[section][1]
     if editor is None:
         return None
     form_class, extra, most = editor
     model = form_class._meta.model
     queryset = model.objects.filter(person=person)
+    if hide_hrmo:  # trainings HRMO recorded are shown read-only to the employee (LD2)
+        queryset = queryset.filter(by_hrmo=False)
     count = queryset.count()
     # References always show three rows; other tables one blank row (more with "Add a row").
     blank = max(extra - count, 0) if section == "references" else extra
@@ -158,9 +160,10 @@ def pds_section(request, pk, section):
     # The profile row is made on the first save, so opening a page changes nothing.
     profile = pds.profile_for(person, create=request.method == "POST") if form_class else None
     form = formset = None
+    hide_hrmo = section == "training" and not can_verify_pds(request.user)
     if request.method == "POST":
         form = form_class(request.POST, instance=profile) if form_class else None
-        formset = _formset(person, section, request.POST)
+        formset = _formset(person, section, request.POST, hide_hrmo)
         if (form is None or form.is_valid()) and (formset is None or formset.is_valid()):
             stale = False
             with transaction.atomic():
@@ -188,7 +191,7 @@ def pds_section(request, pk, section):
                 return redirect("pds_overview", pk=pk)
     else:
         form = form_class(instance=profile) if form_class else None
-        formset = _formset(person, section)
+        formset = _formset(person, section, hide_hrmo=hide_hrmo)
     index = pds.SECTION_KEYS.index(section)
     return render(request, "hr/pds_section.html", {
         "person": person, "section": section, "title": pds.TITLES[section], "intro": intro,
@@ -203,6 +206,7 @@ def pds_section(request, pk, section):
                   if form is not None else [],
         "next_title": pds.TITLES[pds.SECTION_KEYS[index + 1]] if index + 1 < len(pds.SECTION_KEYS) else None,
         "lgu_work": pds.lgu_work_rows(person, can_view_pay(request.user)) if section == "work" else None,
+        "hrmo_trainings": person.pds_training.filter(by_hrmo=True) if hide_hrmo else None,
         "steps": [(key, pds.TITLES[key]) for key in pds.SECTION_KEYS],
     })
 

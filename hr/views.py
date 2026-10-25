@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views.decorators.http import require_POST
-from . import meetings, orgchart, reminders, salary_actions
+from . import meetings, orgchart, reminders, salary_actions, spms
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -58,6 +58,7 @@ from .permissions import (
     can_manage_certificate_requests,
     can_view_certificate_requests,
     can_view_pds,
+    can_view_ratings,
     can_manage_hr_records,
     can_manage_projects,
     can_manage_salary_actions,
@@ -600,6 +601,7 @@ def person_detail(request, pk):
             "can_manage_records": can_manage_hr_records(request.user),
             "salary": _person_salary_summary(request.user, person),
             "pds": can_view_pds(request.user, person),
+            "ratings": person.ratings.all()[:6] if can_view_ratings(request.user, person) else None,
             "certificates": {
                 "view": True,
                 "manage": can_manage_certificate_requests(request.user),
@@ -1339,6 +1341,7 @@ def salary_action_detail(request, pk):
                 note = request.POST.get("note", "").strip()
                 if action == "start_review":
                     salary_actions.start_review(locked)
+                    spms.prefill_checklist(locked, today)  # SP3
                 elif action == "checklist":
                     salary_actions.save_checklist(locked, set(request.POST.getlist("check")))
                 elif action == "signature":
@@ -1378,6 +1381,7 @@ def salary_action_detail(request, pk):
             "case": case,
             "can_manage": can_manage,
             "checklist": salary_actions.checklist_items(case),
+            "ratings": spms.case_coverage(case, today),
             "engagements": case.person.engagements.select_related("office").order_by("-start_date"),
             "interruptions": case.person.service_interruptions.all(),
             "interruption_form": ServiceInterruptionForm(),

@@ -467,3 +467,34 @@ def can_verify_pds(user):
 
 def can_view_pds_queue(user):
     return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))
+
+
+# --- Performance ratings and SALN filing (DECISIONS SP5, SN3) ---------------------------------
+
+
+def can_view_ratings(user, person):
+    """A person's SPMS ratings: the person, HRMO, Auditor, the Executive (who approves the office
+    ratings) and the Office Head of their office, who rated them."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    if is_self(user, person):
+        return True
+    if _no_hr_access(user):
+        return False
+    if user.is_superuser or is_hrmo(user) or is_auditor(user) or is_executive(user):
+        return True
+    office = get_user_office(user)
+    return bool(is_office_head(user) and office and person.engagements.filter(
+        office=office, status=Engagement.Status.ACTIVE).exists())
+
+
+def saln_scope(user):
+    """Whose SALN filing the user may see: None for everyone (HRMO, Auditor), an office for an
+    Office Head (own office only), or False. Only whether it was filed, never the SALN itself."""
+    if _no_hr_access(user):
+        return False
+    if user.is_superuser or is_hrmo(user) or is_auditor(user):
+        return None
+    if is_office_head(user):
+        return get_user_office(user) or False
+    return False

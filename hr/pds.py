@@ -41,7 +41,7 @@ LISTS = {
     "work": (PdsWorkExperience, ["date_from", "date_to", "position", "employer", "monthly_salary", "grade_step",
                                  "appointment_status", "government"]),
     "voluntary": (PdsVoluntaryWork, ["organization", "date_from", "date_to", "hours", "position"]),
-    "training": (PdsTraining, ["title", "date_from", "date_to", "hours", "kind", "sponsor"]),
+    "training": (PdsTraining, ["title", "date_from", "date_to", "hours", "kind", "sponsor", "by_hrmo"]),
     "references": (PdsReference, ["name", "address", "telephone"]),
 }
 
@@ -141,7 +141,9 @@ def snapshot(person):
 def _section_data(snap, key):
     _key, _title, _required, fields, lists = next(s for s in SECTIONS if s[0] == key)
     profile = snap.get("profile", {})
-    return {"fields": {f: profile.get(f) for f in fields}, **{name: snap.get(name, []) for name in lists}}
+    # Trainings HRMO recorded are HRMO's own data, not a change to send for verification (LD2).
+    return {"fields": {f: profile.get(f) for f in fields},
+            **{name: [r for r in snap.get(name, []) if not r.get("by_hrmo")] for name in lists}}
 
 
 def changed_sections(old, new):

@@ -150,6 +150,29 @@ SERVICE_RECORD_EXCLUDED_TYPES = [
 CERTIFICATE_SIGNATORY = os.environ.get("CERTIFICATE_SIGNATORY", "")
 CERTIFICATE_SIGNATORY_TITLE = os.environ.get("CERTIFICATE_SIGNATORY_TITLE", "Municipal Human Resource Management Officer")
 
+
+def _types(name, default):
+    return [s.strip() for s in os.environ.get(name, default).split(",") if s.strip()]
+
+
+# Licences from the PDS that expire within this many days are listed (DECISIONS EL1).
+LICENCE_LOOKAHEAD_DAYS = int(os.environ.get("LICENCE_LOOKAHEAD_DAYS", "90"))
+# Learning and development hours each person should reach in a year; 0 shows hours without a target (LD3).
+LD_TARGET_HOURS = int(os.environ.get("LD_TARGET_HOURS", "0"))
+# Appointment types rated every semester under SPMS (SP1); JO and COS are not employees.
+SPMS_RATED_TYPES = _types("SPMS_RATED_TYPES", "plantilla,casual,contractual")
+# Appointment types that file a SALN every year (SN1). RA 6713 exempts casual and temporary workers.
+SALN_COVERED_TYPES = _types("SALN_COVERED_TYPES", "plantilla,elected")
+# The first year whose SALN is tracked here (earlier ones were filed on paper): no reminders before it.
+SALN_FIRST_YEAR = int(os.environ.get("SALN_FIRST_YEAR", "2026"))
+# Compensatory overtime credits (CT1-CT3): hours credited per hour worked, caps, and how long they last.
+COC_EXCLUDED_TYPES = _types("COC_EXCLUDED_TYPES", "jo,cos")
+COC_WORKDAY_RATE = os.environ.get("COC_WORKDAY_RATE", "1.0")
+COC_RESTDAY_RATE = os.environ.get("COC_RESTDAY_RATE", "1.5")
+COC_MONTHLY_CAP = int(os.environ.get("COC_MONTHLY_CAP", "40"))
+COC_BALANCE_CAP = int(os.environ.get("COC_BALANCE_CAP", "120"))
+COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
+
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.
 AXES_FAILURE_LIMIT = 5

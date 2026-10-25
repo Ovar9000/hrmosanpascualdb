@@ -221,6 +221,52 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | PD5 | **Who sees it:** the person, HRMO and Auditor only. Family details, health data and the answers to questions 34-40 (offenses, disability, indigenous group, solo parent) are sensitive personal information under RA 10173; Office Heads, Executives, Office Staff and System Admin see none of it, not even whether one exists. Only the person and HRMO edit; only HRMO verifies. *Proven by* `PersonalDataSheetTestCase`. | No |
 | PD6 | **Audit:** every save is logged like other records, but the government ID and license numbers, the details of questions 34-40 and the frozen copy are stored as `[REDACTED]` in the audit trail (`SENSITIVE_AUDIT_FIELDS`). Printing is logged as `EXPORT`. ID and license numbers must be fake (start with `00`), in the form and in the database (D1). | No |
 | PD7 | **Printout:** CS Form No. 212 on four legal pages, filled in, with boxes for signature, photo, thumbmark and the oath; the header says whether HRMO has verified the current content. The signed and sworn paper is the record (F1). | Maybe |
+
+## Licences and eligibility
+
+| # | Decision | Survey? |
+|---|---|---|
+| EL1 | **Licence expiry tracker** (`/tracker/licences/`, HRMO and Auditor): the eligibility rows on the PDS of people in active service that have a validity date, listing those expired or expiring within `LICENCE_LOOKAHEAD_DAYS` (default 90) first, with whether the person's PDS is verified. HRMO's home page counts them; an employee sees their own expiring licence as a reminder linked to the PDS eligibility section. Excel export. *Proven by* `TalentTrackersTestCase`. | Maybe |
+| EL2 | **Eligibility search:** the same page finds everyone in active service who lists an eligibility or license number ("Professional", "Nurse"), for qualification standards and staffing questions. It reads what employees entered; the PDS-verified flag says whether HRMO checked it. | No |
+| EL3 | **Applicants:** "I'm interested" pre-ticks PDS (a verified PDS on file), Rating (a rating on file) and Eligibility (any eligibility on the PDS); HRMO can untick them. HRMO, the Auditor and the Executive see, under each employee-applicant, their highest education, eligibilities, training hours in 5 years, years of work (PDS plus appointments, overlaps counted once) and last two ratings. An eligibility whose distinctive words all appear in the vacancy's eligibility requirement is marked as a possible match, a hint only: "meets QS" stays HRMO's decision. *Proven by* `TalentTrackersTestCase`. | Maybe |
+
+## Learning and development
+
+| # | Decision | Survey? |
+|---|---|---|
+| LD1 | **Training hours** (`/tracker/learning/`, HRMO and Auditor): hours and trainings per person in active service for a year (by start date), from section VII of the PDS, with totals and the people without any training. Excel export. | No |
+| LD2 | **One training for many people:** HRMO records a training once and ticks everyone who attended; each gets a PDS training row marked as recorded by HRMO. The employee sees those rows read-only, and they are not a change the employee must send for verification (they are left out of the PDS comparison, PD4). *Proven by* `TalentTrackersTestCase`. | No |
+| LD3 | **Target:** `LD_TARGET_HOURS` (default 0, off) marks people below the LGU's yearly target, once HRMO confirms one; with no target, people with no training that year are marked. | **Likely** (the LGU's L&D policy) |
+
+## Performance ratings (SPMS)
+
+| # | Decision | Survey? |
+|---|---|---|
+| SP1 | **One final IPCR rating per person per semester** (January-June, July-December), 1.000 to 5.000, for appointment types in `SPMS_RATED_TYPES` (default plantilla, casual, contractual; JO and COS are not employees). The office is stored with the rating. Audit-logged. | **Likely** (confirm rating periods) |
+| SP2 | **Adjectival rating** from the final rating: 4.500 and up Outstanding, 3.500 Very Satisfactory, 2.500 Satisfactory, 1.500 Unsatisfactory, below that Poor (`spms.BANDS`). | **Likely** (confirm the LGU's approved SPMS ranges) |
+| SP3 | **Used elsewhere:** starting a step increment or loyalty review ticks "ratings at least Satisfactory" only when every semester of the counted service up to the due date (or today) has a rating and none is below Satisfactory; the case page lists the ratings and says which semesters are missing. HRMO can still untick it. Applicants: see EL3. *Proven by* `TalentTrackersTestCase`. | No |
+| SP4 | **Entry and tracking** (`/tracker/ratings/`): completion per office for a semester; HRMO types an office's ratings into one sheet (blank = not rated; clearing a rating removes it; one bad value saves nothing). HRMO's home page counts people without a rating for the last semester once it is more than 30 days over. Excel export. | Maybe |
+| SP5 | **Who sees ratings:** the person, HRMO, Auditor, Executive, and the Office Head of the person's office (shown on the person's record). Office Staff and other offices' heads do not. *Proven by* `TalentTrackersTestCase`. | Maybe |
+
+## SALN filing
+
+| # | Decision | Survey? |
+|---|---|---|
+| SN1 | **Who files:** people in active service with an appointment type in `SALN_COVERED_TYPES` (default plantilla and elected; RA 6713 exempts casual and temporary workers). Only whether and when each filed is tracked, never the SALN's contents. | **Likely** (confirm who HRMO collects SALNs from) |
+| SN2 | **Like memo acknowledgments:** from 60 days before April 30 the employee's home page reminds them (overdue after); they press **I have submitted my SALN** on **People → My SALN**, and HRMO marks it **received** (with the date) from the tracker, many at once. A SALN received after April 30 is marked late. *Proven by* `TalentTrackersTestCase`. | Maybe |
+| SN3 | **Who sees the tracker:** HRMO (edits) and Auditor for everyone; an Office Head for their own office, read-only. HRMO's home page counts people who have not filed from 30 days before the deadline. Excel export. | Maybe |
+| SN4 | **Start:** `SALN_FIRST_YEAR` (default 2026) is the first year tracked here, so nobody is reminded about SALNs filed on paper before go-live. A SALN is as of December 31, so it can be marked submitted from January 1 of the next year. Filing on first appointment and on separation (within 30 days) is not tracked yet. | No |
+
+## Overtime credits and CTO
+
+| # | Decision | Survey? |
+|---|---|---|
+| CT1 | **Compensatory overtime credits (COC)** in hours (`CocEntry`), under CSC-DBM Joint Circular No. 2, s. 2004: HRMO credits overtime covered by an office order for everyone who worked it, at `COC_WORKDAY_RATE` (1.0) per hour on working days and `COC_RESTDAY_RATE` (1.5) on weekends, holidays and days off. JO and COS (`COC_EXCLUDED_TYPES`) earn none. | **Likely** (confirm the LGU applies the Joint Circular) |
+| CT2 | **Caps:** credit stops at `COC_MONTHLY_CAP` (40) hours a month and `COC_BALANCE_CAP` (120) hours in all; HRMO is told whose hours were not credited and how many. | **Likely** |
+| CT3 | **Expiry:** each credit lasts `COC_VALID_MONTHS` (12) from the day worked; CTO uses the credit that expires first. The employee's home page warns 30 days before hours expire; My leave shows the balance and the next expiry. | **Likely** (confirm the validity period) |
+| CT4 | **CTO is filed as leave** (type "Compensatory time-off", printed under "Others" on CS Form No. 6) and follows the same approval chain. Hours on hold while it is signed; on approval the days with pay times 8 hours are used; cancelling approved CTO marks the use void so the hours count again (the ledger is never edited). Not enough credit is a warning, as for other leave. *Proven by* `TalentTrackersTestCase`. | Maybe |
+| CT5 | **Who sees it:** the COC card (`/leave/coc/<person>/`) has the same audience as the leave card (L, R4); only HRMO credits overtime. | No |
+
 ## Import / export
 
 | # | Decision | Survey? |
@@ -381,5 +427,6 @@ The system currently runs in a prototype profile with synthetic test data. Prior
 - **Step 8b:** Bulletin board online: vacancies and HRMPSB (V1-V5), memos with acknowledgment (M1-M4). *(Done)*
 - **Step 8c:** Service records and certificates of employment, requested online or at the counter, for current and former employees (CR1-CR6). *(Done)*
 - **Step 8d:** Personal Data Sheet online: sections filled in by the employee or encoded by HRMO, verified by HRMO, printed as CS Form No. 212 (PD1-PD7). *(Done)*
+- **Step 8e:** Licences and eligibility, training hours, SPMS ratings, SALN filing, and overtime credits with CTO (EL1-EL3, LD1-LD3, SP1-SP5, SN1-SN4, CT1-CT5). *(Done)*
 - **Step 9:** Excel import/export (configurable columns, row-by-row error report).
 - **Step 10:** Mobile employee self-service (my profile, leave filing, one-time passwords).

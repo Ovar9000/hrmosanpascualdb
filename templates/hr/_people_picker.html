@@ -1,0 +1,38 @@
+{% comment %}Tick people in active service, grouped by office, with a search box. Pass people (engagements) and ticked (ids as strings).{% endcomment %}
+<fieldset class="form-section">
+  <legend class="form-section-title">{{ picker_title }} <span class="form-section-hint" id="picked-count">{{ ticked|length }} ticked</span></legend>
+  {% if errors.people %}<div class="alert alert-danger py-2 small">{{ errors.people }}</div>{% endif %}
+  <div class="row g-2 mb-2">
+    <div class="col-sm-8"><input type="search" class="form-control" id="picker-search" placeholder="Search by name or office" aria-label="Search people"></div>
+    <div class="col-sm-4 d-flex gap-2"><button type="button" class="btn btn-outline-secondary flex-fill" id="picker-all">Tick shown</button><button type="button" class="btn btn-outline-secondary flex-fill" id="picker-none">Clear</button></div>
+  </div>
+  <div class="bg-white border rounded" style="max-height: 22rem; overflow-y: auto;">
+    {% regroup people by office as groups %}
+    {% for group in groups %}
+      <div class="picker-group">
+        <div class="px-3 py-1 small fw-semibold bg-light border-bottom sticky-top">{{ group.grouper.name }}</div>
+        {% for eng in group.list %}
+          <label class="d-flex align-items-center gap-2 px-3 py-1 border-bottom small picker-row" data-search="{{ eng.person.full_name|lower }} {{ group.grouper.name|lower }} {{ group.grouper.acronym|lower }}">
+            <input type="checkbox" class="form-check-input mt-0" name="person" value="{{ eng.person_id }}"{% if eng.person_id|stringformat:"s" in ticked %} checked{% endif %}>
+            <span class="flex-grow-1">{{ eng.person.full_name }}</span><span class="text-muted">{{ eng.position_title }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+</fieldset>
+<script>
+(function () {
+  var search = document.getElementById("picker-search"), count = document.getElementById("picked-count");
+  var rows = Array.prototype.slice.call(document.querySelectorAll(".picker-row"));
+  function recount() { count.textContent = document.querySelectorAll('.picker-row input:checked').length + " ticked"; }
+  search.addEventListener("input", function () {
+    var q = search.value.trim().toLowerCase();
+    rows.forEach(function (r) { r.classList.toggle("d-none", q && r.dataset.search.indexOf(q) === -1); });
+    document.querySelectorAll(".picker-group").forEach(function (g) { g.classList.toggle("d-none", !g.querySelector(".picker-row:not(.d-none)")); });
+  });
+  document.getElementById("picker-all").addEventListener("click", function () { rows.forEach(function (r) { if (!r.classList.contains("d-none")) r.querySelector("input").checked = true; }); recount(); });
+  document.getElementById("picker-none").addEventListener("click", function () { rows.forEach(function (r) { r.querySelector("input").checked = false; }); recount(); });
+  rows.forEach(function (r) { r.querySelector("input").addEventListener("change", recount); });
+})();
+</script>

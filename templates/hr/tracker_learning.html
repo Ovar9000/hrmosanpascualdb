@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Training hours {{ year }}{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">Learning and development hours, {{ year }}</h1>
+    <div class="text-muted small">Trainings on each person's Personal Data Sheet that started in {{ year }}, including those HRMO recorded for everyone who attended.{% if target %} The LGU's target is {{ target }} hours a year.{% endif %}</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'learning_record' %}">+ Record a training</a>{% endif %}
+    <a class="btn btn-sm btn-outline-primary" href="?{{ export_qs }}">Export to Excel</a>
+  </div>
+</div>
+
+<div class="row g-2 text-center mb-3">
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">People</div><div class="h4 mb-0">{{ rows|length }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Total hours</div><div class="h4 mb-0">{{ total }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Average per person</div><div class="h4 mb-0">{{ average }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">{% if target %}Below {{ target }} hours{% else %}No training yet{% endif %}</div><div class="h4 mb-0 {% if short %}text-danger{% endif %}">{{ short }}</div></div></div></div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-6 col-md-2">
+    <label class="form-label small mb-0" for="year">Year</label>
+    <select class="form-select form-select-sm" name="year" id="year">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select>
+  </div>
+  <div class="col-12 col-md-5">
+    <label class="form-label small mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" name="office" id="office">
+      <option value="">All offices</option>
+      {% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+</form>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Person</th><th>Office</th><th class="text-end">Trainings</th><th class="text-end">Hours</th><th>Last training</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td><a href="{% url 'pds_overview' r.person.pk %}" class="text-decoration-none">{{ r.person.full_name }}</a></td>
+            <td>{{ r.office.acronym|default:r.office.name|default:"—" }}</td>
+            <td class="text-end">{{ r.count }}</td>
+            <td class="text-end fw-semibold{% if r.short %} text-danger{% endif %}">{{ r.hours }}</td>
+            <td>{{ r.last|date:"M d, Y"|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">Nobody in active service here.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

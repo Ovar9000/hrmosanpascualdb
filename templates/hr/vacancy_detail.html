@@ -96,6 +96,19 @@
             <td>{{ a.remarks }}</td>
             {% if can_manage %}<td><a href="{% url 'applicant_edit' a.pk %}">Edit</a></td>{% endif %}
           </tr>
+          {% if a.evidence %}{% with ev=a.evidence %}
+          <tr class="table-light">
+            <td></td>
+            <td colspan="{% if can_manage %}9{% else %}8{% endif %}" class="text-muted">
+              <span class="fw-semibold text-body">On record{% if not ev.verified %} (PDS not yet verified){% endif %}:</span>
+              {% if ev.education %}{{ ev.education.get_level_display }}{% if ev.education.degree %}, {{ ev.education.degree }}{% endif %}{% if ev.education.year_graduated %} ({{ ev.education.year_graduated }}){% endif %}{% else %}no education listed{% endif %}
+              · {% for name in ev.eligibilities %}{% if name in ev.matches %}<span class="badge text-bg-success" title="Matches the eligibility asked for; HRMO decides"><span class="mk mk-check" aria-hidden="true"></span>{{ name }}</span>{% else %}{{ name }}{% endif %}{% if not forloop.last %}, {% endif %}{% empty %}no eligibility listed{% endfor %}
+              · {{ ev.training_hours }} training hours in 5 years · {{ ev.experience }} years of work
+              · {% for r in ev.ratings %}{{ r.rating }} {{ r.adjectival }} ({% if r.semester == 1 %}Jan–Jun{% else %}Jul–Dec{% endif %} {{ r.year }}){% if not forloop.last %}, {% endif %}{% empty %}no rating on file{% endfor %}
+              <a href="{% url 'pds_overview' a.person_id %}" class="ms-1">PDS</a>
+            </td>
+          </tr>
+          {% endwith %}{% endif %}
         {% empty %}<tr><td colspan="10" class="text-muted">No applicants yet.</td></tr>{% endfor %}
       </tbody>
     </table>

@@ -1,7 +1,16 @@
 from django.urls import path
-from . import board_views, certificate_views, pds_views, views
+from . import board_views, certificate_views, pds_views, tracker_views, views
 
 urlpatterns = [
+    path("tracker/licences/", tracker_views.tracker_licences, name="tracker_licences"),
+    path("tracker/learning/", tracker_views.tracker_learning, name="tracker_learning"),
+    path("tracker/learning/record/", tracker_views.learning_record, name="learning_record"),
+    path("tracker/ratings/", tracker_views.tracker_ratings, name="tracker_ratings"),
+    path("tracker/ratings/<int:office_pk>/", tracker_views.ratings_office, name="ratings_office"),
+    path("tracker/saln/", tracker_views.tracker_saln, name="tracker_saln"),
+    path("saln/", tracker_views.saln_mine, name="saln_mine"),
+    path("leave/coc/record/", tracker_views.coc_record, name="coc_record"),
+    path("leave/coc/<int:person_pk>/", tracker_views.coc_card, name="coc_card"),
     path("leave/", board_views.my_leave, name="my_leave"),
     path("leave/new/", board_views.leave_file, name="leave_file"),
     path("leave/days/", board_views.leave_days, name="leave_days"),

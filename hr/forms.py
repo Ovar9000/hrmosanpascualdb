@@ -769,6 +769,11 @@ class LeaveRequestForm(forms.ModelForm):
         if (person and leave_type in (*leave.CHARGED_TO, LeaveType.SPECIAL_PRIVILEGE)
                 and not person.earns_leave_credits()):
             self.add_error("leave_type", "No leave credits: this appointment does not earn leave. Ask HRMO.")
+        if person and leave_type == LeaveType.CTO:
+            from . import coc
+
+            if not coc.earns_coc(person):
+                self.add_error("leave_type", "Job order and contract of service do not earn overtime credits.")
         if start and end:
             days = cleaned.get("days")
             span = (end - start).days + 1

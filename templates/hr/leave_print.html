@@ -51,7 +51,7 @@
           <div class="opt"><span class="box{% if req.leave_type == value %} on{% endif %}"></span>{{ label }} <span class="basis">({{ basis }})</span></div>
         {% endfor %}
         <div class="opt mt-1"><em>Others:</em></div>
-        <div class="rule filled">{% if req.leave_type == "other" %}{{ req.leave_type_other }}{% endif %}</div>
+        <div class="rule filled">{% if req.leave_type == "other" %}{{ req.leave_type_other }}{% elif req.leave_type == "cto" %}Compensatory time-off (CTO){% endif %}</div>
       </td>
       <td colspan="2" class="half">6.B DETAILS OF LEAVE
         <div class="mt-1"><em>In case of Vacation/Special Privilege Leave:</em></div>

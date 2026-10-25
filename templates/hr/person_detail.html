@@ -171,6 +171,18 @@
 </div>
 {% endif %}
 
+{% if ratings is not None %}
+<!-- Performance ratings: the person, HRMO, Auditor, Executive and their Office Head (DECISIONS SP5) -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Performance ratings (IPCR)</div>
+  {% if ratings %}
+  <ul class="list-group list-group-flush small">
+    {% for r in ratings %}<li class="list-group-item d-flex justify-content-between"><span>{% if r.semester == 1 %}Jan–Jun{% else %}Jul–Dec{% endif %} {{ r.year }}</span><span><b>{{ r.rating }}</b> · {{ r.adjectival }}</span></li>{% endfor %}
+  </ul>
+  {% else %}<div class="card-body small text-muted">No ratings on file yet.</div>{% endif %}
+</div>
+{% endif %}
+
 <!-- Career History & Engagements -->
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">

@@ -5548,3 +5548,245 @@ class PersonalDataSheetTestCase(TestCase):
         resp = self.client.post(f"{self.url}other/", {"version": 1, "skills": "Driving"})
         self.assertRedirects(resp, self.url)
         self.assertEqual(PdsProfile.objects.get(person=self.person_a).skills, "Driving")
+
+
+class TalentTrackersTestCase(TestCase):
+    """EL1-EL3, LD1-LD3, SP1-SP5, SN1-SN4, CT1-CT5: licences, training hours, ratings, SALN, COC/CTO."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        self.today = date(2026, 10, 20)
+
+    # --- Licences and eligibility (EL1-EL3) -------------------------------------------------
+
+    def test_licence_rows_and_reminders(self):
+        from hr import qualifications
+        from hr.models import PdsEligibility
+
+        PdsEligibility.objects.create(person=self.person_a, name="Registered Nurse (RA 1080)",
+                                      license_number="0012345", license_valid_until=date(2026, 9, 1))
+        PdsEligibility.objects.create(person=self.person_b, name="Career Service Professional",
+                                      license_valid_until=date(2026, 12, 1))
+        PdsEligibility.objects.create(person=self.person_b, name="Driver's license",
+                                      license_valid_until=date(2029, 1, 1))
+        rows = qualifications.licence_rows(self.today)
+        self.assertEqual([(r["person"], r["state"]) for r in rows],
+                         [(self.person_a, "expired"), (self.person_b, "soon")])
+        self.assertEqual(rows[0]["ago"], 49)
+        found = qualifications.licence_rows(self.today, query="driver")
+        self.assertEqual([r["state"] for r in found], ["valid"])
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/tracker/licences/"), "Registered Nurse")
+        self.client.force_login(self.emp_a_user)
+        self.assertContains(self.client.get("/"), "licence on your PDS expired or expires soon")
+        self.client.force_login(self.head_a)
+        self.assertEqual(self.client.get("/tracker/licences/").status_code, 403)
+
+    def test_eligibility_match_is_a_hint(self):
+        from hr.qualifications import eligibility_match
+
+        wanted = "Career Service (Professional) / Second Level Eligibility"
+        self.assertEqual(eligibility_match(wanted, ["Career Service Professional", "Career Service Sub-Professional",
+                                                    "Driver's license"]), ["Career Service Professional"])
+
+    def test_applying_prefills_requirements_and_hrmo_sees_evidence(self):
+        from hr.models import Applicant, PdsEducation, PdsEligibility, PdsSubmission, PerformanceRating
+
+        vacancy = Vacancy.objects.create(office=self.office_a, position_title="Clerk I", item_number="SP-MO-099",
+                                         salary_grade=3, monthly_salary=Decimal("15000"), education="College",
+                                         eligibility="Career Service (Professional)", status=Vacancy.Status.OPEN,
+                                         published_on=date.today(), deadline=date.today() + timedelta(days=10))
+        PdsEligibility.objects.create(person=self.person_a, name="Career Service Professional")
+        PdsEducation.objects.create(person=self.person_a, level="college", school="Masbate State College",
+                                    degree="BSBA", year_graduated=2002)
+        PdsSubmission.objects.create(person=self.person_a, snapshot={}, status="verified")
+        PerformanceRating.objects.create(person=self.person_a, year=2026, semester=1, rating=Decimal("4.6"))
+        self.client.force_login(self.emp_a_user)
+        self.client.post(f"/vacancies/{vacancy.pk}/", {"action": "apply"})
+        applicant = Applicant.objects.get()
+        self.assertEqual((applicant.has_pds, applicant.has_rating, applicant.has_eligibility, applicant.has_tor),
+                         (True, True, True, False))
+        self.client.force_login(self.hrmo_user)
+        page = self.client.get(f"/vacancies/{vacancy.pk}/")
+        self.assertContains(page, "BSBA")
+        self.assertContains(page, "4.600 Outstanding")
+        self.assertContains(page, 'title="Matches the eligibility asked for; HRMO decides"')
+
+    # --- Learning and development (LD1-LD3) -------------------------------------------------
+
+    def test_record_training_for_attendees_without_reverification(self):
+        from hr import pds
+        from hr.models import PdsSubmission, PdsTraining
+
+        before = pds.snapshot(self.person_a)
+        PdsSubmission.objects.create(person=self.person_a, snapshot=before, status="verified")
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post("/tracker/learning/record/", {
+            "title": "Records Management Seminar", "date_from": "2026-03-02", "date_to": "2026-03-03",
+            "hours": "16", "kind": "technical", "sponsor": "CSC RO V", "person": [self.person_a.pk, self.person_b.pk],
+        })
+        self.assertRedirects(resp, "/tracker/learning/")
+        self.assertEqual(PdsTraining.objects.filter(by_hrmo=True).count(), 2)
+        self.assertEqual(pds.state(self.person_a)["unsent"], set())  # not a change the employee must send
+        page = self.client.get("/tracker/learning/?year=2026")
+        self.assertEqual(page.context["total"], 32)
+        self.client.force_login(self.emp_a_user)
+        page = self.client.get(f"/people/{self.person_a.pk}/pds/training/")
+        self.assertContains(page, "Recorded by HRMO")
+        self.assertEqual(page.context["formset"].queryset.count(), 0)  # read-only to the employee
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.get("/tracker/learning/record/").status_code, 403)
+
+    # --- SPMS ratings (SP1-SP5) -------------------------------------------------------------
+
+    def test_office_sheet_saves_rejects_and_removes(self):
+        from hr.models import PerformanceRating
+
+        url = f"/tracker/ratings/{self.office_a.pk}/?year=2026&semester=1"
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post(url, {f"rating-{self.person_a.pk}": "6"})
+        self.assertContains(resp, "Nothing was saved")
+        self.client.post(url, {f"rating-{self.person_a.pk}": "3.75", f"note-{self.person_a.pk}": "IPCR on file"})
+        rating = PerformanceRating.objects.get(person=self.person_a)
+        self.assertEqual((rating.rating, rating.adjectival, rating.office), (Decimal("3.750"), "Very Satisfactory", self.office_a))
+        self.client.post(url, {f"rating-{self.person_a.pk}": ""})
+        self.assertFalse(PerformanceRating.objects.exists())
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.post(url, {f"rating-{self.person_a.pk}": "4"}).status_code, 403)
+
+    def test_ratings_tick_the_step_increment_checklist(self):
+        from hr import spms
+        from hr.models import PerformanceRating
+
+        case = SalaryAction.objects.create(kind=SalaryAction.Kind.STEP_INCREMENT, person=self.person_a,
+                                           engagement=self.eng_a, milestone="Step 2", service_from=date(2025, 1, 1),
+                                           due_date=date(2026, 6, 30), from_step=1, to_step=2,
+                                           status=SalaryAction.Status.DUE)
+        for year, sem, value in [(2025, 1, "3.2"), (2025, 2, "2.6")]:
+            PerformanceRating.objects.create(person=self.person_a, year=year, semester=sem, rating=Decimal(value))
+        self.assertFalse(spms.prefill_checklist(case, self.today))  # Jan-Jun 2026 missing
+        PerformanceRating.objects.create(person=self.person_a, year=2026, semester=1, rating=Decimal("4"))
+        self.client.force_login(self.hrmo_user)
+        self.client.post(f"/salary-actions/{case.pk}/", {"action": "start_review", "version": case.version})
+        case.refresh_from_db()
+        self.assertTrue(case.checklist.get("rating"))
+        PerformanceRating.objects.filter(year=2025, semester=2).update(rating=Decimal("2.4"))
+        self.assertFalse(spms.case_coverage(case, self.today)["all_satisfactory"])
+
+    def test_who_sees_ratings(self):
+        from hr.models import PerformanceRating
+        from hr.permissions import can_view_ratings
+
+        PerformanceRating.objects.create(person=self.person_a, year=2026, semester=1, rating=Decimal("4"))
+        self.assertTrue(can_view_ratings(self.head_a, self.person_a))
+        self.assertFalse(can_view_ratings(self.head_a, self.person_b))
+        self.assertFalse(can_view_ratings(self.staff_a, self.person_a))
+        self.assertTrue(can_view_ratings(self.emp_a_user, self.person_a))
+        self.client.force_login(self.head_a)
+        self.assertContains(self.client.get(f"/people/{self.person_a.pk}/"), "Performance ratings (IPCR)")
+
+    # --- SALN (SN1-SN4) -----------------------------------------------------------------------
+
+    @override_settings(SALN_FIRST_YEAR=2020)
+    def test_saln_reported_then_received(self):
+        from django.utils import timezone
+
+        from hr import saln
+        from hr.models import SalnFiling
+
+        today = timezone.localdate()
+        year = saln.filing_year(today)
+        self.assertTrue(saln.is_covered(self.person_a))  # plantilla
+        self.assertFalse(saln.is_covered(self.person_b))  # casual
+        self.client.force_login(self.emp_a_user)
+        if (saln.deadline(year) - today).days <= saln.REMIND_DAYS:
+            self.assertContains(self.client.get("/"), f"SALN for {year}")
+        self.client.post("/saln/")
+        filing = SalnFiling.objects.get(person=self.person_a, year=year)
+        self.assertIsNotNone(filing.reported_at)
+        self.client.get("/saln/")  # shows the "Recorded" message
+        self.assertNotContains(self.client.get("/"), f"SALN for {year}")
+        self.client.force_login(self._b_user())
+        self.assertEqual(self.client.post("/saln/").status_code, 403)
+        self.client.force_login(self.hrmo_user)
+        self.client.post(f"/tracker/saln/?year={year}", {"person": [self.person_a.pk, self.person_b.pk],
+                                                          "received_on": today.isoformat()})
+        filing.refresh_from_db()
+        self.assertEqual((filing.received_on, filing.received_by), (today, self.hrmo_user))
+        self.assertFalse(SalnFiling.objects.filter(person=self.person_b).exists())  # not covered
+        self.client.force_login(self.head_a)
+        page = self.client.get("/tracker/saln/")
+        self.assertContains(page, "Rizal")
+        self.assertEqual(self.client.post("/tracker/saln/", {"person": [self.person_a.pk]}).status_code, 403)
+        self.client.force_login(self.staff_a)
+        self.assertEqual(self.client.get("/tracker/saln/").status_code, 403)
+
+    def test_saln_not_before_first_year_or_year_end(self):
+        from hr import saln
+
+        with override_settings(SALN_FIRST_YEAR=2026):
+            self.assertIsNone(saln.my_reminder(self.person_a, date(2026, 4, 1)))  # 2025 was filed on paper
+            self.assertEqual(saln.filing_year(date(2026, 10, 1)), 2026)
+            self.assertFalse(saln.is_open(2026, date(2026, 10, 1)))
+            self.assertIsNotNone(saln.my_reminder(self.person_a, date(2027, 4, 1)))
+
+    def _b_user(self):
+        user = get_user_model().objects.create_user("emp_b", "emp_b@test.com", "emppass123")
+        UserProfile.objects.create(user=user, person=self.person_b)
+        return user
+
+    # --- Overtime credits and CTO (CT1-CT5) ---------------------------------------------------
+
+    def test_coc_rates_caps_and_expiry(self):
+        from hr import coc
+
+        entry, credited, short = coc.credit(self.person_a, date(2026, 9, 7), Decimal("3"), "workday", "OO 1", None, self.today)
+        self.assertEqual((credited, short, entry.expires_on), (Decimal("3.00"), Decimal("0"), date(2027, 9, 7)))
+        _, credited, _ = coc.credit(self.person_a, date(2026, 9, 12), Decimal("4"), "restday", "OO 2", None, self.today)
+        self.assertEqual(credited, Decimal("6.00"))
+        _, credited, short = coc.credit(self.person_a, date(2026, 9, 13), Decimal("24"), "restday", "OO 3", None, self.today)
+        self.assertEqual((credited, short), (Decimal("31.00"), Decimal("5.00")))  # 40 a month
+        self.assertEqual(coc.balance(self.person_a, self.today), Decimal("40"))
+        self.assertEqual(coc.balance(self.person_a, date(2027, 9, 8)), Decimal("37"))  # the first lot expired
+
+    def test_cto_charged_on_approval_and_restored_on_cancel(self):
+        from hr import coc
+        from hr.models import CocEntry, LeaveRequest
+
+        coc.credit(self.person_a, date(2026, 9, 7), Decimal("8"), "workday", "OO 1", None, self.today)
+        self.client.force_login(self.emp_a_user)
+        self.client.post("/leave/new/", {"leave_type": "cto", "detail": "", "detail_text": "", "start_date": "2026-11-02",
+                                         "end_date": "2026-11-02", "days": "", "reason": "", "leave_type_other": ""})
+        req = LeaveRequest.objects.get(leave_type="cto")
+        self.assertEqual(coc.held_hours(self.person_a), Decimal("8"))
+        for user in (self.head_a, self.hrmo_user, self.mayor):
+            self.client.force_login(user)
+            req.refresh_from_db()
+            self.client.post(f"/leave/{req.pk}/", {"action": "done", "version": req.version})
+        req.refresh_from_db()
+        self.assertEqual(req.status, "approved")
+        self.assertEqual(coc.balance(self.person_a, date(2026, 11, 3)), Decimal("0"))
+        self.assertEqual(CocEntry.objects.get(kind="used").hours, Decimal("-8"))
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get(f"/leave/{req.pk}/print/"), "Compensatory time-off (CTO)")
+        req.refresh_from_db()
+        self.client.post(f"/leave/{req.pk}/", {"action": "cancel", "version": req.version, "note": "Recalled to work"})
+        self.assertEqual(coc.balance(self.person_a, date(2026, 11, 3)), Decimal("8"))
+
+    def test_job_order_earns_no_coc(self):
+        from hr import coc
+        from hr.models import CocEntry
+
+        self.eng_b.type = Engagement.Type.JOB_ORDER
+        self.eng_b.save()
+        self.assertFalse(coc.earns_coc(self.person_b))
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.post("/leave/coc/record/", {"worked_on": "2026-09-07", "hours": "2", "day_kind": "workday",
+                                                       "reference": "OO 4", "person": [self.person_a.pk, self.person_b.pk]})
+        self.assertRedirects(resp, "/leave/coc/record/")
+        self.assertEqual(list(CocEntry.objects.values_list("person_id", flat=True)), [self.person_a.pk])
+        self.client.force_login(self.emp_a_user)
+        self.assertEqual(self.client.get(f"/leave/coc/{self.person_a.pk}/").status_code, 200)
+        self.assertEqual(self.client.get(f"/leave/coc/{self.person_b.pk}/").status_code, 403)

@@ -50,6 +50,8 @@ GUIDANCE = {
     LeaveType.CALAMITY: "Up to 5 days within 30 days of the calamity (CSC MC No. 2, s. 2012).",
     LeaveType.ADOPTION: "Attach the authenticated pre-adoptive placement authority from DSWD (RA 8552).",
     LeaveType.WELLNESS: "Wellness leave (CSC MC No. 1, s. 2026). HRMO will confirm how many days apply.",
+    LeaveType.CTO: "Uses your compensatory overtime credits (COC), 8 hours a day or 4 for a half day. File it ahead "
+                   "and agree the dates with your office head.",
     LeaveType.OTHER: "Say what leave this is. HRMO will confirm the rules that apply.",
 }
 
@@ -69,6 +71,7 @@ LEGAL_BASIS = {
     LeaveType.CALAMITY: "CSC MC No. 2, s. 2012, as amended",
     LeaveType.ADOPTION: "R.A. No. 8552",
     LeaveType.WELLNESS: "CSC MC 01 s. 2026 Policy",
+    LeaveType.CTO: "CSC-DBM Joint Circular No. 2, s. 2004",
 }
 
 # The section 6.B choices that fit each leave type.
@@ -162,7 +165,14 @@ def summary(person, today=None):
     ).aggregate(total=Sum("days"))["total"] or Decimal("0")
     forced_left = max(FORCED_LEAVE_DAYS - taken, Decimal("0")) if vl >= FORCED_LEAVE_THRESHOLD else Decimal("0")
     spl_left = max(SPL_DAYS_PER_YEAR - spl_used(person, today.year), Decimal("0"))
+    from . import coc
+
+    coc_hours = coc.balance(person, today)
     return {
+        "coc_hours": coc_hours,
+        "coc_held": coc.held_hours(person),
+        "coc_expiring": coc.expiring(person, today),
+        "earns_coc": coc.earns_coc(person),
         "eligible": person.earns_leave_credits(),
         "vl": vl, "sl": sl, "total": vl + sl,
         "vl_held": vl_held, "sl_held": sl_held,
@@ -187,6 +197,10 @@ def pay_split(req):
         )
     elif req.leave_type == LeaveType.SPECIAL_PRIVILEGE:
         available = SPL_DAYS_PER_YEAR - spl_used(req.person, req.start_date.year, exclude=req)
+    elif req.leave_type == LeaveType.CTO:
+        from . import coc
+
+        available = coc.available_days(req.person, req.start_date, exclude=req)
     else:
         return days, Decimal("0")
     with_pay = min(days, max(available, Decimal("0")))
@@ -204,7 +218,9 @@ def check_filing(req, today):
     if req.leave_type == LeaveType.SICK and (req.days > 5 or req.start_date > today):
         warnings.append("Bring a medical certificate: sick leave over 5 days or filed ahead needs one.")
     with_pay, without_pay = pay_split(req)
-    if without_pay > 0 and req.leave_type in (*CHARGED_TO, LeaveType.SPECIAL_PRIVILEGE):
+    if without_pay > 0 and req.leave_type == LeaveType.CTO:
+        warnings.append(f"Not enough overtime credits (COC): about {without_pay} day(s) are not covered.")
+    elif without_pay > 0 and req.leave_type in (*CHARGED_TO, LeaveType.SPECIAL_PRIVILEGE):
         warnings.append(f"Not enough credits: about {without_pay} day(s) would be without pay.")
     overlap = LeaveRequest.objects.filter(
         person=req.person, status__in=[LeaveRequest.Status.PENDING, LeaveRequest.Status.APPROVED],
@@ -335,6 +351,11 @@ def _approve(req, user, now):
     req.status = LeaveRequest.Status.APPROVED
     req.approver = user
     req.decided_at = now
+    if req.leave_type == LeaveType.CTO:
+        from . import coc
+
+        coc.charge(req, user)
+        return
     charge = CHARGED_TO.get(req.leave_type)
     if not charge or not req.days_with_pay:
         return
@@ -368,6 +389,10 @@ def cancel(req, user, note=""):
                 person=req.person, leave_type=entry.leave_type, days=-entry.days, as_of=timezone.localdate(),
                 note=f"Restored: cancelled leave #{req.pk}", leave_request=req,
             )
+        if req.leave_type == LeaveType.CTO:
+            from . import coc
+
+            coc.restore(req)
     else:
         raise LeaveError("This application is already closed.")
     for step in req.steps.filter(status=Step.Status.PENDING):

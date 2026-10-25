@@ -17,13 +17,13 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
-from . import board, leave, meetings, reminders
+from . import board, leave, meetings, qualifications, reminders, spms
 from .audit import log_audit_event
 from .forms import (
     ApplicantForm, LeaveCreditForm, LeaveRequestForm, MemoForm, VacancyForm, sanitize_filename,
 )
 from .models import (
-    Applicant, AuditLog, CalendarEvent, CertificateRequest, Engagement, PdsSubmission, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
+    Applicant, AuditLog, CalendarEvent, CertificateRequest, Engagement, PdsEligibility, PdsSubmission, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
     Memo, MemoAcknowledgment, Office, Person, SalaryAction, Vacancy,
 )
 from .permissions import (
@@ -140,9 +140,10 @@ def _workforce(today):
     }
 
 
-def _todo(my, inbox, unread, hrmo, today, ready=0, pds_state=None):
+def _todo(my, inbox, unread, hrmo, today, ready=0, pds_state=None, extra=()):
     """What needs this person, most urgent first. Each item: tone, count, label, url.
-    HRMO's certify step is in the inbox already (leave.inbox), so it is not listed twice."""
+    HRMO's certify step is in the inbox already (leave.inbox), so it is not listed twice.
+    `extra` holds (tone, count, singular, plural, url) items from the trackers."""
     items = []
 
     def add(tone, n, one, many, url=""):
@@ -196,8 +197,58 @@ def _todo(my, inbox, unread, hrmo, today, ready=0, pds_state=None):
         ]:
             if hrmo.get(key):
                 add(tone, hrmo[key], one, many, reverse(url))
+    for item in extra:
+        add(*item)
     rank = {"danger": 0, "warning": 1, "primary": 2}
     return sorted(items, key=lambda i: rank[i["tone"]])
+
+
+def _tracker_todo(person, hrmo, today):
+    """Reminders from licences, SALN, overtime credits and ratings (EL1, SN2, CT3, SP4)."""
+    from . import coc, saln
+
+    items = []
+    if person:
+        due = qualifications.my_licences_due(person, today)
+        if due:
+            expired = any(e.license_valid_until < today for e in due)
+            items.append(("danger" if expired else "warning", len(due),
+                          "licence on your PDS expired or expires soon: renew it, then update your PDS",
+                          "licences on your PDS expired or expire soon: renew them, then update your PDS",
+                          reverse("pds_section", args=[person.pk, "eligibility"])))
+        reminder = saln.my_reminder(person, today)
+        if reminder and not (reminder["filing"] and reminder["filing"].reported_at):
+            late = reminder["days"] < 0
+            items.append(("danger" if late else "warning", 1,
+                          f"SALN for {reminder['year']} {'overdue: file it with HRMO now' if late else 'to file with HRMO by ' + reminder['deadline'].strftime('%b %d')}",
+                          "", reverse("saln_mine")))
+        expiring = coc.expiring(person, today, 30)
+        if expiring:
+            hours = sum(l["left"] for l in expiring)
+            items.append(("warning", hours, f"hour of overtime credit expires by {expiring[0]['expires']:%b %d}: use it as CTO",
+                          f"hours of overtime credit expire by {expiring[0]['expires']:%b %d}: use them as CTO",
+                          reverse("coc_card", args=[person.pk])))
+    if hrmo and hrmo.get("can_manage"):
+        licences = qualifications.licence_attention_count(today)
+        if licences:
+            items.append(("warning", licences, "licence expired or expiring soon", "licences expired or expiring soon",
+                          reverse("tracker_licences")))
+        year = saln.current_year(today)
+        days_left = (saln.deadline(year) - today).days
+        if saln.tracked(year) and days_left <= 30:
+            missing = saln.missing_count(year)
+            if missing:
+                items.append(("danger" if days_left < 0 else "warning", missing,
+                              f"person has not filed a SALN for {year}", f"people have not filed a SALN for {year}",
+                              reverse("tracker_saln") + "?show=missing"))
+        period = spms.last_ended(today)
+        if (today - spms.period_bounds(*period)[1]).days > 30:
+            unrated = spms.unrated_count(*period)
+            if unrated:
+                items.append(("primary", unrated, f"person without a rating for {spms.period_label(*period)}",
+                              f"people without a rating for {spms.period_label(*period)}",
+                              reverse("tracker_ratings") + f"?year={period[0]}&semester={period[1]}"))
+    return items
 
 
 def _coming_up(person, office, today):
@@ -271,7 +322,8 @@ def dashboard(request):
              if person else 0)
     from . import pds
 
-    todo = _todo(my, inbox, unread, hrmo, today, ready, pds.state(person) if person else None)
+    todo = _todo(my, inbox, unread, hrmo, today, ready, pds.state(person) if person else None,
+                 _tracker_todo(person, hrmo, today))
     return render(request, "hr/dashboard.html", {
         "person": person,
         "my": my,
@@ -363,9 +415,11 @@ def leave_file(request):
             return redirect("leave_detail", pk=req.pk)
     else:
         start = timezone.localdate() + timedelta(days=7)
+        cto = request.GET.get("type") == LeaveType.CTO
         form = LeaveRequestForm(person=person, for_hrmo=for_hrmo,
-                                initial={"start_date": start, "end_date": start, "leave_type": LeaveType.VACATION,
-                                         "detail": "within_ph"})
+                                initial={"start_date": start, "end_date": start,
+                                         "leave_type": LeaveType.CTO if cto else LeaveType.VACATION,
+                                         "detail": "" if cto else "within_ph"})
     return render(request, "hr/leave_form.html", {
         "form": form,
         "for_hrmo": for_hrmo,
@@ -461,7 +515,7 @@ def _print_form(request, req, steps):
         if req.days_with_pay > less_sl:
             less_vl = req.days_with_pay - less_sl
     types = [(value, label, leave.LEGAL_BASIS.get(value, "")) for value, label in LeaveType.choices
-             if value != LeaveType.OTHER]
+             if value not in (LeaveType.OTHER, LeaveType.CTO)]  # CTO goes under "Others" (CT4)
     return render(request, "hr/leave_print.html", {
         "req": req,
         "steps": steps,
@@ -810,12 +864,18 @@ def vacancy_detail(request, pk):
             if not vacancy.is_accepting(today):
                 messages.error(request, "This vacancy is no longer accepting applications.")
             else:
+                # What is already on file counts toward the requirements (EL3, SP3); HRMO can untick.
+                on_file = {
+                    "has_pds": PdsSubmission.objects.filter(person=person, status=PdsSubmission.Status.VERIFIED).exists(),
+                    "has_rating": bool(spms.recent_ratings(person, 1)),
+                    "has_eligibility": PdsEligibility.objects.filter(person=person).exists(),
+                }
                 try:
                     with transaction.atomic():
                         Applicant.objects.create(
                             vacancy=vacancy, person=person, last_name=person.last_name, first_name=person.first_name,
                             middle_name=person.middle_name, mobile=person.mobile, email=person.email,
-                            signified_on=today, applied_online=True,
+                            signified_on=today, applied_online=True, **on_file,
                         )
                 except IntegrityError:
                     messages.info(request, "You already signified your interest in this vacancy.")
@@ -836,6 +896,8 @@ def vacancy_detail(request, pk):
         else:
             raise PermissionDenied("Unknown action.")
     applicants = list(vacancy.applicants.select_related("person")) if can_view_applicants(request.user) else None
+    for applicant in applicants or []:
+        applicant.evidence = qualifications.applicant_evidence(applicant, vacancy, today)
     my_application = vacancy.applicants.filter(person=person).first() if person else None
     return render(request, "hr/vacancy_detail.html", {
         "vacancy": vacancy, "today": today, "can_manage": can_manage, "applicants": applicants,

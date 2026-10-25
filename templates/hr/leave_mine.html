@@ -25,6 +25,21 @@
 <div class="alert alert-light border small">Your appointment does not earn vacation and sick leave credits (Job Order and Contract of Service). Special leaves such as maternity, paternity and solo parent leave can still be filed.</div>
 {% endif %}
 
+{% if summary.earns_coc or summary.coc_hours %}
+<div class="card shadow-sm border-0 mb-3" id="coc">
+  <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <span class="fw-semibold">Overtime credits (COC):</span> {{ summary.coc_hours|floatformat:"-2" }} hours{% if summary.coc_held %} <span class="text-muted">({{ summary.coc_held|floatformat:"-2" }} on hold)</span>{% endif %}
+      {% with lot=summary.coc_expiring.0 %}{% if lot %}<div class="small text-warning-emphasis"><span class="mk mk-warn" aria-hidden="true"></span>{{ lot.left|floatformat:"-2" }} hours expire on {{ lot.expires|date:"M d, Y" }}: use them as CTO first.</div>{% endif %}{% endwith %}
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'coc_card' person.pk %}">COC card</a>
+      {% if summary.coc_hours %}<a class="btn btn-sm btn-outline-primary" href="{% url 'leave_file' %}?type=cto">File CTO</a>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card shadow-sm border-0">
   <div class="card-header bg-white fw-bold py-2">Applications</div>
   <div class="list-group list-group-flush">

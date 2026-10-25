@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Record overtime (COC){% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'leave_register' %}" class="btn btn-sm btn-outline-secondary">← Back to leave register</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">Record overtime for compensatory credits</h1></div>
+  <div class="card-body p-4">
+    <p class="text-muted small mb-4">For overtime covered by an office order. Each hour on a working day earns {{ workday_rate }} hour of credit; each hour on a weekend, holiday or day off earns {{ restday_rate }}. Credit stops at {{ monthly_cap }} hours a month and {{ balance_cap }} hours in all, and expires after {{ valid_months }} months. Job order and contract of service staff are not listed.</p>
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">The overtime</legend>
+        <div class="row g-3">
+          <div class="col-sm-6 col-md-3"><label class="form-label fw-semibold" for="worked_on">Day worked <span class="text-danger">*</span></label>
+            <input class="form-control" type="date" id="worked_on" name="worked_on" max="{{ today|date:'Y-m-d' }}" value="{{ values.worked_on }}">{% if errors.worked_on %}<div class="invalid-feedback d-block">{{ errors.worked_on }}</div>{% endif %}</div>
+          <div class="col-sm-6 col-md-3"><label class="form-label fw-semibold" for="hours">Hours of overtime <span class="text-danger">*</span></label>
+            <input class="form-control" type="number" step="0.5" min="0.5" max="24" id="hours" name="hours" value="{{ values.hours }}">{% if errors.hours %}<div class="invalid-feedback d-block">{{ errors.hours }}</div>{% endif %}</div>
+          <div class="col-md-6"><label class="form-label fw-semibold" for="day_kind">Kind of day <span class="text-danger">*</span></label>
+            <select class="form-select" id="day_kind" name="day_kind"><option value="">—</option>{% for v, l in day_kinds %}<option value="{{ v }}"{% if values.day_kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>{% if errors.day_kind %}<div class="invalid-feedback d-block">{{ errors.day_kind }}</div>{% endif %}</div>
+          <div class="col-12"><label class="form-label fw-semibold" for="reference">Office order / certificate of COC no. <span class="text-danger">*</span></label>
+            <input class="form-control" id="reference" name="reference" maxlength="100" value="{{ values.reference }}" placeholder="e.g. Office Order No. 12, s. 2026">{% if errors.reference %}<div class="invalid-feedback d-block">{{ errors.reference }}</div>{% endif %}</div>
+        </div>
+      </fieldset>
+      {% include "hr/_people_picker.html" with picker_title="Who worked" %}
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'leave_register' %}">Cancel</a>
+        <button class="btn btn-primary">Credit overtime</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if recent %}
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-bold py-2">Recently credited</div>
+  <ul class="list-group list-group-flush small">
+    {% for e in recent %}<li class="list-group-item d-flex flex-wrap justify-content-between gap-2"><a href="{% url 'coc_card' e.person_id %}">{{ e.person.full_name }}</a><span class="text-muted">{{ e.date|date:"M d, Y" }} · +{{ e.hours|floatformat:"-2" }} h · {{ e.reference }}</span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

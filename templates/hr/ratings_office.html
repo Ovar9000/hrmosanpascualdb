@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Ratings · {{ office.name }} · {{ label }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'tracker_ratings' %}?year={{ year }}&semester={{ semester }}" class="btn btn-sm btn-outline-secondary">← Back to performance ratings</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-baseline gap-2">
+    <h1 class="h4 mb-0">{{ office.name }}</h1>
+    <span class="text-muted small">Final IPCR ratings, {{ label }}</span>
+  </div>
+  <div class="card-body p-4">
+    <p class="text-muted small mb-4">{% if can_manage %}Type each person's final rating from their approved IPCR, from 1.000 to 5.000. Leave it blank if not yet rated; clearing a rating removes it.{% else %}Read-only.{% endif %}</p>
+    {% if errors %}<div class="alert alert-danger py-2 small">Some ratings are not between 1.000 and 5.000. Nothing was saved.</div>{% endif %}
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      <div class="table-responsive bg-white border rounded mb-3">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light small"><tr><th>Person</th><th>Position</th><th style="width: 9rem">Final rating</th><th>Adjectival</th><th>Notes</th></tr></thead>
+          <tbody>
+            {% for row in sheet %}
+              {% with pid=row.person.pk %}
+              <tr>
+                <td class="small">{{ row.person.full_name }}</td>
+                <td class="small text-muted">{{ row.eng.position_title }}</td>
+                <td>{% if can_manage %}<input class="form-control form-control-sm rating-input" type="number" step="0.001" min="1" max="5" name="rating-{{ pid }}" aria-label="Rating of {{ row.person.full_name }}" value="{{ row.value }}">{% else %}{{ row.rating.rating|default:"—" }}{% endif %}
+                  {% if row.error %}<div class="invalid-feedback d-block">{{ row.error }}</div>{% endif %}</td>
+                <td class="small adjectival">{{ row.rating.adjectival|default:"" }}</td>
+                <td>{% if can_manage %}<input class="form-control form-control-sm" name="note-{{ pid }}" maxlength="255" value="{{ row.note }}" aria-label="Notes for {{ row.person.full_name }}">{% else %}<span class="small">{{ row.rating.notes }}</span>{% endif %}</td>
+              </tr>
+              {% endwith %}
+            {% empty %}
+              <tr><td colspan="5" class="text-center text-muted py-4">No rated staff in active service in this office.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if can_manage and sheet %}
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'tracker_ratings' %}?year={{ year }}&semester={{ semester }}">Cancel</a>
+        <button class="btn btn-primary">Save ratings</button>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+<script>
+(function () {
+  var bands = [{% for floor, name in bands %}[{{ floor }}, "{{ name }}"]{% if not forloop.last %}, {% endif %}{% endfor %}];
+  document.querySelectorAll(".rating-input").forEach(function (input) {
+    var cell = input.closest("tr").querySelector(".adjectival");
+    input.addEventListener("input", function () {
+      var v = parseFloat(input.value);
+      var band = isNaN(v) || v < 1 || v > 5 ? null : bands.find(function (b) { return v >= b[0]; });
+      cell.textContent = band ? band[1] : "";
+    });
+  });
+})();
+</script>
+{% endblock %}

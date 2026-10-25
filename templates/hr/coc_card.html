@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Overtime credits · {{ person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% if is_self %}{% url 'my_leave' %}{% else %}{% url 'leave_card' person.pk %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back to {% if is_self %}my leave{% else %}leave card{% endif %}</a>
+  {% if can_manage %}<a href="{% url 'coc_record' %}" class="btn btn-sm btn-outline-primary">Record overtime</a>{% endif %}
+</div>
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Compensatory overtime credits (COC)</h1>
+    <div class="text-muted small">{{ person.full_name }} · earned for authorized overtime and used as compensatory time-off (CTO). Credits last {{ valid_months }} months; at most {{ monthly_cap }} hours a month and {{ balance_cap }} hours in all.</div>
+  </div>
+  {% if earns %}<a class="btn btn-primary" href="{% url 'leave_file' %}?type=cto">File CTO</a>{% endif %}
+</div>
+
+<div class="row g-2 text-center mb-3">
+  <div class="col-6 col-md-4"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Balance</div><div class="h3 mb-0 text-primary">{{ balance|floatformat:"-2" }} h</div><div class="small text-muted">{{ days|floatformat:"-1" }} day{{ days|pluralize }} of CTO</div></div></div></div>
+  <div class="col-6 col-md-4"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">On hold</div><div class="h3 mb-0">{{ held|floatformat:"-2" }} h</div><div class="small text-muted">CTO still being signed</div></div></div></div>
+  <div class="col-12 col-md-4"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Next to expire</div>{% with lot=lots.0 %}{% if lot %}<div class="h3 mb-0">{{ lot.left|floatformat:"-2" }} h</div><div class="small text-muted">on {{ lot.expires|date:"M d, Y" }}</div>{% else %}<div class="h3 mb-0">—</div>{% endif %}{% endwith %}</div></div></div>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-bold py-2">Ledger</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Date</th><th>Entry</th><th>Reference</th><th class="text-end">Hours</th><th>Expires</th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+          <tr{% if e.void %} class="text-muted text-decoration-line-through"{% endif %}>
+            <td class="text-nowrap">{{ e.date|date:"M d, Y" }}</td>
+            <td>{% if e.kind == "earned" %}Overtime: {{ e.hours_worked|floatformat:"-2" }} h on a {{ e.get_day_kind_display|lower }}{% else %}CTO{% if e.leave_request %} <a href="{% url 'leave_detail' e.leave_request_id %}">#{{ e.leave_request_id }}</a>{% endif %}{% endif %}{% if e.note %}<div class="text-muted">{{ e.note }}</div>{% endif %}</td>
+            <td>{{ e.reference }}</td>
+            <td class="text-end fw-semibold">{% if e.hours > 0 %}+{% endif %}{{ e.hours|floatformat:"-2" }}</td>
+            <td class="text-nowrap">{{ e.expires_on|date:"M d, Y"|default:"" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No overtime credits yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

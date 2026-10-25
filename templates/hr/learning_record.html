@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Record a training{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'tracker_learning' %}" class="btn btn-sm btn-outline-secondary">← Back to training hours</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">Record a training for everyone who attended</h1></div>
+  <div class="card-body p-4">
+    <p class="text-muted small mb-4">It is added to each attendee's Personal Data Sheet (section VII) as recorded by HRMO. Attendees see it but cannot change it, and it does not need their PDS to be verified again.</p>
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">The training</legend>
+        <div class="row g-3">
+          <div class="col-12"><label class="form-label fw-semibold" for="title">Title <span class="text-danger">*</span></label>
+            <input class="form-control" id="title" name="title" maxlength="255" value="{{ values.title }}">{% if errors.title %}<div class="invalid-feedback d-block">{{ errors.title }}</div>{% endif %}</div>
+          <div class="col-sm-6 col-md-3"><label class="form-label fw-semibold" for="date_from">From <span class="text-danger">*</span></label>
+            <input class="form-control" type="date" id="date_from" name="date_from" value="{{ values.date_from }}">{% if errors.date_from %}<div class="invalid-feedback d-block">{{ errors.date_from }}</div>{% endif %}</div>
+          <div class="col-sm-6 col-md-3"><label class="form-label fw-semibold" for="date_to">To</label>
+            <input class="form-control" type="date" id="date_to" name="date_to" value="{{ values.date_to }}">{% if errors.date_to %}<div class="invalid-feedback d-block">{{ errors.date_to }}</div>{% endif %}</div>
+          <div class="col-sm-6 col-md-2"><label class="form-label fw-semibold" for="hours">Hours</label>
+            <input class="form-control" type="number" min="1" id="hours" name="hours" value="{{ values.hours }}">{% if errors.hours %}<div class="invalid-feedback d-block">{{ errors.hours }}</div>{% endif %}</div>
+          <div class="col-sm-6 col-md-4"><label class="form-label fw-semibold" for="kind">Type of L&amp;D</label>
+            <select class="form-select" id="kind" name="kind"><option value="">—</option>{% for v, l in kinds %}<option value="{{ v }}"{% if values.kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+          <div class="col-12"><label class="form-label fw-semibold" for="sponsor">Conducted / sponsored by</label>
+            <input class="form-control" id="sponsor" name="sponsor" maxlength="255" value="{{ values.sponsor }}" placeholder="e.g. Civil Service Commission Regional Office V"></div>
+        </div>
+      </fieldset>
+      {% include "hr/_people_picker.html" with picker_title="Who attended" %}
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'tracker_learning' %}">Cancel</a>
+        <button class="btn btn-primary">Record training</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

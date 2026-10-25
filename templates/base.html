@@ -29,6 +29,8 @@
                 {% if org_nav.my_office %}<li><a class="dropdown-item" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'pds_home' %}">My Personal Data Sheet</a></li>{% endif %}
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_certificates' %}">Service record &amp; certificates{% if board_nav.certificates_ready %} <span class="badge text-bg-success">ready</span>{% endif %}</a></li>{% endif %}
+                {% if board_nav.saln %}<li><a class="dropdown-item" href="{% url 'saln_mine' %}">My SALN</a></li>{% endif %}
+                {% if board_nav.saln_office %}<li><a class="dropdown-item" href="{% url 'tracker_saln' %}">SALN filing (my office)</a></li>{% endif %}
                 {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
               </ul>
             </li>
@@ -39,7 +41,9 @@
               <ul class="dropdown-menu">
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_leave' %}">My leave</a></li>
                 <li><a class="dropdown-item" href="{% url 'leave_file' %}">File leave</a></li>{% endif %}
+                {% if board_nav.coc %}<li><a class="dropdown-item" href="{% url 'my_leave' %}#coc">Overtime credits &amp; CTO</a></li>{% endif %}
                 {% if board_nav.approver %}<li><a class="dropdown-item" href="{% url 'leave_inbox' %}">Waiting for me{% if board_nav.inbox %} ({{ board_nav.inbox }}){% endif %}</a></li>{% endif %}
+                {% if board_nav.register and perms.hr.manage_hr_records %}<li><a class="dropdown-item" href="{% url 'coc_record' %}">Record overtime (COC)</a></li>{% endif %}
               </ul>
             </li>
           {% endif %}
@@ -56,7 +60,7 @@
           {% if org_nav.salary or board_nav.register or perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention or board_nav.certificates_pending or board_nav.pds_waiting %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
-              <ul class="dropdown-menu">
+              <ul class="dropdown-menu" style="max-height: 80vh; overflow-y: auto;">
                 {% if org_nav.salary %}
                 <li><h6 class="dropdown-header">Trackers</h6></li>
                 <li><a class="dropdown-item" href="{% url 'salary_action_list' %}">Salary increases &amp; loyalty{% if org_nav.salary_due %} <span class="badge text-bg-warning">due</span>{% endif %}</a></li>
@@ -64,6 +68,10 @@
                 <li><a class="dropdown-item" href="{% url 'tracker_retirement' %}">Retirement</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_year_end_bonus' %}">Year-end bonus</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_meetings' %}">Required meetings</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_licences' %}">Licences &amp; eligibility</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_learning' %}">Training hours</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_ratings' %}">Performance ratings</a></li>
+                <li><a class="dropdown-item" href="{% url 'tracker_saln' %}">SALN filing</a></li>
                 {% endif %}
                 {% if board_nav.register %}
                 <li><h6 class="dropdown-header">Reports</h6></li>

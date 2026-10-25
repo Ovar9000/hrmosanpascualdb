@@ -75,6 +75,11 @@
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" name="check" value="{{ key }}" id="check_{{ key }}"{% if done %} checked{% endif %}>
                   <label class="form-check-label" for="check_{{ key }}">{{ label }}</label>
+                  {% if key == "rating" %}
+                    <div class="text-muted">{% if ratings.complete and ratings.all_satisfactory %}Every semester of the period is rated Satisfactory or better (below).
+                      {% elif ratings.missing %}{{ ratings.missing|length }} semester{{ ratings.missing|length|pluralize }} of the period {{ ratings.missing|length|pluralize:"has,have" }} no rating on file: check the paper IPCR.
+                      {% else %}A rating on file is below Satisfactory.{% endif %}</div>
+                  {% endif %}
                 </div>
               {% endfor %}
             </fieldset>
@@ -161,6 +166,25 @@
       </form>
     {% endif %}
   </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">Performance ratings in the period</span>
+    <a class="small" href="{% url 'tracker_ratings' %}">All ratings</a>
+  </div>
+  {% if ratings.rows %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0 small">
+      <tbody>
+        {% for r in ratings.rows %}
+          <tr><td>{{ r.label }}</td>
+            <td>{% if r.rating %}{{ r.rating.rating }} · {{ r.rating.adjectival }}{% else %}<span class="text-muted">No rating on file</span>{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<div class="card-body small text-muted">No semester to check yet.</div>{% endif %}
 </div>
 
 {% if other_cases %}

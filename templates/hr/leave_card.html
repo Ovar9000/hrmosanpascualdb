@@ -2,7 +2,8 @@
 {% block title %}Leave card · {{ person.full_name }}{% endblock %}
 
 {% block content %}
-<div class="mb-3"><a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← {{ person.full_name }}</a></div>
+<div class="mb-3 d-flex flex-wrap gap-2"><a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← {{ person.full_name }}</a>
+  <a href="{% url 'coc_card' person.pk %}" class="btn btn-sm btn-outline-secondary">Overtime credits (COC)</a></div>
 <h1 class="h3 mb-1">Leave card</h1>
 <p class="text-muted small">{{ person.full_name }} · {{ person.employee_no }}. Every credit earned, adjusted or charged, newest first, with the running balance.</p>
 

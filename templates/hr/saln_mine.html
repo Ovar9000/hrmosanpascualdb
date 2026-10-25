@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}My SALN{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'home' %}" class="btn btn-sm btn-outline-secondary">← Home</a></div>
+<div class="mb-3">
+  <h1 class="h3 mb-0">Statement of Assets, Liabilities and Net Worth</h1>
+  <div class="text-muted small">{{ person.full_name }} · file the paper SALN with HRMO every year by April 30. Only whether you filed is recorded here, never what it says.</div>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">SALN for {{ year }} (as of December 31, {{ year }})</div>
+  <div class="card-body">
+    {% if not covered %}
+      <p class="mb-0 small text-muted">Your appointment does not file a SALN with HRMO. Ask HRMO if this is wrong.</p>
+    {% elif current.received_on %}
+      <p class="mb-0"><span class="badge text-bg-success"><span class="mk mk-check" aria-hidden="true"></span>Received by HRMO</span> on {{ current.received_on|date:"F j, Y" }}.</p>
+    {% elif current.reported_at %}
+      <p class="mb-0"><span class="badge text-bg-info"><span class="mk mk-clock" aria-hidden="true"></span>Submitted</span> You said you submitted it on {{ current.reported_at|date:"F j, Y" }}. HRMO will confirm when they have it.</p>
+    {% elif not open %}
+      <p class="mb-0 small">Your SALN for {{ year }} is as of December 31, {{ year }}. File it with HRMO between January 1 and <b>{{ deadline|date:"F j, Y" }}</b>; this page will remind you.</p>
+    {% else %}
+      <p class="small">Due <b>{{ deadline|date:"F j, Y" }}</b>{% if today > deadline %}: <span class="text-danger fw-semibold">overdue</span>{% endif %}. Get the form from HRMO, fill it in, have it sworn, and bring it to HRMO. Then press the button so HRMO knows to look for it.</p>
+      <form method="post">{% csrf_token %}<button class="btn btn-primary">I have submitted my SALN for {{ year }} to HRMO</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if filings %}
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-bold py-2">Earlier years</div>
+  <ul class="list-group list-group-flush small">
+    {% for f in filings %}{% if f.year != year %}
+      <li class="list-group-item d-flex justify-content-between"><span>{{ f.year }}</span><span>{% if f.received_on %}Received {{ f.received_on|date:"M d, Y" }}{% elif f.reported_at %}Submitted {{ f.reported_at|date:"M d, Y" }}{% endif %}</span></li>
+    {% endif %}{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

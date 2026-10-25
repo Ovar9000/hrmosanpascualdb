@@ -100,6 +100,15 @@
       </fieldset>
       {% endif %}
 
+      {% if hrmo_trainings %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">Recorded by HRMO <span class="form-section-hint">Trainings the LGU ran or sent you to; ask HRMO to correct them</span></legend>
+        <div class="list-group small">
+          {% for t in hrmo_trainings %}<div class="list-group-item d-flex flex-wrap justify-content-between gap-2"><span>{{ t.title }}{% if t.sponsor %} · {{ t.sponsor }}{% endif %}</span><span class="text-muted">{{ t.date_from|date:"M d, Y" }}{% if t.hours %} · {{ t.hours }} h{% endif %}</span></div>{% endfor %}
+        </div>
+      </fieldset>
+      {% endif %}
+
       {% if formset and not formset_first %}{% include "hr/_pds_rows.html" %}{% endif %}
 
       <div class="form-actions">
