@@ -84,6 +84,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "hr.context_processors.org_chart_nav",
                 "hr.context_processors.board_nav",
+                "hr.context_processors.app_version",
             ],
         },
     },
@@ -149,6 +150,19 @@ SERVICE_RECORD_EXCLUDED_TYPES = [
 # Name and title printed under the "Certified correct" line. Blank prints an empty line for the name.
 CERTIFICATE_SIGNATORY = os.environ.get("CERTIFICATE_SIGNATORY", "")
 CERTIFICATE_SIGNATORY_TITLE = os.environ.get("CERTIFICATE_SIGNATORY_TITLE", "Municipal Human Resource Management Officer")
+
+
+def _read_file(name):
+    try:
+        return (BASE_DIR / name).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+# The release shown in every page footer (DECISIONS H9): MAJOR.MINOR.PATCH from the committed VERSION
+# file, and the exact commit as BUILD, written by scripts/vps_update.sh when it deploys.
+APP_VERSION = os.environ.get("APP_VERSION", "").strip() or _read_file("VERSION") or "development"
+APP_BUILD = os.environ.get("APP_BUILD", "").strip() or _read_file("BUILD")
 
 
 def _types(name, default):

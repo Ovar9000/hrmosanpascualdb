@@ -36,3 +36,6 @@ demo_files/
 
 # Photos of office boards and forms (real names, salaries, birth dates)
 docs/IMG_*.jpg
+
+# Written by scripts/vps_update.sh on the server: the deployed commit (DECISIONS H9)
+/BUILD

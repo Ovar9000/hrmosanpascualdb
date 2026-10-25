@@ -1,5 +1,6 @@
 """Template context shared by every page."""
 
+from django.conf import settings
 from django.utils.functional import SimpleLazyObject
 from django.utils import timezone
 from .models import SalaryAction
@@ -68,3 +69,8 @@ def board_nav(request):
         }
 
     return {"board_nav": SimpleLazyObject(links)}
+
+
+def app_version(request):
+    """The release and exact build, for the footer (DECISIONS H9)."""
+    return {"app_version": settings.APP_VERSION, "app_build": settings.APP_BUILD}

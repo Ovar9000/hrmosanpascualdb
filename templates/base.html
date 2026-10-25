@@ -116,7 +116,7 @@
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="container pb-3 small text-muted">Prototype · fake data only</footer>
+  <footer class="container pb-3 small text-muted">Prototype · fake data only · <span class="font-monospace"{% if app_build %} title="Build {{ app_build }}"{% endif %}>{% if app_version == "development" %}development version{% else %}v{{ app_version }}{% endif %}</span></footer>
   <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}"></script>
 </body>
 </html>

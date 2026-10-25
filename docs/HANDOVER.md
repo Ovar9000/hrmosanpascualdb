@@ -33,7 +33,7 @@ An HR records prototype for HRMO, running on synthetic data for about 420 people
 | Roles | HRMO, Office Head, Office Staff, Executive and Delegate, Auditor, Project Maintainer, Employee, System Admin. Each sees only what its role allows; the server checks every request. |
 | Audit trail | Every change and every view of a personnel record is logged in a trail that cannot be edited or deleted, with a tamper check the DPO can run independently. |
 | Accounts | Bulk employee accounts with one-time passwords that must be changed at first login and expire after 14 days. |
-| Quality | 298 automated tests, including forged-request ("Inspect Element") attacks. |
+| Quality | 301 automated tests, including forged-request ("Inspect Element") attacks. |
 
 Where things are: the code repository (GitHub, private), `README.md` (setup), `DECISIONS.md` (every rule and why), `docs/DEMO.md` (presentation run sheet).
 

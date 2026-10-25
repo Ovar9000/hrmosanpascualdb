@@ -5790,3 +5790,27 @@ class TalentTrackersTestCase(TestCase):
         self.client.force_login(self.emp_a_user)
         self.assertEqual(self.client.get(f"/leave/coc/{self.person_a.pk}/").status_code, 200)
         self.assertEqual(self.client.get(f"/leave/coc/{self.person_b.pk}/").status_code, 403)
+
+
+class AppVersionTestCase(TestCase):
+    """H9: the release number in the footer, with the exact build on hover."""
+
+    @override_settings(APP_VERSION="1.1.0", APP_BUILD="8d520fe, 2026-10-25")
+    def test_version_once_on_login_page(self):
+        page = self.client.get("/accounts/login/")
+        self.assertContains(page, "v1.1.0", count=1)
+        self.assertContains(page, 'title="Build 8d520fe, 2026-10-25"')
+
+    @override_settings(APP_VERSION="development", APP_BUILD="")
+    def test_development_without_build(self):
+        page = self.client.get("/accounts/login/")
+        self.assertContains(page, "development version")
+        self.assertNotContains(page, "title=\"Build")
+
+    def test_committed_version_is_semantic(self):
+        from django.conf import settings as django_settings
+
+        version = (django_settings.BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        changelog = (django_settings.BASE_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## {version} ", changelog)  # every release is described
