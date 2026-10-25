@@ -1,0 +1,285 @@
+/* My HR home page: one card per thing the person is responsible for, the urgent ones first. */
+:root {
+  --home-ink: #1f2937;
+  --home-muted: #5c6673;
+  --home-line: #e3e7ed;
+  --home-soft: #f4f6f9;
+  --tone-danger: #dc3545;
+  --tone-warning: #e0a800;
+  --tone-primary: #0d6efd;
+  --tone-success: #198754;
+  /* Appointment types, in Engagement.Type order (validated categorical palette). */
+  --type-elected: #2a78d6;
+  --type-plantilla: #eb6834;
+  --type-casual: #1baf7a;
+  --type-contractual: #eda100;
+  --type-jo: #e87ba4;
+  --type-cos: #008300;
+  --type-project: #6250d6;
+}
+
+.home-card {
+  background: #fff;
+  border: 1px solid var(--home-line);
+  border-radius: 0.6rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.home-card > .home-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.85rem 1.15rem 0.6rem;
+  border-bottom: 1px solid var(--home-line);
+}
+.home-card-head h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--home-ink);
+}
+.home-card-head a { font-size: 0.85rem; }
+.home-card-body { padding: 1rem 1.15rem; }
+.home-kicker {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--home-muted);
+}
+
+/* Greeting */
+.home-hero {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1rem;
+  border-left: 6px solid var(--tone-primary);
+}
+.home-hero.is-clear { border-left-color: var(--tone-success); }
+.home-hero.has-urgent { border-left-color: var(--tone-danger); }
+.home-hero h1 { font-size: 1.6rem; margin: 0.15rem 0 0.1rem; }
+.home-role {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: #e7f0ff;
+  color: #0a58ca;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.home-status { margin: 0.45rem 0 0; color: var(--home-ink); }
+
+/* Needs attention */
+.todo-list { list-style: none; margin: 0; padding: 0; }
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 1.15rem;
+  border-top: 1px solid var(--home-line);
+  border-left: 4px solid var(--tone-primary);
+  color: var(--home-ink);
+  text-decoration: none;
+}
+.todo-list li:first-child .todo-item { border-top: 0; }
+a.todo-item:hover { background: var(--home-soft); color: var(--home-ink); }
+.todo-item.tone-danger { border-left-color: var(--tone-danger); }
+.todo-item.tone-warning { border-left-color: var(--tone-warning); }
+.todo-n {
+  flex: none;
+  min-width: 2.6rem;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: right;
+}
+.tone-danger .todo-n { color: var(--tone-danger); }
+.tone-warning .todo-n { color: #997404; }
+.tone-primary .todo-n { color: var(--tone-primary); }
+.todo-label { flex: 1; }
+.todo-go { flex: none; font-size: 0.85rem; color: var(--tone-primary); white-space: nowrap; }
+
+/* Facts list (appointment, office) */
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.9rem 1.25rem;
+  margin: 0;
+}
+.fact-grid dt { font-size: 0.78rem; font-weight: 500; color: var(--home-muted); }
+.fact-grid dd { margin: 0.1rem 0 0; font-weight: 600; color: var(--home-ink); }
+.fact-grid dd small { display: block; font-weight: 400; color: var(--home-muted); }
+
+/* Bars */
+.meter {
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #e5e9ef;
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--tone-primary);
+}
+.meter.tone-warning > span { background: var(--tone-warning); }
+.meter.tone-danger > span { background: var(--tone-danger); }
+.meter.tone-success > span { background: var(--tone-success); }
+.meter-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--home-muted);
+}
+
+/* Leave balances */
+.balance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+@media (min-width: 768px) {
+  .balance-grid { grid-template-columns: 1fr 1fr 1.2fr 1.4fr; }
+}
+.balance {
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.5rem;
+  background: var(--home-soft);
+  border: 1px solid var(--home-line);
+}
+.balance.is-due { background: #fff8e1; border-color: #f3d27a; }
+.balance-n { font-size: 1.75rem; font-weight: 700; line-height: 1.1; color: var(--home-ink); }
+.balance-n small { font-size: 0.8rem; font-weight: 500; color: var(--home-muted); }
+.balance-sub { font-size: 0.78rem; color: var(--home-muted); margin-top: 0.15rem; }
+.pips { display: flex; gap: 0.3rem; margin: 0.45rem 0 0.2rem; }
+.pips span {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  border: 2px solid var(--tone-primary);
+}
+.pips span.on { background: var(--tone-primary); }
+
+/* Leave in progress */
+.leave-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--home-line);
+  border-radius: 0.5rem;
+  color: var(--home-ink);
+  text-decoration: none;
+}
+a.leave-row:hover { background: var(--home-soft); color: var(--home-ink); }
+
+/* Stat trio (office, workforce, desks) */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.75rem;
+}
+.stat {
+  display: block;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.5rem;
+  background: var(--home-soft);
+  border: 1px solid var(--home-line);
+  color: var(--home-ink);
+  text-decoration: none;
+}
+a.stat:hover { border-color: #b6c2d1; color: var(--home-ink); }
+.stat-n { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.stat-label { font-size: 0.8rem; color: var(--home-muted); }
+
+/* Workforce composition: one stacked bar, 2px gaps between segments, legend always shown */
+.stack {
+  display: flex;
+  gap: 2px;
+  height: 1.1rem;
+  margin: 0.6rem 0 0.75rem;
+}
+.stack > span { min-width: 4px; }
+.stack > span:first-child { border-radius: 4px 0 0 4px; }
+.stack > span:last-child { border-radius: 0 4px 4px 0; }
+.stack > span:only-child { border-radius: 4px; }
+.legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.3rem 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--home-ink);
+}
+.legend li { display: flex; align-items: center; gap: 0.45rem; }
+.legend i { flex: none; width: 0.75rem; height: 0.75rem; border-radius: 3px; }
+.legend b { margin-left: auto; font-weight: 600; }
+.legend small { color: var(--home-muted); min-width: 2.6rem; text-align: right; }
+.t-elected { background: var(--type-elected); }
+.t-plantilla { background: var(--type-plantilla); }
+.t-casual { background: var(--type-casual); }
+.t-contractual { background: var(--type-contractual); }
+.t-jo { background: var(--type-jo); }
+.t-cos { background: var(--type-cos); }
+.t-project { background: var(--type-project); }
+
+/* Dated lists: a calendar chip then the text */
+.dated { list-style: none; margin: 0; padding: 0; }
+.dated li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1.15rem;
+  border-top: 1px solid var(--home-line);
+}
+.dated li:first-child { border-top: 0; }
+.dated.in-body li { padding-left: 0; padding-right: 0; }
+.date-chip {
+  flex: none;
+  width: 2.9rem;
+  border-radius: 0.4rem;
+  overflow: hidden;
+  text-align: center;
+  border: 1px solid var(--home-line);
+  background: #fff;
+  line-height: 1.1;
+}
+.date-chip .m {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #6c7a8c;
+  padding: 0.1rem 0;
+}
+.date-chip .d { display: block; font-size: 1.05rem; font-weight: 700; padding: 0.15rem 0; color: var(--home-ink); }
+.k-holiday .date-chip .m { background: var(--tone-danger); }
+.k-leave .date-chip .m { background: var(--tone-success); }
+.k-event .date-chip .m { background: var(--tone-primary); }
+.dated .what { flex: 1; min-width: 0; }
+.dated .what small { display: block; color: var(--home-muted); }
+.tag {
+  flex: none;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--home-soft);
+  border: 1px solid var(--home-line);
+  color: var(--home-muted);
+}
+.tag.is-now { background: #fff3cd; border-color: #f3d27a; color: #664d03; }
+.tag.is-late { background: #f8d7da; border-color: #f1aeb5; color: #842029; }

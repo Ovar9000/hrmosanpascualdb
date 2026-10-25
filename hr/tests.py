@@ -720,12 +720,15 @@ class Step4CSecurityAndRolesTestCase(TestCase):
         self.assertNotContains(resp_b, "000-333-444-000")
 
     def test_executive_delegate_active_and_expired(self):
-        today = date(2026, 10, 5)
+        from django.utils import timezone
+
+        # Relative to today: is_executive() checks the delegation against the real date.
+        today = timezone.localdate()
         d = Delegate.objects.create(
             principal=self.mayor,
             delegate=self.delegate_user,
-            valid_from=date(2026, 10, 1),
-            valid_to=date(2026, 10, 15),
+            valid_from=today - timedelta(days=4),
+            valid_to=today + timedelta(days=10),
             notes="Covering Mayor leave",
         )
         self.assertTrue(is_active_delegate(self.delegate_user, today))
@@ -738,8 +741,8 @@ class Step4CSecurityAndRolesTestCase(TestCase):
         self.assertFalse(resp.context["can_view_rates"])
 
         # Expired delegation
-        d.valid_from = date(2026, 9, 1)
-        d.valid_to = date(2026, 9, 15)
+        d.valid_from = today - timedelta(days=34)
+        d.valid_to = today - timedelta(days=20)
         d.save()
         self.assertFalse(is_active_delegate(self.delegate_user))
         self.assertFalse(is_executive(self.delegate_user))
@@ -4956,8 +4959,23 @@ class LeaveWorkflowTestCase(TestCase):
         resp = self.client.get("/")
         self.assertContains(resp, "My leave")
         self.assertContains(resp, "10.000")
+        self.assertContains(resp, "My appointment")
+        self.assertNotContains(resp, "Workforce today")
         self.client.force_login(self.hrmo_user)
-        self.assertContains(self.client.get("/"), "HRMO desk")
+        resp = self.client.get("/")
+        self.assertContains(resp, "HRMO desk")
+        self.assertContains(resp, "Workforce today")
+        # Each role gets its own desk; office roles never see the municipality-wide counts.
+        self.client.force_login(self.head_a)
+        resp = self.client.get("/")
+        self.assertContains(resp, "My office")
+        self.assertNotContains(resp, "Workforce today")
+        self.client.force_login(self.mayor)
+        resp = self.client.get("/")
+        self.assertContains(resp, "Workforce today")
+        self.assertNotContains(resp, "HRMO desk")
+        self.client.force_login(self.auditor_user)
+        self.assertContains(self.client.get("/"), "Audit desk")
         self.client.force_login(self.sysadmin)
         self.assertEqual(self.client.get("/").status_code, 302)
 

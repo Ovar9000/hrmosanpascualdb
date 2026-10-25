@@ -17,20 +17,22 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
-from . import board, leave
+from . import board, leave, meetings, reminders
 from .audit import log_audit_event
 from .forms import (
     ApplicantForm, LeaveCreditForm, LeaveRequestForm, MemoForm, VacancyForm, sanitize_filename,
 )
 from .models import (
     Applicant, AuditLog, CalendarEvent, Engagement, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
-    Memo, MemoAcknowledgment, Office, Person, Vacancy,
+    Memo, MemoAcknowledgment, Office, Person, SalaryAction, Vacancy,
 )
 from .permissions import (
     can_approve_leave, can_manage_hr_records, can_view_applicants, can_view_leave_of, can_view_leave_register,
-    can_view_memo, can_view_plantilla_report, can_view_vacancies, get_user_office, has_all_office_scope,
-    is_hrmo, is_sysadmin, memo_ack_scope, memo_is_for,
+    can_view_memo, can_view_plantilla_report, can_view_trackers, can_view_vacancies, get_user_office,
+    has_all_office_scope, is_auditor, is_executive, is_hrmo, is_office_head, is_office_staff, is_sysadmin,
+    memo_ack_scope, memo_is_for,
 )
+from .salary_actions import add_years
 from .views import _xlsx_response
 
 Step = LeaveApprovalStep
@@ -56,27 +58,162 @@ def _decimal(value):
 # --- My HR home page (L8) ----------------------------------------------------------------
 
 
+AHEAD_DAYS = 45  # how far "Coming up" and "contracts ending" look ahead
+
+
+def _role_label(user, office):
+    if user.is_superuser:
+        return "Superuser"
+    if is_hrmo(user):
+        return "HRMO Staff"
+    if is_auditor(user):
+        return "Auditor · read-only"
+    if is_executive(user):
+        return "Executive"
+    if is_office_head(user):
+        return f"Office Head · {office.acronym or office.name}" if office else "Office Head"
+    if is_office_staff(user):
+        return "Office Staff"
+    return "Employee"
+
+
+def _my_panel(person, today):
+    """The employee's own appointment and leave card (L8). No salary grade or step: pay data (R6)."""
+    eng = leave.current_engagement(person)
+    if eng:
+        eng = Engagement.objects.select_related("office", "reports_to__person").get(pk=eng.pk)
+    contract = None
+    if eng and eng.end_date:
+        total = max((eng.end_date - eng.start_date).days, 1)
+        left = (eng.end_date - today).days
+        contract = {"left": left, "pct": min(max(round(100 * (total - max(left, 0)) / total), 0), 100),
+                    "soon": left <= AHEAD_DAYS}
+    summary = leave.summary(person, today)
+    return {
+        "summary": summary,
+        "open": LeaveRequest.objects.filter(person=person, status=LeaveRequest.Status.PENDING)
+                .prefetch_related("steps").order_by("start_date"),
+        "upcoming": LeaveRequest.objects.filter(person=person, status=LeaveRequest.Status.APPROVED,
+                                                end_date__gte=today).order_by("start_date")[:3],
+        "eng": eng,
+        "contract": contract,
+        "spl_pips": [i < summary["spl_left"] for i in range(int(summary["spl_allowance"]))],
+        "forced_pct": min(round(100 * summary["forced_taken"] / leave.FORCED_LEAVE_DAYS), 100),
+        "days_to_year_end": (summary["year_end"] - today).days,
+    }
+
+
+def _office_panel(office, today):
+    """An Office Head's own office: who is away this week, leave in progress, contracts ending.
+    The same facts the office calendar already shows them (DECISIONS R5)."""
+    staff = Engagement.objects.filter(office=office, status=Engagement.Status.ACTIVE).values("person_id")
+    week_end = today + timedelta(days=6)
+    away = list(LeaveRequest.objects.filter(
+        person__in=staff, status=LeaveRequest.Status.APPROVED, start_date__lte=week_end, end_date__gte=today,
+    ).select_related("person").order_by("start_date", "person__last_name")[:8])
+    return {
+        "office": office,
+        "staff": Person.objects.filter(pk__in=staff).count(),
+        "away": away,
+        "away_today": sum(1 for r in away if r.start_date <= today),
+        "pending": LeaveRequest.objects.filter(person__in=staff, status=LeaveRequest.Status.PENDING).count(),
+        "ending": [row for row in reminders.renewal_rows(today, office=office) if row["days"] <= AHEAD_DAYS][:5],
+    }
+
+
+def _workforce(today):
+    """People in active service by appointment type, for all-office roles (names-free counts)."""
+    counts = dict(Engagement.objects.filter(status=Engagement.Status.ACTIVE).values_list("type")
+                  .annotate(n=Count("person", distinct=True)).values_list("type", "n"))
+    total = Person.objects.filter(engagements__status=Engagement.Status.ACTIVE).distinct().count()
+    # Fixed order so a type keeps its color when another type has nobody.
+    parts = [{"type": value, "label": label, "n": counts[value], "pct": 100 * counts[value] / sum(counts.values())}
+             for value, label in Engagement.Type.choices if counts.get(value)]
+    return {
+        "total": total,
+        "parts": parts,
+        "offices": Office.objects.filter(engagements__status=Engagement.Status.ACTIVE).distinct().count(),
+        "on_leave_today": LeaveRequest.objects.filter(status=LeaveRequest.Status.APPROVED,
+                                                      start_date__lte=today, end_date__gte=today).count(),
+        "vacancies_open": Vacancy.objects.filter(status=Vacancy.Status.OPEN).count(),
+        "vacancies_screening": Vacancy.objects.filter(status=Vacancy.Status.SCREENING).count(),
+    }
+
+
+def _todo(my, inbox, unread, hrmo, today):
+    """What needs this person, most urgent first. Each item: tone, count, label, url.
+    HRMO's certify step is in the inbox already (leave.inbox), so it is not listed twice."""
+    items = []
+
+    def add(tone, n, one, many, url=""):
+        items.append({"tone": tone, "n": n, "label": one if n == 1 else many, "url": url})
+
+    if inbox:
+        add("warning", len(inbox), "leave application waiting for your signature",
+            "leave applications waiting for your signature", reverse("leave_inbox"))
+    if unread:
+        late = ", at least one past its comply-by date" if any(m.comply_by and m.comply_by < today for m in unread) else ""
+        add("danger" if late else "primary", len(unread), f"memo to read and acknowledge{late}",
+            f"memos to read and acknowledge{late}", reverse("memo_list") + "?show=unread")
+    if my and my["summary"]["eligible"] and my["summary"]["forced_left"]:
+        by = f"{my['summary']['year_end']:%b %d}"
+        add("warning", my["summary"]["forced_left"], f"day of forced leave to take by {by}",
+            f"days of forced leave to take by {by}", reverse("leave_file"))
+    if my and my["contract"] and my["contract"]["soon"]:
+        left = my["contract"]["left"]
+        if left < 0:
+            add("danger", -left, "day since your appointment ended: ask HRMO about renewal",
+                "days since your appointment ended: ask HRMO about renewal")
+        else:
+            add("warning", left, "day until your appointment ends: ask HRMO about renewal",
+                "days until your appointment ends: ask HRMO about renewal")
+    if hrmo:
+        for key, tone, url, one, many in [
+            ("lapsed", "danger", "tracker_renewals", "appointment past its end date and still active",
+             "appointments past their end date and still active"),
+            ("past_65", "danger", "tracker_retirement", "person past compulsory retirement age",
+             "people past compulsory retirement age"),
+            ("ending", "warning", "tracker_renewals", f"contract ending in the next {AHEAD_DAYS} days",
+             f"contracts ending in the next {AHEAD_DAYS} days"),
+            ("meetings", "warning", "tracker_meetings", "required meeting not yet held this period",
+             "required meetings not yet held this period"),
+            ("salary_due", "primary", "salary_action_list", "step increment or loyalty award due",
+             "step increments or loyalty awards due"),
+        ]:
+            if hrmo.get(key):
+                add(tone, hrmo[key], one, many, reverse(url))
+    rank = {"danger": 0, "warning": 1, "primary": 2}
+    return sorted(items, key=lambda i: rank[i["tone"]])
+
+
+def _coming_up(person, office, today):
+    """Holidays, this office's own events and the person's approved leave, in date order."""
+    until = today + timedelta(days=AHEAD_DAYS)
+    shown = Q(kind=CalendarEvent.Kind.HOLIDAY, office__isnull=True)
+    if office:
+        shown |= Q(office=office)
+    events = CalendarEvent.objects.filter(shown, start_date__range=(today, until)).order_by("start_date")[:6]
+    rows = [{"date": e.start_date, "event": e, "kind": "holiday" if e.kind == CalendarEvent.Kind.HOLIDAY else "event"}
+            for e in events]
+    if person:
+        rows += [{"date": max(r.start_date, today), "req": r, "kind": "leave"}
+                 for r in LeaveRequest.objects.filter(person=person, status=LeaveRequest.Status.APPROVED,
+                                                      end_date__gte=today, start_date__lte=until)]
+    return sorted(rows, key=lambda r: r["date"])[:6]
+
+
 def dashboard(request):
-    """Everything an employee would otherwise walk to the HR office or the bulletin board for."""
+    """Everything an employee would otherwise walk to the HR office or the bulletin board for,
+    plus the desk of each role: approvals, the office this week, or the whole workforce."""
     user = request.user
     today = timezone.localdate()
     person = _own_person(user)
-    my = None
-    if person:
-        my = {
-            "summary": leave.summary(person, today),
-            "open": LeaveRequest.objects.filter(person=person, status=LeaveRequest.Status.PENDING)
-                    .prefetch_related("steps").order_by("start_date"),
-            "upcoming": LeaveRequest.objects.filter(person=person, status=LeaveRequest.Status.APPROVED,
-                                                    end_date__gte=today).order_by("start_date")[:3],
-            "eng": leave.current_engagement(person),
-        }
+    office = get_user_office(user)
+    my = _my_panel(person, today) if person else None
     unread = list(board.unread_memos(person)[:5]) if person else []
+    inbox = leave.inbox(user) if can_approve_leave(user) else []
     open_vacancies = list(Vacancy.objects.filter(status=Vacancy.Status.OPEN, deadline__gte=today)
                           .select_related("office").order_by("deadline")[:5])
-    holidays = CalendarEvent.objects.filter(
-        kind=CalendarEvent.Kind.HOLIDAY, office__isnull=True, start_date__range=(today, today + timedelta(days=45))
-    ).order_by("start_date")[:4]
     hrmo = None
     if can_view_leave_register(user):
         hrmo = {
@@ -88,18 +225,45 @@ def dashboard(request):
             "vacancies": Vacancy.objects.filter(status__in=[Vacancy.Status.OPEN, Vacancy.Status.SCREENING]).count(),
             "memos": Memo.objects.filter(is_published=True, requires_ack=True).count(),
             "can_manage": can_manage_hr_records(user),
+            "is_auditor": is_auditor(user) and not is_hrmo(user),
             "last_month": (today.replace(day=1) - timedelta(days=1)),
         }
+        if can_view_trackers(user):
+            active_until = Engagement.objects.filter(status=Engagement.Status.ACTIVE, end_date__isnull=False)
+            hrmo.update({
+                "lapsed": active_until.filter(end_date__lt=today).count(),
+                "ending": len([r for r in reminders.renewal_rows(today) if 0 <= r["days"] <= AHEAD_DAYS]),
+                "salary_due": SalaryAction.objects.filter(status=SalaryAction.Status.DUE).count(),
+                "past_65": Person.objects.filter(
+                    birthdate__lte=add_years(today, -reminders.COMPULSORY_AGE),
+                    engagements__status=Engagement.Status.ACTIVE, engagements__type__in=reminders.GSIS_TYPES,
+                ).distinct().count(),
+                "meetings": meetings.attention_count(today),
+            })
+        if user.is_superuser or user.has_perm("hr.view_audit_log"):
+            week = timezone.now() - timedelta(days=7)
+            recent = AuditLog.objects.filter(timestamp__gte=week)
+            hrmo["audit"] = {
+                "changes": recent.filter(action__in=[AuditLog.Action.CREATE, AuditLog.Action.UPDATE,
+                                                     AuditLog.Action.DELETE]).count(),
+                "failed_logins": recent.filter(action=AuditLog.Action.FAILED_LOGIN).count(),
+                "denied": recent.filter(action=AuditLog.Action.PERMISSION_DENIED).count(),
+            }
+    todo = _todo(my, inbox, unread, hrmo, today)
     return render(request, "hr/dashboard.html", {
         "person": person,
         "my": my,
-        "inbox": leave.inbox(user) if can_approve_leave(user) else [],
+        "inbox": inbox,
+        "todo": todo,
         "unread": unread,
         "open_vacancies": open_vacancies,
-        "holidays": holidays,
+        "coming_up": _coming_up(person, office, today),
         "hrmo": hrmo,
+        "office_panel": _office_panel(office, today) if office and is_office_head(user) else None,
+        "workforce": _workforce(today) if has_all_office_scope(user) else None,
+        "role": _role_label(user, office),
         "today": today,
-        "can_view_people": has_all_office_scope(user) or bool(get_user_office(user)),
+        "can_view_people": has_all_office_scope(user) or bool(office),
     })
 
 
