@@ -46,3 +46,15 @@ def get_next_employee_no():
         seq.last_number += 1
         seq.save()
         return f"SP-{seq.last_number:05d}"
+
+
+def get_next_control_no(year):
+    """Race-safe control number for a certificate request, restarting each year: CR-2026-0001 (CR3)."""
+    with transaction.atomic():
+        seq, _ = EmployeeSequence.objects.select_for_update().get_or_create(
+            name=f"certificate-{year}",
+            defaults={"last_number": 0},
+        )
+        seq.last_number += 1
+        seq.save()
+        return f"CR-{year}-{seq.last_number:04d}"

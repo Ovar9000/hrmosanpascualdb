@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{% if for_self %}Request a document{% else %}Record a request{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if for_self %}{% url 'my_certificates' %}{% else %}{% url 'person_detail' person.pk %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<h1 class="h3 mb-1">{% if for_self %}Request a service record or certificate{% else %}Record a request for {{ person.full_name }}{% endif %}</h1>
+<p class="text-muted small">
+  {% if for_self %}HRMO prepares it from your appointment history, signs and seals it. You will see here when it is ready for release.
+  {% else %}For a walk-in, letter or email, including from a former employee, a representative or heirs. Check the authorization letter or proof of relationship when you release it.{% endif %}
+</p>
+<form method="post" class="card border-0 shadow-sm" novalidate>{% csrf_token %}
+  <div class="card-body">
+    {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+    <fieldset class="mb-3">
+      <legend class="form-label fw-semibold fs-6">Document <span class="text-danger" aria-hidden="true">*</span></legend>
+      {% for radio in form.kind %}
+        <div class="form-check">{{ radio.tag }} <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label></div>
+      {% endfor %}
+      <div class="form-text">A <b>service record</b> lists each appointment with its dates, status, salary and station; GSIS needs it for retirement and survivorship claims. A <b>certificate of employment</b> states the positions held, with the salary only if you ask for it with compensation.</div>
+      {% for error in form.kind.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    </fieldset>
+    <div class="row g-3">
+      {% for field in form.visible_fields %}{% if field.name != "kind" %}
+        <div class="col-12 {% if field.name == 'purpose' %}col-md-8{% elif field.name == 'copies' %}col-md-4{% else %}col-md-6{% endif %}" {% if field.name == 'requester_name' %}id="requester-name-col"{% endif %}>
+          <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="text-danger" aria-hidden="true">*</span>{% endif %}</label>
+          {{ field }}
+          {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+          {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
+  <div class="card-footer bg-white"><button class="btn btn-primary">{% if for_self %}Send to HRMO{% else %}Record request{% endif %}</button></div>
+</form>
+{% if not for_self %}
+<script>
+  (function () {
+    var who = document.getElementById("id_requester"), col = document.getElementById("requester-name-col");
+    if (!who || !col) return;
+    function sync() { col.hidden = who.value === "self"; }
+    who.addEventListener("change", sync); sync();
+  })();
+</script>
+{% endif %}
+{% endblock %}

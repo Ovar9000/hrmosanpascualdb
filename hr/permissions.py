@@ -424,3 +424,18 @@ def memo_ack_scope(user):
     if is_office_head(user):
         return get_user_office(user) or False
     return False
+
+
+# --- Service records and certificates of employment (DECISIONS CR5) --------------------------
+
+
+def can_view_certificate_requests(user):
+    """Every request and the printed documents (they show salaries, R6): HRMO and Auditor."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user)
+
+
+def can_manage_certificate_requests(user):
+    """Record requests for walk-ins and letters, prepare, release and decline: HRMO."""
+    return can_manage_hr_records(user) and can_view_certificate_requests(user)

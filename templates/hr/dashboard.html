@@ -17,6 +17,7 @@
   </div>
   <div class="d-flex flex-wrap gap-2">
     {% if my and my.eng %}<a class="btn btn-primary" href="{% url 'leave_file' %}">+ File leave</a>{% endif %}
+    {% if person %}<a class="btn btn-outline-primary" href="{% url 'certificate_new' %}">Request service record / COE</a>{% endif %}
     {% if inbox %}<a class="btn btn-warning" href="{% url 'leave_inbox' %}">Sign leave ({{ inbox|length }})</a>{% endif %}
     {% if can_view_people %}<a class="btn btn-outline-secondary" href="{% url 'person_list' %}">Personnel</a>{% endif %}
   </div>
@@ -219,7 +220,8 @@
           {% if hrmo.can_manage %}<a class="btn btn-sm btn-outline-primary" href="{% url 'leave_file' %}?paper=1">Enter a paper leave form</a>
           <a class="btn btn-sm btn-outline-primary" href="{% url 'leave_post_credits' %}?month={{ hrmo.last_month|date:'Y-m' }}">Post monthly leave credits</a>
           <a class="btn btn-sm btn-outline-primary" href="{% url 'memo_create' %}">Issue a memo</a>
-          <a class="btn btn-sm btn-outline-primary" href="{% url 'vacancy_create' %}">Post a vacancy</a>{% endif %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'vacancy_create' %}">Post a vacancy</a>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'certificate_list' %}">Service records &amp; certificates</a>{% endif %}
           <a class="btn btn-sm btn-outline-secondary" href="{% url 'leave_balances' %}">Leave balances list</a>
           <a class="btn btn-sm btn-outline-secondary" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a>
         </div>

@@ -1,5 +1,5 @@
 from django.urls import path
-from . import board_views, views
+from . import board_views, certificate_views, views
 
 urlpatterns = [
     path("leave/", board_views.my_leave, name="my_leave"),
@@ -26,6 +26,13 @@ urlpatterns = [
     path("memos/<int:pk>/edit/", board_views.memo_form, name="memo_edit"),
     path("memos/<int:pk>/acknowledgments/", board_views.memo_acks, name="memo_acks"),
     path("memos/<int:pk>/scan/", board_views.memo_scan, name="memo_scan"),
+    path("certificates/", certificate_views.certificate_list, name="certificate_list"),
+    path("certificates/mine/", certificate_views.my_certificates, name="my_certificates"),
+    path("certificates/new/", certificate_views.certificate_new, name="certificate_new"),
+    path("certificates/<int:pk>/", certificate_views.certificate_detail, name="certificate_detail"),
+    path("certificates/<int:pk>/print/", certificate_views.certificate_print, name="certificate_print"),
+    path("people/<int:person_pk>/certificates/new/", certificate_views.certificate_record, name="certificate_record"),
+    path("people/<int:pk>/preview/<str:kind>/", certificate_views.person_document_preview, name="person_document_preview"),
     path("offices/", views.office_list, name="office_list"),
     path("offices/<int:pk>/", views.office_detail, name="office_detail"),
     path("offices/chart/", views.office_tree, name="office_tree"),

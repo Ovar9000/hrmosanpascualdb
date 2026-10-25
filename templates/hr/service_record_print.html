@@ -1,0 +1,94 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Service record · {{ person.full_name }}{% endblock %}
+{% block back %}{% if req %}{% url 'certificate_detail' req.pk %}{% else %}{% url 'person_detail' person.pk %}{% endif %}{% endblock %}
+{% block page_size %}size: legal landscape;{% endblock %}
+{% block style %}
+  .sr { font-size: 9.5pt; }
+  .sr .center { text-align: center; }
+  .sr table.form-table th { font-size: 8pt; text-align: center; vertical-align: middle; }
+  .sr table.form-table td { font-size: 8.5pt; }
+  .sr .label { font-size: 7.5pt; color: #333; text-align: center; }
+  .preview-mark { border: 2px dashed #b02a37; color: #b02a37; padding: 4px 8px; font-weight: bold; text-align: center; margin-bottom: 6px; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet landscape sr">
+  {% if preview %}<div class="preview-mark">PREVIEW FOR CHECKING · NOT FOR RELEASE · record a request to print the copy to sign</div>{% endif %}
+  <div class="d-flex justify-content-between small-print">
+    <div>{% if req %}Control no. <b>{{ req.control_no }}</b>{% endif %}</div>
+    <div>Employee no. {{ person.employee_no }}</div>
+  </div>
+  <p class="center mb-1">Republic of the Philippines<br>Municipality of San Pascual<br>Bolod, San Pascual, Masbate</p>
+  <p class="center fw-bold fs-5 mb-0">SERVICE RECORD</p>
+  <p class="center small-print">(To be accomplished by employer)</p>
+
+  <table class="w-100 mb-2" style="border-collapse: collapse;">
+    <tr>
+      <td style="width: 9%;" class="fw-bold">NAME:</td>
+      <td class="text-center"><span class="line w-100 d-block">{{ person.last_name|upper }}</span><div class="label">(Surname)</div></td>
+      <td class="text-center"><span class="line w-100 d-block">{{ person.first_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</span><div class="label">(Given name)</div></td>
+      <td class="text-center"><span class="line w-100 d-block">{{ person.middle_name|upper|default:"&nbsp;" }}</span><div class="label">(Middle name)</div></td>
+      <td style="width: 26%;" class="small-print ps-2">(If married woman, give also full maiden name)</td>
+    </tr>
+    <tr>
+      <td class="fw-bold pt-2">BIRTH:</td>
+      <td class="text-center pt-2"><span class="line w-100 d-block">{{ person.birthdate|date:"F d, Y" }}</span><div class="label">(Date)</div></td>
+      <td class="text-center pt-2" colspan="2"><span class="line w-100 d-block">&nbsp;</span><div class="label">(Place)</div></td>
+      <td class="small-print ps-2 pt-2">(Date herein should be checked from birth or baptismal certificate or some other reliable documents)</td>
+    </tr>
+  </table>
+
+  <p class="small-print mb-2" style="text-indent: 3em;">This is to certify that the employee named herein above actually rendered services in this Office as shown by the service record below, each line of which is supported by appointment and other papers actually issued by this Office and approved by the authorities concerned.</p>
+
+  <table class="form-table">
+    <thead>
+      <tr>
+        <th colspan="2">SERVICE<br><span class="fw-normal">(Inclusive dates)</span></th>
+        <th colspan="3">RECORD OF APPOINTMENT</th>
+        <th colspan="2">OFFICE ENTITY / DIVISION</th>
+        <th rowspan="2">Leave of absence without pay</th>
+        <th colspan="2">SEPARATION</th>
+      </tr>
+      <tr>
+        <th style="width: 8%;">From</th><th style="width: 8%;">To</th>
+        <th>Designation</th><th style="width: 9%;">Status</th><th style="width: 11%;">Salary</th>
+        <th>Station / place of assignment</th><th style="width: 7%;">Branch</th>
+        <th style="width: 8%;">Date</th><th style="width: 9%;">Cause</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="text-nowrap">{{ r.start|date:"m/d/Y" }}</td>
+          <td class="text-nowrap">{% if r.end %}{{ r.end|date:"m/d/Y" }}{% else %}present{% endif %}</td>
+          <td>{{ r.designation }}{% if r.grade %}<div class="small-print text-muted">{{ r.grade }}</div>{% endif %}</td>
+          <td>{{ r.status }}</td>
+          <td class="text-end">{% if r.salary %}{{ r.salary }}{% elif r.salary_missing %}<span class="text-muted">*</span>{% endif %}</td>
+          <td>{{ r.station }}</td>
+          <td>LGU</td>
+          <td class="text-center">{% if r.lwop %}{{ r.lwop }} day{{ r.lwop|pluralize }}{% endif %}{% if r.suspended %}{% if r.lwop %}<br>{% endif %}Susp. {{ r.suspended }} day{{ r.suspended|pluralize }}{% endif %}</td>
+          <td class="text-nowrap">{{ r.separated_on|date:"m/d/Y" }}</td>
+          <td>{{ r.cause }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="10" class="text-center py-3">No appointment on record that counts as government service.</td></tr>
+      {% endfor %}
+      {% if rows %}<tr><td colspan="10" class="text-center small-print">*** nothing follows ***</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% if salary_missing %}<p class="small-print mb-0 mt-1">* Salary before a step increment: write in from the Notice of Salary Increment on file before signing.</p>{% endif %}
+
+  <p class="small-print mt-2 mb-0">Issued in compliance with Executive Order No. 54 dated August 10, 1954, and in accordance with Circular No. 58 dated August 10, 1954 of the System.</p>
+  <p class="small-print mb-0">{% if req %}Issued upon the request of {% if requested_by %}{{ requested_by }} ({{ req.get_requester_display|lower }}){% else %}the above-named{% endif %} for {{ req.purpose }}.{% endif %}</p>
+
+  <div class="d-flex justify-content-between align-items-end mt-3">
+    <div class="small-print">{{ today|date:"F d, Y" }}<div class="border-top border-dark mt-1" style="min-width: 160px;">Date</div></div>
+    <div class="text-center" style="min-width: 300px;">
+      <div class="text-start small-print">CERTIFIED CORRECT:</div>
+      <div class="sig fw-bold">{{ signatory|upper|default:"&nbsp;" }}</div>
+      <div class="small-print">{{ signatory_title }}</div>
+    </div>
+  </div>
+  <p class="small-print text-muted mt-3 mb-0">Generated from the HR records system from the appointments on file. Not valid without signature and dry seal.</p>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

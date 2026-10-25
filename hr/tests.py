@@ -27,6 +27,7 @@ from hr.models import (
     Applicant,
     AuditLog,
     CalendarEvent,
+    CertificateRequest,
     Delegate,
     Document,
     EmployeeSequence,
@@ -5154,3 +5155,203 @@ class PlantillaVacancyMemoTestCase(TestCase):
         self.assertIn("already added", out.getvalue())
         self.assertEqual(Vacancy.objects.filter(notes__startswith="[demo board]").count(), 2)
         self.assertTrue(Memo.objects.filter(number__endswith="(sample)").exists())
+
+
+class CertificateRequestTestCase(TestCase):
+    """CR1-CR6: service records and certificates of employment, requested online or at the counter."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        User = get_user_model()
+        self.emp_a = self.emp_a_user
+        # A former employee who kept an account: resigned, no active appointment.
+        self.former = Person.objects.create(employee_no="SP-00303", last_name="Mabini", first_name="Apolinario",
+                                            sex="M", birthdate=date(1964, 7, 23))
+        Engagement.objects.create(person=self.former, office=self.office_b, type=Engagement.Type.CASUAL,
+                                  position_title="Clerk I", start_date=date(2001, 1, 2), end_date=date(2004, 12, 31),
+                                  status=Engagement.Status.ENDED)
+        Engagement.objects.create(person=self.former, office=self.office_b, type=Engagement.Type.PLANTILLA,
+                                  position_title="Clerk II", salary_grade=6, step=2, item_number="SP-MTO-090",
+                                  rate=Decimal("20000.00"), rate_basis=Engagement.RateBasis.MONTHLY,
+                                  start_date=date(2005, 1, 3), end_date=date(2020, 6, 30),
+                                  status=Engagement.Status.RESIGNED)
+        self.former_user = User.objects.create_user("former", "former@test.com", "formerpass123")
+        UserProfile.objects.create(user=self.former_user, person=self.former)
+
+    def _file(self, user, **data):
+        self.client.force_login(user)
+        return self.client.post("/certificates/new/", {"kind": "service_record", "purpose": "GSIS claim",
+                                                       "copies": 1, "contact": "", **data})
+
+    # --- Service record rows (CR1) ----------------------------------------------------------
+
+    def test_service_rows_split_at_step_increments_and_mark_separation(self):
+        from hr.certificates import service_rows
+
+        eng = self.former.engagements.get(type=Engagement.Type.PLANTILLA)
+        SalaryAction.objects.create(kind=SalaryAction.Kind.STEP_INCREMENT, person=self.former, engagement=eng,
+                                    milestone="Step 2", status=SalaryAction.Status.ISSUED, service_from=date(2005, 1, 3),
+                                    due_date=date(2008, 1, 3), from_step=1, to_step=2, effective_date=date(2008, 1, 3))
+        ServiceInterruption.objects.create(person=self.former, kind=ServiceInterruption.Kind.LWOP,
+                                           start_date=date(2010, 3, 1), end_date=date(2010, 3, 10))
+        Engagement.objects.create(person=self.former, office=self.office_b, type=Engagement.Type.JOB_ORDER,
+                                  position_title="Encoder", start_date=date(2021, 1, 4), end_date=date(2021, 6, 30),
+                                  status=Engagement.Status.ENDED)
+        rows = service_rows(self.former)
+        self.assertEqual([(r["designation"], r["start"], r["end"]) for r in rows], [
+            ("Clerk I", date(2001, 1, 2), date(2004, 12, 31)),
+            ("Clerk II", date(2005, 1, 3), date(2008, 1, 2)),
+            ("Clerk II", date(2008, 1, 3), date(2020, 6, 30)),
+        ])  # the job order is not government service
+        self.assertEqual(rows[0]["cause"], "")  # followed by a new appointment, not a separation
+        self.assertEqual([r["grade"] for r in rows[1:]], ["SG 6, step 1", "SG 6, step 2"])
+        self.assertEqual(rows[1]["salary"], "")
+        self.assertTrue(rows[1]["salary_missing"])
+        self.assertEqual(rows[2]["salary"], "₱240,000.00 p.a.")
+        self.assertEqual((rows[2]["lwop"], rows[2]["cause"], rows[2]["separated_on"]), (10, "Resigned", date(2020, 6, 30)))
+
+    def test_last_ended_contract_is_end_of_contract(self):
+        from hr.certificates import service_rows
+
+        self.former.engagements.filter(type=Engagement.Type.PLANTILLA).delete()
+        self.assertEqual(service_rows(self.former)[-1]["cause"], "End of contract")
+
+    # --- Requests (CR2) ---------------------------------------------------------------------
+
+    def test_employee_requests_online_with_control_number(self):
+        resp = self._file(self.emp_a, contact="0917-000-0000")
+        req = CertificateRequest.objects.get()
+        self.assertRedirects(resp, f"/certificates/{req.pk}/")
+        self.assertEqual((req.person, req.received_via, req.requester, req.status, req.filed_by),
+                         (self.person_a, "online", "self", "pending", self.emp_a))
+        self.assertRegex(req.control_no, r"^CR-\d{4}-0001$")
+        self._file(self.emp_a, kind="coe")
+        self.assertTrue(CertificateRequest.objects.filter(control_no__endswith="-0002").exists())
+
+    def test_former_employee_can_request_and_sees_past_tense(self):
+        self._file(self.former_user, kind="coe_pay", purpose="Employment abroad")
+        req = CertificateRequest.objects.get(person=self.former)
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/certificates/{req.pk}/print/")
+        self.assertContains(resp, "was employed")
+        self.assertContains(resp, "MR. APOLINARIO MABINI")
+        self.assertContains(resp, "₱20,000.00 a month")
+        self.assertContains(resp, req.control_no)
+        self.assertNotContains(resp, "PREVIEW")
+
+    def test_job_order_only_cannot_ask_for_service_record(self):
+        self.person_a.engagements.update(type=Engagement.Type.JOB_ORDER, salary_grade=None, step=None, item_number="")
+        resp = self._file(self.emp_a)
+        self.assertContains(resp, "not government service")
+        self.assertFalse(CertificateRequest.objects.exists())
+
+    def test_open_request_limit(self):
+        for _ in range(5):
+            self._file(self.emp_a)
+        resp = self._file(self.emp_a)
+        self.assertContains(resp, "already have 5 requests")
+        self.assertEqual(CertificateRequest.objects.count(), 5)
+
+    def test_hrmo_records_request_from_heir_of_former_employee(self):
+        self.client.force_login(self.hrmo_user)
+        url = f"/people/{self.former.pk}/certificates/new/"
+        resp = self.client.post(url, {"kind": "service_record", "purpose": "GSIS survivorship claim", "copies": 2,
+                                      "received_via": "letter", "requester": "heir", "requester_name": ""})
+        self.assertContains(resp, "Give the name of the representative or heir")
+        self.client.post(url, {"kind": "service_record", "purpose": "GSIS survivorship claim", "copies": 2,
+                               "received_via": "letter", "requester": "heir", "requester_name": "Maria Mabini"})
+        req = CertificateRequest.objects.get()
+        self.assertEqual((req.requester_name, req.received_via, req.copies), ("Maria Mabini", "letter", 2))
+        resp = self.client.get(f"/certificates/{req.pk}/print/")
+        self.assertContains(resp, "SERVICE RECORD")
+        self.assertContains(resp, "Maria Mabini (heir or next of kin)")
+        # HRMO's form cannot claim the request was filed online by the person.
+        self.client.post(url, {"kind": "coe", "purpose": "x", "copies": 1, "received_via": "online",
+                               "requester": "self"})
+        self.assertEqual(CertificateRequest.objects.count(), 1)
+
+    # --- Who sees what (CR5) ----------------------------------------------------------------
+
+    def test_print_is_hrmo_and_auditor_only_and_audited(self):
+        self._file(self.emp_a)
+        req = CertificateRequest.objects.get()
+        self.assertEqual(self.client.get(f"/certificates/{req.pk}/").status_code, 200)
+        self.assertEqual(self.client.get(f"/certificates/{req.pk}/print/").status_code, 403)  # pay data (R6)
+        for user in (self.head_a, self.mayor, self.staff_a, self.sysadmin, self.former_user):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get(f"/certificates/{req.pk}/").status_code, 403, user)
+            self.assertEqual(self.client.get("/certificates/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.get(f"/certificates/{req.pk}/print/").status_code, 200)
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, object_repr__contains=req.control_no).exists())
+        self.assertEqual(self.client.get(f"/people/{self.person_a.pk}/certificates/new/").status_code, 403)
+        self.client.force_login(self.hrmo_user)
+        self.assertEqual(self.client.get(f"/people/{self.person_a.pk}/certificates/new/").status_code, 200)
+
+    def test_preview_from_person_record(self):
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"/people/{self.person_a.pk}/preview/service_record/")
+        self.assertContains(resp, "NOT FOR RELEASE")
+        self.assertContains(resp, "Executive Assistant IV")
+        self.assertEqual(self.client.get(f"/people/{self.person_a.pk}/preview/bogus/").status_code, 403)
+        self.client.force_login(self.emp_a)
+        self.assertEqual(self.client.get(f"/people/{self.person_a.pk}/preview/coe/").status_code, 403)
+
+    # --- Workflow (CR3) ---------------------------------------------------------------------
+
+    def _act(self, user, req, action, **data):
+        self.client.force_login(user)
+        req.refresh_from_db()
+        return self.client.post(f"/certificates/{req.pk}/", {"action": action, "version": req.version, **data})
+
+    def test_prepare_release_and_home_page(self):
+        self._file(self.emp_a)
+        req = CertificateRequest.objects.get()
+        self.assertEqual(self._act(self.emp_a, req, "ready").status_code, 403)
+        self._act(self.hrmo_user, req, "ready")
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.prepared_by), ("ready", self.hrmo_user))
+        self.client.force_login(self.emp_a)
+        self.assertContains(self.client.get("/"), "document ready for release at HRMO")
+        self._act(self.hrmo_user, req, "release", released_to="")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "ready")
+        self._act(self.hrmo_user, req, "release", released_to="Jose Rizal", note="UMID")
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.released_to, req.note), ("released", "Jose Rizal", "UMID"))
+        self.assertIsNotNone(req.released_at)
+
+    def test_decline_needs_reason_and_stale_version_refused(self):
+        self._file(self.emp_a)
+        req = CertificateRequest.objects.get()
+        self._act(self.hrmo_user, req, "decline")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "pending")
+        self.client.post(f"/certificates/{req.pk}/", {"action": "ready", "version": req.version - 1})
+        req.refresh_from_db()
+        self.assertEqual(req.status, "pending")
+        self._act(self.hrmo_user, req, "decline", note="Bring an authorization letter.")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "declined")
+
+    def test_only_the_filer_cancels_while_pending(self):
+        self._file(self.emp_a)
+        req = CertificateRequest.objects.get()
+        self.assertEqual(self._act(self.hrmo_user, req, "cancel").status_code, 403)
+        self._act(self.emp_a, req, "cancel")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "cancelled")
+        self.client.force_login(self.hrmo_user)
+        self.client.post(f"/people/{self.person_a.pk}/certificates/new/", {
+            "kind": "coe", "purpose": "Loan", "copies": 1, "received_via": "walk_in", "requester": "self"})
+        recorded = CertificateRequest.objects.get(received_via="walk_in")
+        self.assertEqual(self._act(self.emp_a, recorded, "cancel").status_code, 403)
+
+    def test_db_requires_release_details(self):
+        self._file(self.emp_a)
+        req = CertificateRequest.objects.get()
+        req.status = CertificateRequest.Status.RELEASED
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            req.save()

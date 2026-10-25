@@ -1,0 +1,57 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}{% if only_contracts %}Certification of service{% else %}Certificate of employment{% endif %} · {{ person.full_name }}{% endblock %}
+{% block back %}{% if req %}{% url 'certificate_detail' req.pk %}{% else %}{% url 'person_detail' person.pk %}{% endif %}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .coe { font-size: 12pt; line-height: 1.6; }
+  .coe .center { text-align: center; }
+  .coe p.body { text-align: justify; text-indent: 3em; }
+  .coe table.form-table td, .coe table.form-table th { font-size: 10.5pt; }
+  .preview-mark { border: 2px dashed #b02a37; color: #b02a37; padding: 4px 8px; font-weight: bold; text-align: center; margin-bottom: 6px; font-size: 10pt; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait coe" style="min-height: 0;">
+  {% if preview %}<div class="preview-mark">PREVIEW FOR CHECKING · NOT FOR RELEASE · record a request to print the copy to sign</div>{% endif %}
+  <div class="d-flex justify-content-end small-print">{% if req %}Control no. <b class="ms-1">{{ req.control_no }}</b>{% endif %}</div>
+  <p class="center mb-1">Republic of the Philippines<br>Municipality of San Pascual<br>Bolod, San Pascual, Masbate</p>
+  <p class="center fw-bold small">OFFICE OF THE MUNICIPAL HUMAN RESOURCE MANAGEMENT OFFICER</p>
+  <p class="center fw-bold fs-4 mt-4 mb-4">{{ title }}</p>
+
+  <p class="fw-bold">TO WHOM IT MAY CONCERN:</p>
+
+  {% if rows %}
+  <p class="body">This is to certify that <b>{% if honorific %}{{ honorific|upper }} {% endif %}{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</b>
+    {% if only_contracts %}{% if in_service %}is rendering{% else %}has rendered{% endif %} services to the Municipal Government of San Pascual, Masbate under a job order or contract of service, which does not create an employer-employee relationship and is not government service, as follows:
+    {% else %}{% if in_service %}is{% else %}was{% endif %} employed in the Municipal Government of San Pascual, Masbate{% if rows|length == 1 %} as <b>{{ latest.position }}</b> ({{ latest.status }}) at the {{ latest.office }} from {{ latest.start|date:"F d, Y" }} {% if latest.end %}to {{ latest.end|date:"F d, Y" }}{% else %}to the present{% endif %}{% if pay %}, with a {% if in_service %}{% else %}last {% endif %}compensation of <b>{{ pay }}</b>{% endif %}.{% else %} as follows:{% endif %}
+    {% endif %}
+  </p>
+
+  {% if rows|length > 1 or only_contracts %}
+  <table class="form-table mb-3">
+    <thead><tr><th>Position</th><th>Office</th><th>Status</th><th>From</th><th>To</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+        <tr><td>{{ r.position }}</td><td>{{ r.office }}</td><td>{{ r.status }}</td><td class="text-nowrap">{{ r.start|date:"M d, Y" }}</td><td class="text-nowrap">{% if r.end %}{{ r.end|date:"M d, Y" }}{% else %}present{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pay %}<p class="body">{% if in_service %}Present{% else %}Last{% endif %} compensation as {{ latest.position }}: <b>{{ pay }}</b>.</p>{% endif %}
+  {% endif %}
+  {% if with_pay and not pay %}<p class="body">Compensation: ______________________ (write in from the appointment on file before signing).</p>{% endif %}
+  {% else %}
+  <p class="body">No appointment or contract is on record for {{ person.full_name }}.</p>
+  {% endif %}
+
+  <p class="body">This certification is issued upon the request of {% if requested_by %}{{ requested_by }}{% if req %} ({{ req.get_requester_display|lower }}){% endif %}{% else %}the above-named{% endif %}{% if req %} for {{ req.purpose }}{% else %} for whatever legal purpose it may serve{% endif %}.</p>
+  <p class="body">Issued this {{ day }} day of {{ today|date:"F Y" }} at San Pascual, Masbate.</p>
+
+  <div class="d-flex justify-content-end mt-5">
+    <div class="text-center" style="min-width: 300px;">
+      <div class="sig fw-bold">{{ signatory|upper|default:"&nbsp;" }}</div>
+      <div class="small">{{ signatory_title }}</div>
+    </div>
+  </div>
+  <p class="small-print text-muted mt-5 mb-0">Not valid without signature and dry seal.{% if req %} Verify with the HRMO, quoting control no. {{ req.control_no }}.{% endif %}</p>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

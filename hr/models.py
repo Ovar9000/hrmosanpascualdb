@@ -1202,6 +1202,100 @@ class MemoAcknowledgment(models.Model):
         return f"{self.person} read {self.memo.number}"
 
 
+# --- Service records and certificates of employment (DECISIONS CR1-CR6) ----------------
+
+
+class CertificateRequest(models.Model):
+    """A request for a service record or certificate of employment, filed online by the person
+    or recorded by HRMO for a walk-in, letter or email, including from former employees and heirs."""
+
+    class Kind(models.TextChoices):
+        SERVICE_RECORD = "service_record", "Service record"
+        COE = "coe", "Certificate of employment"
+        COE_PAY = "coe_pay", "Certificate of employment with compensation"
+
+    class Via(models.TextChoices):
+        ONLINE = "online", "Online"
+        WALK_IN = "walk_in", "Walk-in"
+        LETTER = "letter", "Letter or email"
+
+    class Requester(models.TextChoices):
+        SELF = "self", "The person named"
+        REPRESENTATIVE = "representative", "A representative (with authorization letter)"
+        HEIR = "heir", "Heir or next of kin"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Being prepared"
+        READY = "ready", "Ready for release"
+        RELEASED = "released", "Released"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    OPEN_STATUSES = [Status.PENDING, Status.READY]
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="certificate_requests")
+    kind = models.CharField("Document", max_length=20, choices=Kind.choices)
+    purpose = models.CharField(
+        max_length=200, help_text="e.g. GSIS retirement claim, loan application, employment abroad."
+    )
+    copies = models.PositiveSmallIntegerField(default=1)
+    received_via = models.CharField(max_length=20, choices=Via.choices, default=Via.ONLINE)
+    requester = models.CharField("Requested by", max_length=20, choices=Requester.choices, default=Requester.SELF)
+    requester_name = models.CharField(
+        "Requester's name", max_length=200, blank=True, help_text="When someone else asks for the person."
+    )
+    contact = models.CharField(
+        "Contact for release", max_length=200, blank=True,
+        help_text="Mobile or email where HRMO can say it is ready.",
+    )
+    control_no = models.CharField("Control no.", max_length=20, unique=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    filed_at = models.DateTimeField(auto_now_add=True)
+    filed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    prepared_at = models.DateTimeField(null=True, blank=True)
+    prepared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_to = models.CharField(max_length=200, blank=True)
+    note = models.TextField(
+        blank=True, help_text="Release details (ID presented, authorization letter) or the reason for declining."
+    )
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-filed_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(copies__range=(1, 10)),
+                name="certificaterequest_copies_range",
+                violation_error_message="Copies must be 1 to 10.",
+            ),
+            models.CheckConstraint(
+                condition=Q(requester="self") | ~Q(requester_name=""),
+                name="certificaterequest_requester_named",
+                violation_error_message="Give the name of the representative or heir.",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="released") | (~Q(released_to="") & Q(released_at__isnull=False)),
+                name="certificaterequest_released_to",
+                violation_error_message="Record who received the document.",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="declined") | ~Q(note=""),
+                name="certificaterequest_declined_reason",
+                violation_error_message="Give the reason for declining.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.control_no} {self.get_kind_display()} for {self.person}"
+
+    @property
+    def is_open(self):
+        return self.status in self.OPEN_STATUSES
 # --- User Profile -----------------------------------------------------------
 
 

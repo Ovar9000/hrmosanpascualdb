@@ -23,7 +23,7 @@ from .forms import (
     ApplicantForm, LeaveCreditForm, LeaveRequestForm, MemoForm, VacancyForm, sanitize_filename,
 )
 from .models import (
-    Applicant, AuditLog, CalendarEvent, Engagement, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
+    Applicant, AuditLog, CalendarEvent, CertificateRequest, Engagement, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
     Memo, MemoAcknowledgment, Office, Person, SalaryAction, Vacancy,
 )
 from .permissions import (
@@ -140,7 +140,7 @@ def _workforce(today):
     }
 
 
-def _todo(my, inbox, unread, hrmo, today):
+def _todo(my, inbox, unread, hrmo, today, ready=0):
     """What needs this person, most urgent first. Each item: tone, count, label, url.
     HRMO's certify step is in the inbox already (leave.inbox), so it is not listed twice."""
     items = []
@@ -155,6 +155,9 @@ def _todo(my, inbox, unread, hrmo, today):
         late = ", at least one past its comply-by date" if any(m.comply_by and m.comply_by < today for m in unread) else ""
         add("danger" if late else "primary", len(unread), f"memo to read and acknowledge{late}",
             f"memos to read and acknowledge{late}", reverse("memo_list") + "?show=unread")
+    if ready:
+        add("primary", ready, "document ready for release at HRMO: bring a valid ID",
+            "documents ready for release at HRMO: bring a valid ID", reverse("my_certificates"))
     if my and my["summary"]["eligible"] and my["summary"]["forced_left"]:
         by = f"{my['summary']['year_end']:%b %d}"
         add("warning", my["summary"]["forced_left"], f"day of forced leave to take by {by}",
@@ -179,6 +182,8 @@ def _todo(my, inbox, unread, hrmo, today):
              "required meetings not yet held this period"),
             ("salary_due", "primary", "salary_action_list", "step increment or loyalty award due",
              "step increments or loyalty awards due"),
+            ("certificates", "warning", "certificate_list", "service record or certificate to prepare",
+             "service records or certificates to prepare"),
         ]:
             if hrmo.get(key):
                 add(tone, hrmo[key], one, many, reverse(url))
@@ -224,6 +229,8 @@ def dashboard(request):
                                                           start_date__lte=today, end_date__gte=today).count(),
             "vacancies": Vacancy.objects.filter(status__in=[Vacancy.Status.OPEN, Vacancy.Status.SCREENING]).count(),
             "memos": Memo.objects.filter(is_published=True, requires_ack=True).count(),
+            "certificates": CertificateRequest.objects.filter(status=CertificateRequest.Status.PENDING).count()
+                            if can_manage_hr_records(user) else 0,
             "can_manage": can_manage_hr_records(user),
             "is_auditor": is_auditor(user) and not is_hrmo(user),
             "last_month": (today.replace(day=1) - timedelta(days=1)),
@@ -249,7 +256,9 @@ def dashboard(request):
                 "failed_logins": recent.filter(action=AuditLog.Action.FAILED_LOGIN).count(),
                 "denied": recent.filter(action=AuditLog.Action.PERMISSION_DENIED).count(),
             }
-    todo = _todo(my, inbox, unread, hrmo, today)
+    ready = (CertificateRequest.objects.filter(person=person, status=CertificateRequest.Status.READY).count()
+             if person else 0)
+    todo = _todo(my, inbox, unread, hrmo, today, ready)
     return render(request, "hr/dashboard.html", {
         "person": person,
         "my": my,

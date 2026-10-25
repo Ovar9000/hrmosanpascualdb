@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}My certificates{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Service records and certificates</h1>
+    <div class="text-muted small">{{ person.full_name }} · ask HRMO here instead of writing a letter. You will see when it is ready; bring a valid ID when you pick it up, or send someone with your authorization letter.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'certificate_new' %}">+ Request a document</a>
+</div>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">In progress</div>
+  <div class="list-group list-group-flush">
+    {% for req in open %}
+      <a class="list-group-item list-group-item-action" href="{% url 'certificate_detail' req.pk %}">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <div class="fw-semibold">{{ req.get_kind_display }}</div>
+            <div class="small text-muted">{{ req.control_no }} · for {{ req.purpose }} · asked {{ req.filed_at|date:"M d, Y" }}</div>
+          </div>
+          {% include "hr/_certificate_status.html" %}
+        </div>
+        {% if req.status == "ready" %}<div class="small text-success mt-1">Ready since {{ req.prepared_at|date:"M d, Y" }}. Pick it up at the HRMO with a valid ID.</div>{% endif %}
+      </a>
+    {% empty %}
+      <div class="list-group-item text-muted small">Nothing in progress.{% if has_service_record %} A service record is what GSIS, banks and other agencies usually ask for.{% endif %}</div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if page.object_list %}
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white fw-bold py-2">Earlier requests</div>
+  <div class="list-group list-group-flush">
+    {% for req in page %}
+      <a class="list-group-item list-group-item-action" href="{% url 'certificate_detail' req.pk %}">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <div class="fw-semibold">{{ req.get_kind_display }}</div>
+            <div class="small text-muted">{{ req.control_no }} · for {{ req.purpose }} · asked {{ req.filed_at|date:"M d, Y" }}</div>
+          </div>
+          {% include "hr/_certificate_status.html" %}
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-2"><ul class="pagination pagination-sm">
+  {% if page.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page.previous_page_number }}">Newer</a></li>{% endif %}
+  {% if page.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page.next_page_number }}">Older</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endif %}
+{% endblock %}

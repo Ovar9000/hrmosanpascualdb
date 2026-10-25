@@ -24,10 +24,11 @@ An HR records prototype for HRMO, running on synthetic data for about 420 people
 | Plantilla of Personnel | The posted Plantilla generated from the appointments, by office and item number, with vacant items marked. Print and Excel. HRMO and Auditor only. |
 | Vacancies and HRMPSB | Vacancy notices for everyone, with an "I'm interested" button for employees. HRMO tracks applicants and their documents, and prints the request for publication and a draft HRMPSB resolution. |
 | Memos | Memos addressed to everyone, an office or chosen people; each employee acknowledges online instead of signing a routing slip, and HRMO and office heads see who has not. Deadlines go on the calendar. |
+| Service records and COEs | The service record (GSIS layout) and certificate of employment, with or without compensation, generated from the appointment history. Employees, including former employees with an account, request online and see when it is ready; HRMO records walk-in, letter and email requests, including from representatives and heirs. Each has a control number and is tracked to release (who received it, ID seen). |
 | Roles | HRMO, Office Head, Office Staff, Executive and Delegate, Auditor, Project Maintainer, Employee, System Admin. Each sees only what its role allows; the server checks every request. |
 | Audit trail | Every change and every view of a personnel record is logged in a trail that cannot be edited or deleted, with a tamper check the DPO can run independently. |
 | Accounts | Bulk employee accounts with one-time passwords that must be changed at first login and expire after 14 days. |
-| Quality | 176 automated tests, including forged-request ("Inspect Element") attacks. |
+| Quality | 278 automated tests, including forged-request ("Inspect Element") attacks. |
 
 Where things are: the code repository (GitHub, private), `README.md` (setup), `DECISIONS.md` (every rule and why), `docs/DEMO.md` (presentation run sheet).
 
@@ -79,5 +80,6 @@ A live system holding 420 people's personal data needs a named owner who:
 2. Office network only, or public internet access?
 3. The confirmed leave approval order (built as office head, HRMO, Mayor; one setting changes it).
 4. Sample Excel sheets for the import, with personal data blanked out.
+4a. Whether former employees keep an account to request service records online, or always go through HRMO (CR6), and whether job order and contract of service stay off the service record (CR1).
 5. Who maintains projects: HRMO, Planning, or Budget? (P4)
 6. Which reports to build first.

@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, Applicant, CalendarEvent, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
+    FAKE_ID_FIELDS, Applicant, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
     MeetingSeries, Memo, Person, Project, ServiceInterruption, Vacancy,
 )
 from .permissions import can_view_ids, can_view_pay
@@ -913,4 +913,58 @@ class MemoForm(forms.ModelForm):
             cleaned["office"] = None
         if audience != Memo.Audience.CHOSEN:
             cleaned["members"] = Person.objects.none()
+        return cleaned
+
+
+class CertificateRequestForm(forms.ModelForm):
+    """A request filed online by the person (CR2). HRMO's version adds how it came in and who asked."""
+
+    class Meta:
+        model = CertificateRequest
+        fields = ["kind", "purpose", "copies", "contact"]
+        widgets = {"kind": forms.RadioSelect}
+
+    def __init__(self, *args, person=None, **kwargs):
+        self.person = person
+        super().__init__(*args, **kwargs)
+        _bootstrap(self)
+        self.fields["kind"].choices = CertificateRequest.Kind.choices
+        self.fields["kind"].widget.attrs["class"] = "form-check-input"
+        self.fields["copies"].widget.attrs.update({"min": 1, "max": 10})
+
+    def clean_copies(self):
+        copies = self.cleaned_data["copies"]
+        if not 1 <= copies <= 10:
+            raise ValidationError("Copies must be 1 to 10.")
+        return copies
+
+    def clean(self):
+        from .certificates import has_service_record
+
+        cleaned = super().clean()
+        if (cleaned.get("kind") == CertificateRequest.Kind.SERVICE_RECORD and self.person is not None
+                and not has_service_record(self.person)):
+            self.add_error("kind", "The record has only job order or contract of service work, which is not "
+                                   "government service and has no service record. Ask for a certificate instead.")
+        return cleaned
+
+
+class CertificateRecordForm(CertificateRequestForm):
+    """HRMO records a walk-in, letter or email request, including from former employees and heirs."""
+
+    class Meta(CertificateRequestForm.Meta):
+        fields = ["kind", "purpose", "copies", "received_via", "requester", "requester_name", "contact"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["received_via"].choices = [
+            c for c in CertificateRequest.Via.choices if c[0] != CertificateRequest.Via.ONLINE
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("requester") != CertificateRequest.Requester.SELF and not cleaned.get("requester_name", "").strip():
+            self.add_error("requester_name", "Give the name of the representative or heir.")
+        if cleaned.get("requester") == CertificateRequest.Requester.SELF:
+            cleaned["requester_name"] = ""
         return cleaned

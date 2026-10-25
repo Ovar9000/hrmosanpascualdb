@@ -14,7 +14,21 @@
         <h1 class="h3 mb-1">{{ person.full_name }}</h1>
         <div class="text-muted font-monospace">Employee No: {{ person.employee_no }}</div>
       </div>
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        {% if certificates %}
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Service record / COE</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              {% if certificates.manage %}<li><a class="dropdown-item" href="{% url 'certificate_record' person.pk %}">Record a request…</a></li><li><hr class="dropdown-divider"></li>{% endif %}
+              <li><h6 class="dropdown-header">Preview (not for release)</h6></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'service_record' %}">Service record</a></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'coe' %}">Certificate of employment</a></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'coe_pay' %}">Certificate with compensation</a></li>
+              {% if certificates.recent %}<li><hr class="dropdown-divider"></li><li><h6 class="dropdown-header">Recent requests</h6></li>
+              {% for req in certificates.recent %}<li><a class="dropdown-item small" href="{% url 'certificate_detail' req.pk %}">{{ req.control_no }} · {{ req.get_kind_display }} · {{ req.get_status_display|lower }}</a></li>{% endfor %}{% endif %}
+            </ul>
+          </div>
+        {% endif %}
         {% if can_manage_records %}
           <a href="{% url 'person_edit' person.pk %}" class="btn btn-sm btn-outline-primary">
             Edit Details

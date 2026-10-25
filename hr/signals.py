@@ -19,6 +19,7 @@ from .models import (
     Applicant,
     AuditLog,
     CalendarEvent,
+    CertificateRequest,
     Delegate,
     Document,
     Engagement,
@@ -64,6 +65,7 @@ AUDITED_MODELS = (
     Applicant,
     Memo,
     MemoAcknowledgment,
+    CertificateRequest,
     User,
     Group,
 )

@@ -6,7 +6,7 @@ from .models import SalaryAction
 from .meetings import needs_attention as meetings_need_attention
 from .reminders import needs_attention
 from .permissions import (
-    can_approve_leave, can_view_leave_register, can_view_office_tree, can_view_plantilla_report,
+    can_approve_leave, can_view_certificate_requests, can_view_leave_register, can_view_office_tree, can_view_plantilla_report,
     can_view_salary_actions, get_user_office, is_sysadmin,
 )
 
@@ -38,6 +38,7 @@ def board_nav(request):
 
     def links():
         from . import board, leave
+        from .models import CertificateRequest
 
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
@@ -53,6 +54,11 @@ def board_nav(request):
             "register": can_view_leave_register(user),
             "plantilla": can_view_plantilla_report(user),
             "unread": board.unread_memos(person).count() if person else 0,
+            "certificates": can_view_certificate_requests(user),
+            "certificates_pending": CertificateRequest.objects.filter(
+                status=CertificateRequest.Status.PENDING).count() if can_view_certificate_requests(user) else 0,
+            "certificates_ready": CertificateRequest.objects.filter(
+                person=person, status=CertificateRequest.Status.READY).count() if person else 0,
         }
 
     return {"board_nav": SimpleLazyObject(links)}

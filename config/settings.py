@@ -141,6 +141,14 @@ LEAVE_APPROVAL_STEPS = [
 LEAVE_FORM_CERTIFIER = os.environ.get("LEAVE_FORM_CERTIFIER", "")
 LEAVE_FORM_CERTIFIER_TITLE = os.environ.get("LEAVE_FORM_CERTIFIER_TITLE", "Administrative Officer V")
 LEAVE_FORM_MAYOR = os.environ.get("LEAVE_FORM_MAYOR", "")
+# Service records and certificates of employment (DECISIONS CR1, CR4). Job order and contract of service
+# are not government service, so they are left off the service record (the COE still lists them).
+SERVICE_RECORD_EXCLUDED_TYPES = [
+    s.strip() for s in os.environ.get("SERVICE_RECORD_EXCLUDED_TYPES", "jo,cos").split(",") if s.strip()
+]
+# Name and title printed under the "Certified correct" line. Blank prints an empty line for the name.
+CERTIFICATE_SIGNATORY = os.environ.get("CERTIFICATE_SIGNATORY", "")
+CERTIFICATE_SIGNATORY_TITLE = os.environ.get("CERTIFICATE_SIGNATORY_TITLE", "Municipal Human Resource Management Officer")
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

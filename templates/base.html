@@ -20,13 +20,14 @@
       <div class="collapse navbar-collapse" id="nav">
         <ul class="navbar-nav me-auto">
           {# At most four menus for everyone (People, Leave, Bulletin, Calendar) plus Tools for roles with more. #}
-          {% if not perms.hr.manage_projects or perms.hr.view_hr_records or org_nav.tree or org_nav.my_office %}
+          {% if not perms.hr.manage_projects or perms.hr.view_hr_records or org_nav.tree or org_nav.my_office or board_nav.person %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">People</a>
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">People{% if board_nav.certificates_ready %} <span class="badge rounded-pill text-bg-success" title="Documents ready for release">{{ board_nav.certificates_ready }}</span>{% endif %}</a>
               <ul class="dropdown-menu">
                 {% if not perms.hr.manage_projects or perms.hr.view_hr_records %}<li><a class="dropdown-item" href="{% url 'person_list' %}">Personnel</a></li>
                 <li><a class="dropdown-item" href="{% url 'office_list' %}">Offices</a></li>{% endif %}
                 {% if org_nav.my_office %}<li><a class="dropdown-item" href="{% url 'my_office' %}">My Office</a></li>{% endif %}
+                {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_certificates' %}">Service record &amp; certificates{% if board_nav.certificates_ready %} <span class="badge text-bg-success">ready</span>{% endif %}</a></li>{% endif %}
                 {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
               </ul>
             </li>
@@ -53,7 +54,7 @@
           <li class="nav-item"><a class="nav-link" href="{% url 'calendar' %}">Calendar</a></li>
           {% if org_nav.salary or board_nav.register or perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
+              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention or board_nav.certificates_pending %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
               <ul class="dropdown-menu">
                 {% if org_nav.salary %}
                 <li><h6 class="dropdown-header">Trackers</h6></li>
@@ -68,6 +69,10 @@
                 <li><a class="dropdown-item" href="{% url 'leave_register' %}">Leave register</a></li>
                 <li><a class="dropdown-item" href="{% url 'leave_balances' %}">Leave balances list</a></li>
                 {% if board_nav.plantilla %}<li><a class="dropdown-item" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a></li>{% endif %}
+                {% endif %}
+                {% if board_nav.certificates %}
+                <li><h6 class="dropdown-header">Requests</h6></li>
+                <li><a class="dropdown-item" href="{% url 'certificate_list' %}">Service records &amp; certificates{% if board_nav.certificates_pending %} <span class="badge text-bg-warning">{{ board_nav.certificates_pending }}</span>{% endif %}</a></li>
                 {% endif %}
                 {% if perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
                 <li><h6 class="dropdown-header">Records</h6></li>
