@@ -33,7 +33,7 @@
     {% if is_addressee and memo.requires_ack %}
       <div class="card border-0 shadow-sm mb-3"><div class="card-body">
         {% if ack %}
-          <div class="text-success fw-semibold">✔ You acknowledged this on {{ ack.acknowledged_at|date:"M d, Y g:i A" }}</div>
+          <div class="text-success fw-semibold"><span class="mk mk-check" aria-hidden="true"></span>You acknowledged this on {{ ack.acknowledged_at|date:"M d, Y g:i A" }}</div>
         {% elif memo.is_published %}
           <form method="post">{% csrf_token %}<input type="hidden" name="action" value="ack">
             <button class="btn btn-success w-100">I have read and understood this memo</button></form>

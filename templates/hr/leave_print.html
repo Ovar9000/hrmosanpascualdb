@@ -48,28 +48,28 @@
     <tr>
       <td colspan="2" class="half">6.A TYPE OF LEAVE TO BE AVAILED OF
         {% for value, label, basis in types %}
-          <div class="opt"><span class="box">{% if req.leave_type == value %}✔{% endif %}</span>{{ label }} <span class="basis">({{ basis }})</span></div>
+          <div class="opt"><span class="box{% if req.leave_type == value %} on{% endif %}"></span>{{ label }} <span class="basis">({{ basis }})</span></div>
         {% endfor %}
         <div class="opt mt-1"><em>Others:</em></div>
         <div class="rule filled">{% if req.leave_type == "other" %}{{ req.leave_type_other }}{% endif %}</div>
       </td>
       <td colspan="2" class="half">6.B DETAILS OF LEAVE
         <div class="mt-1"><em>In case of Vacation/Special Privilege Leave:</em></div>
-        <div class="opt"><span class="box">{% if req.detail == "within_ph" %}✔{% endif %}</span>Within the Philippines <span class="line filled">{% if req.detail == "within_ph" %}{{ req.detail_text }}{% endif %}</span></div>
-        <div class="opt"><span class="box">{% if req.detail == "abroad" %}✔{% endif %}</span>Abroad (Specify) <span class="line filled">{% if req.detail == "abroad" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="opt"><span class="box{% if req.detail == "within_ph" %} on{% endif %}"></span>Within the Philippines <span class="line filled">{% if req.detail == "within_ph" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="opt"><span class="box{% if req.detail == "abroad" %} on{% endif %}"></span>Abroad (Specify) <span class="line filled">{% if req.detail == "abroad" %}{{ req.detail_text }}{% endif %}</span></div>
         <div class="mt-1"><em>In case of Sick Leave:</em></div>
-        <div class="opt"><span class="box">{% if req.detail == "in_hospital" %}✔{% endif %}</span>In Hospital (Specify Illness) <span class="line filled">{% if req.detail == "in_hospital" %}{{ req.detail_text }}{% endif %}</span></div>
-        <div class="opt"><span class="box">{% if req.detail == "out_patient" %}✔{% endif %}</span>Out Patient (Specify Illness) <span class="line filled">{% if req.detail == "out_patient" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="opt"><span class="box{% if req.detail == "in_hospital" %} on{% endif %}"></span>In Hospital (Specify Illness) <span class="line filled">{% if req.detail == "in_hospital" %}{{ req.detail_text }}{% endif %}</span></div>
+        <div class="opt"><span class="box{% if req.detail == "out_patient" %} on{% endif %}"></span>Out Patient (Specify Illness) <span class="line filled">{% if req.detail == "out_patient" %}{{ req.detail_text }}{% endif %}</span></div>
         <div class="rule"></div>
         <div class="mt-1"><em>In case of Special Leave Benefits for Women:</em></div>
         <div class="opt">(Specify Illness) <span class="line filled">{% if req.detail == "women_illness" %}{{ req.detail_text }}{% endif %}</span></div>
         <div class="rule"></div>
         <div class="mt-1"><em>In case of Study Leave:</em></div>
-        <div class="opt"><span class="box">{% if req.detail == "masters" %}✔{% endif %}</span>Completion of Master's Degree</div>
-        <div class="opt"><span class="box">{% if req.detail == "bar_review" %}✔{% endif %}</span>BAR/Board Examination Review</div>
+        <div class="opt"><span class="box{% if req.detail == "masters" %} on{% endif %}"></span>Completion of Master's Degree</div>
+        <div class="opt"><span class="box{% if req.detail == "bar_review" %} on{% endif %}"></span>BAR/Board Examination Review</div>
         <div class="mt-1"><em>Other purpose:</em></div>
-        <div class="opt"><span class="box">{% if req.detail == "monetization" %}✔{% endif %}</span>Monetization of Leave Credits</div>
-        <div class="opt"><span class="box">{% if req.detail == "terminal" %}✔{% endif %}</span>Terminal Leave</div>
+        <div class="opt"><span class="box{% if req.detail == "monetization" %} on{% endif %}"></span>Monetization of Leave Credits</div>
+        <div class="opt"><span class="box{% if req.detail == "terminal" %} on{% endif %}"></span>Terminal Leave</div>
       </td>
     </tr>
     <tr>
@@ -78,8 +78,8 @@
         <div class="mt-1">INCLUSIVE DATES</div>
         <div class="rule filled">{% if req.pk %}{{ req.start_date|date:"F d, Y" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"F d, Y" }}{% endif %}{% endif %}</div></td>
       <td colspan="2">6.D COMMUTATION
-        <div class="opt"><span class="box">{% if req.pk and not req.commutation_requested %}✔{% endif %}</span>Not Requested</div>
-        <div class="opt"><span class="box">{% if req.commutation_requested %}✔{% endif %}</span>Requested</div>
+        <div class="opt"><span class="box{% if req.pk and not req.commutation_requested %} on{% endif %}"></span>Not Requested</div>
+        <div class="opt"><span class="box{% if req.commutation_requested %} on{% endif %}"></span>Requested</div>
         <div class="officer"><div class="name"></div>(Signature of Applicant)</div></td>
     </tr>
     <tr><td colspan="4" class="section">7. DETAILS OF ACTION ON APPLICATION</td></tr>
@@ -97,8 +97,8 @@
       </td>
       <td colspan="2">7.B RECOMMENDATION
         {% with s=steps.recommend %}
-        <div class="opt"><span class="box">{% if s.status == "done" %}✔{% endif %}</span>For approval</div>
-        <div class="opt"><span class="box">{% if s.status == "disapproved" %}✔{% endif %}</span>For disapproval due to</div>
+        <div class="opt"><span class="box{% if s.status == "done" %} on{% endif %}"></span>For approval</div>
+        <div class="opt"><span class="box{% if s.status == "disapproved" %} on{% endif %}"></span>For disapproval due to</div>
         <div class="rule filled">{% if s.status == "disapproved" %}{{ s.note }}{% endif %}</div>
         <div class="rule"></div>
         <div class="officer"><div class="name">{% if s.acted_by.get_full_name and not s.from_paper %}{{ s.acted_by.get_full_name }}{% endif %}</div>(Authorized Officer)

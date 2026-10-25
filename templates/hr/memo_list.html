@@ -25,7 +25,7 @@
           <div class="text-end small">
             {% if not memo.is_published %}<span class="badge text-bg-secondary">Draft</span>{% endif %}
             {% if memo.comply_by %}<div class="{% if memo.comply_by < today %}text-muted{% else %}text-danger{% endif %}">Comply by {{ memo.comply_by|date:"M d" }}</div>{% endif %}
-            {% if memo.pk in acked %}<div class="text-success">✔ Acknowledged</div>{% endif %}
+            {% if memo.pk in acked %}<div class="text-success"><span class="mk mk-check" aria-hidden="true"></span>Acknowledged</div>{% endif %}
             {% if can_manage and memo.requires_ack %}<div class="text-muted">{{ memo.ack_count }} acknowledged</div>{% endif %}
           </div>
         </div>

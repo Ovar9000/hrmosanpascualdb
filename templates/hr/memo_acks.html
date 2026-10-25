@@ -27,7 +27,7 @@
           <td>{% if r.office %}{{ r.office.acronym|default:r.office.name }}{% endif %}</td>
           <td>{{ r.person.full_name }}</td>
           <td>{{ r.eng.position_title|default:"" }} {% if r.eng %}<span class="text-muted">({{ r.eng.get_type_display }})</span>{% endif %}</td>
-          <td>{% if r.ack %}<span class="text-success">✔ {{ r.ack.acknowledged_at|date:"M d, g:i A" }}</span>{% if r.ack.from_paper %} <span class="text-muted">paper</span>{% endif %}{% else %}<span class="text-danger">Not yet</span>{% endif %}</td>
+          <td>{% if r.ack %}<span class="text-success"><span class="mk mk-check" aria-hidden="true"></span>{{ r.ack.acknowledged_at|date:"M d, g:i A" }}</span>{% if r.ack.from_paper %} <span class="text-muted">paper</span>{% endif %}{% else %}<span class="text-danger">Not yet</span>{% endif %}</td>
         </tr>
       {% empty %}<tr><td colspan="5" class="text-muted">Nobody to show.</td></tr>{% endfor %}
     </tbody>

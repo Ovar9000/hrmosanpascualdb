@@ -13,16 +13,16 @@
       {% elif verification.is_valid %}
         {% if verification.anchor_status == "verified" %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Anchor verified ({{ verification.record_count }} records intact, tamper-evident)
+            <span class="mk mk-check" aria-hidden="true"></span>Anchor verified ({{ verification.record_count }} records intact, tamper-evident)
           </span>
         {% else %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Chain consistent ({{ verification.record_count }} records intact)
+            <span class="mk mk-check" aria-hidden="true"></span>Chain consistent ({{ verification.record_count }} records intact)
           </span>
         {% endif %}
       {% else %}
         <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-          ⚠ Chain verification unconfirmed (failed at record #{{ verification.broken_id|default:"?" }})
+          <span class="mk mk-warn" aria-hidden="true"></span>Chain verification unconfirmed (failed at record #{{ verification.broken_id|default:"?" }})
         </span>
       {% endif %}
       <span class="text-muted small">Immutable append-only audit trail (DECISIONS U1-U6).</span>
@@ -47,11 +47,11 @@
              placeholder="Anchor ID:HASH (optional)" aria-label="Anchor ID:HASH (optional)">
       <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap"
               title="Full scan of the hash chain from the first record. At most once per minute.">
-        🔄 Re-verify all
+        Re-verify all
       </button>
     </form>
     <a href="{% url 'audit_export_csv' %}" class="btn btn-outline-success btn-sm">
-      📥 Export Audit Log (CSV)
+      Export audit log (CSV)
     </a>
   </div>
 </div>
@@ -93,7 +93,7 @@
       <div class="col-12 col-md-1 d-flex gap-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
         {% if query or selected_action or selected_user or start_date or end_date %}
-          <a href="{% url 'audit_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">✕</a>
+          <a href="{% url 'audit_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">Clear</a>
         {% endif %}
       </div>
     </form>

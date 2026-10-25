@@ -39,7 +39,7 @@
     {% endif %}
     {% if row.history %}
       <div class="mt-2 text-muted">Earlier:
-        {% for m, st in row.history %}<a href="{% url 'meeting_detail' m.pk %}" class="text-decoration-none">{{ m.period_label }} {% if st == "held" %}✔ held{% elif st == "missed" %}✖ missed{% elif st == "not_held" %}– excused{% else %}{{ st.label }}{% endif %}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+        {% for m, st in row.history %}<a href="{% url 'meeting_detail' m.pk %}" class="text-decoration-none">{{ m.period_label }} {% if st == "held" %}<span class="mk mk-check" aria-hidden="true"></span>held{% elif st == "missed" %}<span class="mk mk-x" aria-hidden="true"></span>missed{% elif st == "not_held" %}– excused{% else %}{{ st.label }}{% endif %}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
       </div>
     {% endif %}
     {% if row.missed %}<div class="mt-1 text-danger">{{ row.missed }} period{{ row.missed|pluralize }} missed without a recorded reason.</div>{% endif %}

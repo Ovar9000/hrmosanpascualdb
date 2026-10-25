@@ -124,3 +124,28 @@
   border-radius: 0 0 0.375rem 0.375rem;
   box-shadow: 0 -0.25rem 0.75rem rgba(0, 0, 0, 0.05);
 }
+
+/* Status marks: small monochrome icons in the text colour, instead of emoji (which differ per device).
+   Usage: <span class="mk mk-check" aria-hidden="true"></span> next to a word that says the same. */
+.mk {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.3em;
+  vertical-align: -0.12em;
+  background-color: currentColor;
+  -webkit-mask: var(--mk) no-repeat center / contain;
+  mask: var(--mk) no-repeat center / contain;
+}
+.mk-check { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>"); }
+.mk-x { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'><path d='M18 6 6 18M6 6l12 12'/></svg>"); }
+.mk-clock { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>"); }
+.mk-ring { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'><circle cx='12' cy='12' r='8'/></svg>"); }
+.mk-half { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'><circle cx='12' cy='12' r='8'/><path d='M12 4a8 8 0 0 0 0 16z' fill='black'/></svg>"); }
+.mk-lock { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linejoin='round'><rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V7a4 4 0 0 1 8 0v4'/></svg>"); }
+.mk-warn { --mk: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3 2 21h20L12 3z'/><path d='M12 10v5M12 18h.01'/></svg>"); }
+
+/* A card whose content changed since it was last verified. */
+.card-changed {
+  box-shadow: 0 0 0 2px var(--bs-warning) !important;
+}

@@ -64,7 +64,7 @@
         {% endif %}
         {% if not can_view_personal %}
           <div class="text-muted small {% if can_view_contacts %}mt-2{% else %}py-2{% endif %}">
-            🔒 Birthdate and home address are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+            <span class="mk mk-lock" aria-hidden="true"></span>Birthdate and home address are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
           </div>
         {% endif %}
       </div>
@@ -98,7 +98,7 @@
           </dl>
         {% else %}
           <div class="text-muted small py-2">
-            🔒 Government ID numbers are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+            <span class="mk mk-lock" aria-hidden="true"></span>Government ID numbers are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
           </div>
         {% endif %}
       </div>
@@ -253,7 +253,7 @@
   </div>
   {% if not can_view_rates %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Pay rates are restricted to HRMO and Auditor roles, and so are salary grades and steps (DECISIONS R6).
+      <span class="mk mk-lock" aria-hidden="true"></span>Pay rates are restricted to HRMO and Auditor roles, and so are salary grades and steps (DECISIONS R6).
     </div>
   {% endif %}
 </div>
@@ -306,7 +306,7 @@
             </td>
             <td>
               {% if doc.physical_location %}
-                <span class="badge bg-light text-dark border">📁 {{ doc.physical_location }}</span>
+                <span class="badge bg-light text-dark border">{{ doc.physical_location }}</span>
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}
@@ -318,7 +318,7 @@
                 {% if can_view_doc_content and doc.file %}
                   <a href="{% url 'document_download' doc.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Download</a>
                 {% elif not can_view_doc_content %}
-                  <span class="text-muted small">🔒 Restricted</span>
+                  <span class="text-muted small"><span class="mk mk-lock" aria-hidden="true"></span>Restricted</span>
                 {% else %}
                   <span class="text-muted small">Paper only</span>
                 {% endif %}
@@ -341,7 +341,7 @@
   </div>
   {% if not can_view_doc_content %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Document files, file names and notes are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
+      <span class="mk mk-lock" aria-hidden="true"></span>Document files, file names and notes are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
     </div>
   {% endif %}
 </div>

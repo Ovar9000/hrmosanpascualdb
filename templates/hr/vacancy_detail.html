@@ -53,9 +53,9 @@
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         {% if my_application %}
-          <div class="fw-semibold text-success mb-1">✔ You signified interest on {{ my_application.signified_on|date:"M d, Y" }}</div>
+          <div class="fw-semibold text-success mb-1"><span class="mk mk-check" aria-hidden="true"></span>You signified interest on {{ my_application.signified_on|date:"M d, Y" }}</div>
           <div class="small mb-1">Documents HRMO has received:</div>
-          <ul class="list-unstyled small mb-0">{% for label, done in my_docs %}<li>{% if done %}✔{% else %}○{% endif %} {{ label }}</li>{% endfor %}</ul>
+          <ul class="list-unstyled small mb-0">{% for label, done in my_docs %}<li>{% if done %}<span class="mk mk-check" aria-hidden="true"></span>{% else %}<span class="mk mk-ring" aria-hidden="true"></span>{% endif %}{{ label }}<span class="visually-hidden">{{ done|yesno:": submitted,: not yet" }}</span></li>{% endfor %}</ul>
         {% elif accepting %}
           <form method="post">{% csrf_token %}<input type="hidden" name="action" value="apply">
             <button class="btn btn-success w-100">I'm interested in this position</button></form>
@@ -90,8 +90,8 @@
             <td>{{ a.rank|default:"" }}</td>
             <td>{{ a.full_name }}{% if a.person %} <span class="badge text-bg-light border">employee</span>{% endif %}{% if a.applied_online %} <span class="badge text-bg-light border">online</span>{% endif %}</td>
             <td>{{ a.signified_on|date:"M d" }}</td>
-            <td class="text-center">{{ a.has_pds|yesno:"✔,○" }}</td><td class="text-center">{{ a.has_rating|yesno:"✔,○" }}</td>
-            <td class="text-center">{{ a.has_eligibility|yesno:"✔,○" }}</td><td class="text-center">{{ a.has_tor|yesno:"✔,○" }}</td>
+            <td class="text-center">{% if a.has_pds %}Yes{% else %}<span class="text-muted">–</span>{% endif %}</td><td class="text-center">{% if a.has_rating %}Yes{% else %}<span class="text-muted">–</span>{% endif %}</td>
+            <td class="text-center">{% if a.has_eligibility %}Yes{% else %}<span class="text-muted">–</span>{% endif %}</td><td class="text-center">{% if a.has_tor %}Yes{% else %}<span class="text-muted">–</span>{% endif %}</td>
             <td>{% if a.meets_qs is None %}<span class="text-muted">not yet evaluated</span>{% elif a.meets_qs %}<span class="text-success">Yes</span>{% else %}<span class="text-danger">No</span>{% endif %}</td>
             <td>{{ a.remarks }}</td>
             {% if can_manage %}<td><a href="{% url 'applicant_edit' a.pk %}">Edit</a></td>{% endif %}

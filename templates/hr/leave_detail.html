@@ -4,7 +4,7 @@
 {% block content %}
 <div class="mb-3 d-flex flex-wrap gap-2">
   <a href="{% if is_applicant %}{% url 'my_leave' %}{% elif can_register %}{% url 'leave_register' %}{% else %}{% url 'leave_inbox' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a>
-  <a href="{% url 'leave_print' req.pk %}?autoprint=1" class="btn btn-sm btn-primary">🖨 Print CS Form No. 6</a>
+  <a href="{% url 'leave_print' req.pk %}?autoprint=1" class="btn btn-sm btn-primary">Print CS Form No. 6</a>
   <a href="{% url 'leave_card' req.person.pk %}" class="btn btn-sm btn-outline-secondary">Leave card</a>
 </div>
 

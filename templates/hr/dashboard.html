@@ -12,7 +12,7 @@
     <div class="text-muted small">{{ today|date:"l, F j, Y" }}{% if my.eng %} · {{ my.eng.position_title }}, {{ my.eng.office.name }}{% elif office_panel %} · {{ office_panel.office.name }}{% endif %}</div>
     <p class="home-status">
       {% if todo %}<strong>{{ todo|length }} thing{{ todo|length|pluralize }}</strong> {{ todo|length|pluralize:"needs,need" }} your attention.
-      {% else %}<span class="text-success fw-semibold">✓ You're all caught up.</span> Nothing is waiting for you today.{% endif %}
+      {% else %}<span class="text-success fw-semibold"><span class="mk mk-check" aria-hidden="true"></span>You're all caught up.</span> Nothing is waiting for you today.{% endif %}
     </p>
   </div>
   <div class="d-flex flex-wrap gap-2">
@@ -107,7 +107,7 @@
               <div class="home-kicker">Forced leave</div>
               <div class="balance-n">{{ s.forced_taken|floatformat:"-1" }} <small>of 5 taken</small></div>
               <div class="meter {% if s.forced_left %}tone-warning{% else %}tone-success{% endif %} mt-1" role="img" aria-label="{{ my.forced_pct }}% of forced leave taken"><span style="width: {{ my.forced_pct }}%"></span></div>
-              <div class="balance-sub">{% if s.forced_left %}{{ s.forced_left|floatformat:"-1" }} more by {{ s.year_end|date:"M j" }} · {{ my.days_to_year_end }} days left in the year{% elif s.vl < 10 %}not required below 10 VL days{% else %}done for the year ✓{% endif %}</div>
+              <div class="balance-sub">{% if s.forced_left %}{{ s.forced_left|floatformat:"-1" }} more by {{ s.year_end|date:"M j" }} · {{ my.days_to_year_end }} days left in the year{% elif s.vl < 10 %}not required below 10 VL days{% else %}done for the year{% endif %}</div>
             </div>
           </div>
           {% if s.forced_left %}<p class="small mb-3">With {{ s.vl|floatformat:"-1" }} days of vacation leave, you must take {{ s.forced_left|floatformat:"-1" }} more day{{ s.forced_left|pluralize }} of leave before {{ s.year_end|date:"F j" }}, or they are forfeited.</p>{% endif %}
@@ -126,7 +126,7 @@
           {% if not my.upcoming %}<p class="small text-muted mb-0">No applications in progress. Filing online takes a minute: the days are counted for you and you can follow every signature.</p>{% endif %}
         {% endfor %}
         {% for req in my.upcoming %}
-          <div class="small">✔ Approved: <a href="{% url 'leave_detail' req.pk %}">{{ req.type_label }}, {{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %}</a></div>
+          <div class="small"><span class="mk mk-check" aria-hidden="true"></span>Approved: <a href="{% url 'leave_detail' req.pk %}">{{ req.type_label }}, {{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %}</a></div>
         {% endfor %}
       </div>
     </section>

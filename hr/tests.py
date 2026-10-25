@@ -4996,7 +4996,7 @@ class LeaveWorkflowTestCase(TestCase):
         self.assertContains(page, "Executive Assistant IV")
         self.assertContains(page, "Blank form")
         self.assertContains(page, "Juana Dela Cruz")
-        self.assertNotContains(page, "✔")  # nothing ticked
+        self.assertNotContains(page, 'class="box on"')  # nothing ticked
         # HRMO prints one for an employee; others cannot pick a person.
         self.client.force_login(self.hrmo_user)
         self.assertContains(self.client.get(f"/leave/print/blank/?person={self.person_b.pk}"), "Bonifacio")

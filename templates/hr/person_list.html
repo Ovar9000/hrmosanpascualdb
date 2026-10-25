@@ -118,7 +118,7 @@
                 <div>{{ p.mobile|default:"—" }}</div>
                 <div>{{ p.email|default:"" }}</div>
               {% else %}
-                <span title="Contacts are restricted (DECISIONS R4)">🔒</span>
+                <span title="Contacts are restricted (DECISIONS R4)"><span class="mk mk-lock" aria-hidden="true"></span><span class="visually-hidden">Restricted</span></span>
               {% endif %}
             </td>
             <td class="text-end">
