@@ -1,0 +1,183 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}PDS · {{ person.full_name }}{% endblock %}
+{% block back %}{% url 'pds_overview' person.pk %}{% endblock %}
+{% block style %}
+  .pds { font-size: 8pt; }
+  .pds table.form-table td, .pds table.form-table th { padding: 1px 4px; font-size: 7.5pt; }
+  .pds .sec { background: #8a8a8a; color: #fff; font-weight: bold; font-style: italic; padding: 2px 4px; font-size: 8pt; border: 1px solid #000; border-bottom: 0; }
+  .pds .lbl { background: #eaeaea; width: 20%; font-size: 7pt; }
+  .pds .val { font-weight: bold; text-transform: uppercase; }
+  .pds .val-n { font-weight: bold; }
+  .pds th { background: #eaeaea; text-align: center; vertical-align: middle; font-weight: normal; font-size: 7pt !important; }
+  .pds .page { page-break-after: always; }
+  .pds .page:last-child { page-break-after: auto; }
+  .pds .foot { display: flex; justify-content: space-between; font-size: 7pt; border: 1px solid #000; border-top: 0; padding: 2px 4px; font-style: italic; }
+  .pds .yn { white-space: nowrap; }
+  .pds .photo { width: 35mm; height: 45mm; border: 1px solid #000; font-size: 6.5pt; text-align: center; display: flex; align-items: center; justify-content: center; padding: 3px; }
+  .pds .thumb { width: 35mm; height: 30mm; border: 1px solid #000; }
+{% endblock %}
+{% block sheet %}
+{% with p=d.profile pe=d.person %}
+<div class="sheet portrait pds">
+
+{# ---------------- Page 1 ---------------- #}
+<div class="page">
+  <div class="d-flex justify-content-between"><i class="fw-bold">CS Form No. 212</i><span>{% if verified_current %}Verified by HRMO {{ verified.reviewed_at|date:"m/d/Y" }}{% elif verified %}Changed since HRMO verified it {{ verified.reviewed_at|date:"m/d/Y" }}{% else %}Not yet verified by HRMO{% endif %}</span></div>
+  <i>Revised 2017</i>
+  <div class="text-center fw-bold fs-5 my-1">PERSONAL DATA SHEET</div>
+  <div class="fw-bold fst-italic" style="font-size:7pt">WARNING: Any misrepresentation made in the Personal Data Sheet and the Work Experience Sheet shall cause the filing of administrative/criminal case/s against the person concerned.</div>
+  <div class="fw-bold fst-italic mb-1" style="font-size:7pt">READ THE ATTACHED GUIDE TO FILLING OUT THE PERSONAL DATA SHEET (PDS) BEFORE ACCOMPLISHING THE PDS FORM.</div>
+  <div class="d-flex justify-content-between" style="font-size:7pt"><span>Print legibly. Tick appropriate boxes (<span class="box"></span>) and use separate sheet if necessary. Indicate N/A if not applicable. DO NOT ABBREVIATE.</span><span>1. CS ID No. ______ (Do not fill up. For CSC use only)</span></div>
+
+  <div class="sec">I. PERSONAL INFORMATION</div>
+  <table class="form-table">
+    <tr><td class="lbl">2. SURNAME</td><td colspan="3" class="val">{{ pe.last_name }}</td></tr>
+    <tr><td class="lbl">FIRST NAME</td><td colspan="2" class="val">{{ pe.first_name }}</td><td class="lbl" style="width:22%">NAME EXTENSION (JR., SR) <span class="val">{{ pe.suffix|default:"N/A" }}</span></td></tr>
+    <tr><td class="lbl">MIDDLE NAME</td><td colspan="3" class="val">{{ pe.middle_name|default:"N/A" }}</td></tr>
+    <tr><td class="lbl">3. DATE OF BIRTH (mm/dd/yyyy)</td><td class="val-n">{{ pe.birthdate|date:"m/d/Y" }}</td><td class="lbl" rowspan="3">16. CITIZENSHIP</td>
+        <td rowspan="3"><span class="box{% if p.citizenship == "filipino" %} on{% endif %}"></span>Filipino <span class="box ms-2{% if p.citizenship == "dual" %} on{% endif %}"></span>Dual citizenship<br>
+          <span class="box{% if p.dual_by == "birth" %} on{% endif %}"></span>by birth <span class="box ms-2{% if p.dual_by == "naturalization" %} on{% endif %}"></span>by naturalization<br>
+          Pls. indicate country: <span class="val">{{ p.dual_country|default:"" }}</span></td></tr>
+    <tr><td class="lbl">4. PLACE OF BIRTH</td><td class="val">{{ p.place_of_birth }}</td></tr>
+    <tr><td class="lbl">5. SEX</td><td><span class="box{% if pe.sex == "M" %} on{% endif %}"></span>Male <span class="box ms-2{% if pe.sex == "F" %} on{% endif %}"></span>Female</td></tr>
+    <tr><td class="lbl">6. CIVIL STATUS</td><td>
+          <span class="box{% if p.civil_status == "single" %} on{% endif %}"></span>Single <span class="box ms-1{% if p.civil_status == "married" %} on{% endif %}"></span>Married<br>
+          <span class="box{% if p.civil_status == "widowed" %} on{% endif %}"></span>Widowed <span class="box ms-1{% if p.civil_status == "separated" %} on{% endif %}"></span>Separated<br>
+          <span class="box{% if p.civil_status == "other" %} on{% endif %}"></span>Other/s: <span class="val">{{ p.civil_status_other }}</span></td>
+        <td class="lbl" rowspan="3">17. RESIDENTIAL ADDRESS</td>
+        <td rowspan="3" class="val">{{ p.res_house }} {{ p.res_street }} {{ p.res_subdivision }}<br>{{ p.res_barangay }}, {{ p.res_city }}<br>{{ p.res_province }}<div class="fw-normal" style="font-size:6.5pt">ZIP CODE <b>{{ p.res_zip }}</b></div></td></tr>
+    <tr><td class="lbl">7. HEIGHT (m)</td><td class="val-n">{{ p.height_m|default:"" }}</td></tr>
+    <tr><td class="lbl">8. WEIGHT (kg)</td><td class="val-n">{{ p.weight_kg|default:"" }}</td></tr>
+    <tr><td class="lbl">9. BLOOD TYPE</td><td class="val-n">{{ p.blood_type }}</td><td class="lbl" rowspan="4">18. PERMANENT ADDRESS</td>
+        <td rowspan="4" class="val">{% if p.perm_same %}{{ p.res_house }} {{ p.res_street }} {{ p.res_subdivision }}<br>{{ p.res_barangay }}, {{ p.res_city }}<br>{{ p.res_province }}<div class="fw-normal" style="font-size:6.5pt">ZIP CODE <b>{{ p.res_zip }}</b></div>{% else %}{{ p.perm_house }} {{ p.perm_street }} {{ p.perm_subdivision }}<br>{{ p.perm_barangay }}, {{ p.perm_city }}<br>{{ p.perm_province }}<div class="fw-normal" style="font-size:6.5pt">ZIP CODE <b>{{ p.perm_zip }}</b></div>{% endif %}</td></tr>
+    <tr><td class="lbl">10. GSIS ID NO.</td><td class="val-n">{{ pe.gsis_no }}</td></tr>
+    <tr><td class="lbl">11. PAG-IBIG ID NO.</td><td class="val-n">{{ pe.pagibig_no }}</td></tr>
+    <tr><td class="lbl">12. PHILHEALTH NO.</td><td class="val-n">{{ pe.philhealth_no }}</td></tr>
+    <tr><td class="lbl">13. SSS NO.</td><td class="val-n">{{ pe.sss_no }}</td><td class="lbl">19. TELEPHONE NO.</td><td class="val-n">{{ p.telephone }}</td></tr>
+    <tr><td class="lbl">14. TIN NO.</td><td class="val-n">{{ pe.tin }}</td><td class="lbl">20. MOBILE NO.</td><td class="val-n">{{ pe.mobile }}</td></tr>
+    <tr><td class="lbl">15. AGENCY EMPLOYEE NO.</td><td class="val-n">{{ pe.employee_no }}</td><td class="lbl">21. E-MAIL ADDRESS (if any)</td><td class="val-n">{{ pe.email }}</td></tr>
+  </table>
+
+  <div class="sec">II. FAMILY BACKGROUND</div>
+  <table class="form-table">
+    <tr><td class="lbl">22. SPOUSE'S SURNAME</td><td class="val">{{ p.spouse_surname|default:"N/A" }}</td><th style="width:30%">23. NAME of CHILDREN (Write full name and list all)</th><th style="width:14%">DATE OF BIRTH (mm/dd/yyyy)</th></tr>
+    <tr><td class="lbl">FIRST NAME</td><td class="val">{{ p.spouse_first_name }} {% if p.spouse_extension %}<span class="fw-normal" style="font-size:6.5pt">EXT.</span> {{ p.spouse_extension }}{% endif %}</td><td class="val" rowspan="12" style="vertical-align:top">{% for c in d.children %}<div>{{ c.full_name }}</div>{% empty %}N/A{% endfor %}</td><td class="val-n" rowspan="12" style="vertical-align:top">{% for c in d.children %}<div>{{ c.birthdate|date:"m/d/Y"|default:"&nbsp;" }}</div>{% endfor %}</td></tr>
+    <tr><td class="lbl">MIDDLE NAME</td><td class="val">{{ p.spouse_middle_name }}</td></tr>
+    <tr><td class="lbl">OCCUPATION</td><td class="val">{{ p.spouse_occupation }}</td></tr>
+    <tr><td class="lbl">EMPLOYER/BUSINESS NAME</td><td class="val">{{ p.spouse_employer }}</td></tr>
+    <tr><td class="lbl">BUSINESS ADDRESS</td><td class="val">{{ p.spouse_business_address }}</td></tr>
+    <tr><td class="lbl">TELEPHONE NO.</td><td class="val-n">{{ p.spouse_telephone }}</td></tr>
+    <tr><td class="lbl">24. FATHER'S SURNAME</td><td class="val">{{ p.father_surname }}</td></tr>
+    <tr><td class="lbl">FIRST NAME</td><td class="val">{{ p.father_first_name }} {% if p.father_extension %}<span class="fw-normal" style="font-size:6.5pt">EXT.</span> {{ p.father_extension }}{% endif %}</td></tr>
+    <tr><td class="lbl">MIDDLE NAME</td><td class="val">{{ p.father_middle_name }}</td></tr>
+    <tr><td class="lbl">25. MOTHER'S MAIDEN NAME — SURNAME</td><td class="val">{{ p.mother_surname }}</td></tr>
+    <tr><td class="lbl">FIRST NAME</td><td class="val">{{ p.mother_first_name }}</td></tr>
+    <tr><td class="lbl">MIDDLE NAME</td><td class="val">{{ p.mother_middle_name }}</td></tr>
+  </table>
+
+  <div class="sec">III. EDUCATIONAL BACKGROUND</div>
+  <table class="form-table">
+    <tr><th rowspan="2">26. LEVEL</th><th rowspan="2">NAME OF SCHOOL (Write in full)</th><th rowspan="2">BASIC EDUCATION/DEGREE/COURSE (Write in full)</th><th colspan="2">PERIOD OF ATTENDANCE</th><th rowspan="2">HIGHEST LEVEL/ UNITS EARNED (if not graduated)</th><th rowspan="2">YEAR GRADUATED</th><th rowspan="2">SCHOLARSHIP/ ACADEMIC HONORS RECEIVED</th></tr>
+    <tr><th>From</th><th>To</th></tr>
+    {% for e in d.education %}<tr><td>{{ e.level_label|upper }}</td><td class="val">{{ e.school }}</td><td class="val">{{ e.degree }}</td><td class="text-center">{{ e.year_from|default:"" }}</td><td class="text-center">{{ e.year_to|default:"" }}</td><td>{{ e.units_earned }}</td><td class="text-center">{{ e.year_graduated|default:"" }}</td><td>{{ e.honors }}</td></tr>{% empty %}<tr><td colspan="8">N/A</td></tr>{% endfor %}
+  </table>
+  <div class="foot"><span>SIGNATURE ____________________</span><span>DATE ____________</span><span>CS FORM 212 (Revised 2017), Page 1 of 4</span></div>
+</div>
+
+{# ---------------- Page 2 ---------------- #}
+<div class="page">
+  <div class="sec">IV. CIVIL SERVICE ELIGIBILITY</div>
+  <table class="form-table">
+    <tr><th rowspan="2" style="width:30%">27. CAREER SERVICE/ RA 1080 (BOARD/ BAR) UNDER SPECIAL LAWS/ CES/ CSEE BARANGAY ELIGIBILITY / DRIVER'S LICENSE</th><th rowspan="2">RATING (If Applicable)</th><th rowspan="2">DATE OF EXAMINATION / CONFERMENT</th><th rowspan="2">PLACE OF EXAMINATION / CONFERMENT</th><th colspan="2">LICENSE (if applicable)</th></tr>
+    <tr><th>NUMBER</th><th>Date of Validity</th></tr>
+    {% for e in d.eligibility %}<tr><td class="val">{{ e.name }}</td><td class="text-center">{{ e.rating }}</td><td class="text-center">{{ e.exam_date|date:"m/d/Y" }}</td><td>{{ e.exam_place }}</td><td>{{ e.license_number }}</td><td class="text-center">{{ e.license_valid_until|date:"m/d/Y" }}</td></tr>{% empty %}<tr><td colspan="6">N/A</td></tr>{% endfor %}
+  </table>
+
+  <div class="sec mt-2">V. WORK EXPERIENCE <span class="fw-normal" style="font-size:6.5pt">(Include private employment. Start from your recent work) Description of duties should be indicated in the attached Work Experience sheet.</span></div>
+  <table class="form-table">
+    <tr><th colspan="2">28. INCLUSIVE DATES (mm/dd/yyyy)</th><th rowspan="2">POSITION TITLE (Write in full/Do not abbreviate)</th><th rowspan="2">DEPARTMENT / AGENCY / OFFICE / COMPANY (Write in full/Do not abbreviate)</th><th rowspan="2">MONTHLY SALARY</th><th rowspan="2">SALARY/ JOB/ PAY GRADE (if applicable) &amp; STEP (Format "00-0")/ INCREMENT</th><th rowspan="2">STATUS OF APPOINTMENT</th><th rowspan="2">GOV'T SERVICE (Y/N)</th></tr>
+    <tr><th>From</th><th>To</th></tr>
+    {% for w in work %}<tr><td class="text-center text-nowrap">{{ w.date_from|date:"m/d/Y" }}</td><td class="text-center text-nowrap">{% if w.date_to %}{{ w.date_to|date:"m/d/Y" }}{% else %}PRESENT{% endif %}</td><td class="val">{{ w.position }}</td><td class="val">{{ w.employer }}</td><td class="text-end">{{ w.salary }}</td><td class="text-center">{{ w.grade_step }}</td><td>{{ w.appointment_status }}</td><td class="text-center">{{ w.government|yesno:"Y,N" }}</td></tr>{% empty %}<tr><td colspan="8">N/A</td></tr>{% endfor %}
+  </table>
+  <div class="foot"><span>SIGNATURE ____________________</span><span>DATE ____________</span><span>CS FORM 212 (Revised 2017), Page 2 of 4</span></div>
+</div>
+
+{# ---------------- Page 3 ---------------- #}
+<div class="page">
+  <div class="sec">VI. VOLUNTARY WORK OR INVOLVEMENT IN CIVIC / NON-GOVERNMENT / PEOPLE / VOLUNTARY ORGANIZATION/S</div>
+  <table class="form-table">
+    <tr><th rowspan="2" style="width:38%">29. NAME &amp; ADDRESS OF ORGANIZATION (Write in full)</th><th colspan="2">INCLUSIVE DATES (mm/dd/yyyy)</th><th rowspan="2">NUMBER OF HOURS</th><th rowspan="2">POSITION / NATURE OF WORK</th></tr>
+    <tr><th>From</th><th>To</th></tr>
+    {% for v in d.voluntary %}<tr><td class="val">{{ v.organization }}</td><td class="text-center">{{ v.date_from|date:"m/d/Y" }}</td><td class="text-center">{{ v.date_to|date:"m/d/Y" }}</td><td class="text-center">{{ v.hours|default:"" }}</td><td>{{ v.position }}</td></tr>{% empty %}<tr><td colspan="5">N/A</td></tr>{% endfor %}
+  </table>
+
+  <div class="sec mt-2">VII. LEARNING AND DEVELOPMENT (L&amp;D) INTERVENTIONS/TRAINING PROGRAMS ATTENDED <span class="fw-normal" style="font-size:6.5pt">(Start from the most recent L&amp;D/training program and include only the relevant L&amp;D/training taken for the last five (5) years for Division Chief/Executive/Managerial positions)</span></div>
+  <table class="form-table">
+    <tr><th rowspan="2" style="width:34%">30. TITLE OF LEARNING AND DEVELOPMENT INTERVENTIONS/TRAINING PROGRAMS (Write in full)</th><th colspan="2">INCLUSIVE DATES OF ATTENDANCE (mm/dd/yyyy)</th><th rowspan="2">NUMBER OF HOURS</th><th rowspan="2">Type of LD (Managerial/ Supervisory/ Technical/etc)</th><th rowspan="2">CONDUCTED/ SPONSORED BY (Write in full)</th></tr>
+    <tr><th>From</th><th>To</th></tr>
+    {% for t in d.training %}<tr><td class="val">{{ t.title }}</td><td class="text-center">{{ t.date_from|date:"m/d/Y" }}</td><td class="text-center">{{ t.date_to|date:"m/d/Y" }}</td><td class="text-center">{{ t.hours|default:"" }}</td><td>{{ t.kind_label|default:"" }}</td><td>{{ t.sponsor }}</td></tr>{% empty %}<tr><td colspan="6">N/A</td></tr>{% endfor %}
+  </table>
+
+  <div class="sec mt-2">VIII. OTHER INFORMATION</div>
+  <table class="form-table">
+    <tr><th>31. SPECIAL SKILLS and HOBBIES</th><th>32. NON-ACADEMIC DISTINCTIONS / RECOGNITION (Write in full)</th><th>33. MEMBERSHIP IN ASSOCIATION/ORGANIZATION (Write in full)</th></tr>
+    <tr style="vertical-align:top"><td>{% for i in p.skills_lines %}<div>{{ i }}</div>{% empty %}N/A{% endfor %}</td><td>{% for i in p.distinctions_lines %}<div>{{ i }}</div>{% empty %}N/A{% endfor %}</td><td>{% for i in p.memberships_lines %}<div>{{ i }}</div>{% empty %}N/A{% endfor %}</td></tr>
+  </table>
+  <div class="foot"><span>SIGNATURE ____________________</span><span>DATE ____________</span><span>CS FORM 212 (Revised 2017), Page 3 of 4</span></div>
+</div>
+
+{# ---------------- Page 4 ---------------- #}
+<div class="page">
+  <table class="form-table">
+    {% for q in qrows %}
+      {% if q.intro %}<tr><td colspan="2" class="lbl" style="width:auto">{{ q.number }}. {{ q.intro }}</td></tr>{% endif %}
+      {% for line in q.lines %}
+        <tr>
+          <td class="lbl" style="width:62%">{% if not q.intro and forloop.first %}{{ q.number }}. {% endif %}{{ line.text }}</td>
+          <td><span class="yn"><span class="box{% if line.value %} on{% endif %}"></span>YES <span class="box ms-2{% if line.value is False %} on{% endif %}"></span>NO</span>
+            {% if line.details is not None %}<div style="font-size:6.5pt">{{ line.details_label }}: <b>{{ line.details|default:"" }}</b></div>{% endif %}
+            {% if line.extra %}{% for label, val in line.extra %}<div style="font-size:6.5pt">{{ label }}: <b>{% if val %}{% if val.year %}{{ val|date:"m/d/Y" }}{% else %}{{ val }}{% endif %}{% endif %}</b></div>{% endfor %}{% endif %}</td>
+        </tr>
+      {% endfor %}
+    {% endfor %}
+  </table>
+
+  <div class="d-flex gap-2 mt-2">
+    <div class="flex-grow-1">
+      <table class="form-table">
+        <tr><td colspan="3" class="lbl" style="width:auto">41. REFERENCES <span style="color:#b00">(Person not related by consanguinity or affinity to applicant /appointee)</span></td></tr>
+        <tr><th>NAME</th><th>ADDRESS</th><th>TEL. NO.</th></tr>
+        {% for r in d.references %}<tr><td class="val">{{ r.name }}</td><td>{{ r.address }}</td><td>{{ r.telephone }}</td></tr>{% endfor %}
+      </table>
+      <div class="border border-dark border-top-0 p-1" style="font-size:7pt">42. I declare under oath that I have personally accomplished this Personal Data Sheet which is a true, correct and complete statement pursuant to the provisions of pertinent laws, rules and regulations of the Republic of the Philippines. I authorize the agency head/authorized representative to verify/validate the contents stated herein. I agree that any misrepresentation made in this document and its attachments shall cause the filing of administrative/criminal case/s against me.</div>
+      <div class="d-flex gap-2 mt-2">
+        <table class="form-table" style="width:45%">
+          <tr><td class="lbl" style="width:auto" colspan="2">Government Issued ID (i.e. Passport, GSIS, SSS, PRC, Driver's License, etc.) PLEASE INDICATE ID Number and Date of Issuance</td></tr>
+          <tr><td class="lbl">Government Issued ID:</td><td class="val">{{ p.gov_id_type }}</td></tr>
+          <tr><td class="lbl">ID/License/Passport No.:</td><td class="val-n">{{ p.gov_id_number }}</td></tr>
+          <tr><td class="lbl">Date/Place of Issuance:</td><td class="val-n">{{ p.gov_id_issued }}</td></tr>
+        </table>
+        <div class="flex-grow-1 border border-dark text-center d-flex flex-column justify-content-end" style="min-height:26mm">
+          <div class="border-top border-dark" style="font-size:6.5pt">Signature (Sign inside the box)</div>
+          <div class="border-top border-dark" style="font-size:6.5pt">Date Accomplished</div>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex flex-column gap-2 align-items-center">
+      <div class="photo">ID picture taken within the last 6 months, 3.5 cm × 4.5 cm (passport size). With full and handwritten name tag and signature over printed name. Computer generated or photocopied picture is not acceptable.</div>
+      <div class="text-center" style="font-size:6.5pt">PHOTO</div>
+      <div class="thumb"></div>
+      <div class="text-center" style="font-size:6.5pt">Right Thumbmark</div>
+    </div>
+  </div>
+  <div class="border border-dark mt-2 p-2 text-center" style="font-size:7.5pt">
+    SUBSCRIBED AND SWORN to before me this ____________________, affiant exhibiting his/her validly issued government ID as indicated above.
+    <div class="mx-auto mt-4 border-top border-dark" style="width:60mm">Person Administering Oath</div>
+  </div>
+  <div class="foot"><span>Printed {{ today|date:"m/d/Y" }} from the HR records system</span><span>CS FORM 212 (Revised 2017), Page 4 of 4</span></div>
+</div>
+
+</div>
+{% endwith %}
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

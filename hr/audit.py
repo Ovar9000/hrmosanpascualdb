@@ -42,6 +42,12 @@ SENSITIVE_AUDIT_FIELDS = {
     "pagibig_no",
     "sss_no",
     "password",
+    # Personal Data Sheet (DECISIONS PD6): ID numbers, answers to questions 34-40, and the frozen copy.
+    "gov_id_number",
+    "license_number",
+    "snapshot",
+    "q34_details", "q35a_details", "q35b_details", "q35b_status", "q36_details", "q37_details",
+    "q38a_details", "q38b_details", "q39_details", "q40a_details", "q40b_details", "q40c_details",
 }
 
 

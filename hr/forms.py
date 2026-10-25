@@ -9,7 +9,8 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
     FAKE_ID_FIELDS, Applicant, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
-    MeetingSeries, Memo, Person, Project, ServiceInterruption, Vacancy,
+    MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
+    PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
 )
 from .permissions import can_view_ids, can_view_pay
 
@@ -968,3 +969,212 @@ class CertificateRecordForm(CertificateRequestForm):
         if cleaned.get("requester") == CertificateRequest.Requester.SELF:
             cleaned["requester_name"] = ""
         return cleaned
+
+
+# --- Personal Data Sheet (DECISIONS PD1-PD7) ------------------------------------------------
+
+
+def _fake_id_check(form, field):
+    value = form.cleaned_data.get(field)
+    if value and getattr(settings, "PROTOTYPE_FAKE_DATA_ONLY", True) and not re.match(r"^00", value):
+        form.add_error(field, "Prototype accepts fake ID numbers only (must start with 00).")
+
+
+def _dates(form):
+    for field in form.fields.values():
+        if isinstance(field, forms.DateField):
+            field.widget = forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d")
+
+
+class PdsProfileSectionForm(forms.ModelForm):
+    """One part of PdsProfile, edited on its own section page, with the S2 version check."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _dates(self)
+        _bootstrap(self)
+        # An unsaved profile starts at version 1, the version its first save will find.
+        self.fields["version"].initial = self.instance.version
+
+
+class PdsPersonalForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "place_of_birth", "civil_status", "civil_status_other", "height_m", "weight_kg", "blood_type",
+            "citizenship", "dual_by", "dual_country", "res_house", "res_street", "res_subdivision", "res_barangay",
+            "res_city", "res_province", "res_zip", "perm_same", "perm_house", "perm_street", "perm_subdivision",
+            "perm_barangay", "perm_city", "perm_province", "perm_zip", "telephone",
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("civil_status") == PdsProfile.CivilStatus.OTHER and not cleaned.get("civil_status_other"):
+            self.add_error("civil_status_other", "Say what the civil status is.")
+        if cleaned.get("citizenship") == PdsProfile.Citizenship.DUAL:
+            if not cleaned.get("dual_by"):
+                self.add_error("dual_by", "By birth or by naturalization?")
+            if not cleaned.get("dual_country"):
+                self.add_error("dual_country", "Give the other country.")
+        else:
+            cleaned["dual_by"], cleaned["dual_country"] = "", ""
+        if cleaned.get("perm_same"):
+            for part in ["house", "street", "subdivision", "barangay", "city", "province", "zip"]:
+                cleaned[f"perm_{part}"] = ""
+        height, weight = cleaned.get("height_m"), cleaned.get("weight_kg")
+        if height is not None and not 0.5 <= height <= 2.5:
+            self.add_error("height_m", "Height is in meters, e.g. 1.62.")
+        if weight is not None and not 2 <= weight <= 400:
+            self.add_error("weight_kg", "Weight is in kilograms, e.g. 58.")
+        return cleaned
+
+
+class PdsFamilyForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "spouse_surname", "spouse_first_name", "spouse_middle_name", "spouse_extension", "spouse_occupation",
+            "spouse_employer", "spouse_business_address", "spouse_telephone", "father_surname", "father_first_name",
+            "father_middle_name", "father_extension", "mother_surname", "mother_first_name", "mother_middle_name",
+        ]
+
+
+class PdsOtherForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = ["skills", "distinctions", "memberships"]
+        help_texts = {f: "One per line." for f in fields}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            if isinstance(field.widget, forms.Textarea):
+                field.widget.attrs["rows"] = 4
+
+
+YES_NO = [("True", "Yes"), ("False", "No")]
+
+
+class PdsQuestionsForm(PdsProfileSectionForm):
+    """Questions 34-40, Yes or No, with details when Yes (PD2)."""
+
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "q34a", "q34b", "q34_details", "q35a", "q35a_details", "q35b", "q35b_details", "q35b_date_filed",
+            "q35b_status", "q36", "q36_details", "q37", "q37_details", "q38a", "q38a_details", "q38b", "q38b_details",
+            "q39", "q39_details", "q40a", "q40a_details", "q40b", "q40b_details", "q40c", "q40c_details",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        from .pds import QUESTION_ANSWERS
+
+        super().__init__(*args, **kwargs)
+        for name in QUESTION_ANSWERS:
+            self.fields[name] = forms.NullBooleanField(
+                required=False, widget=forms.RadioSelect(choices=YES_NO, attrs={"class": "form-check-input"}),
+            )
+
+    def clean(self):
+        from .pds import QUESTIONS
+
+        cleaned = super().clean()
+        needs = {}  # details field -> answered Yes to any question it explains (34a and 34b share one)
+        for _number, _intro, items in QUESTIONS:
+            for answer, _text, details in items:
+                details = details or "q34_details"
+                needs[details] = needs.get(details, False) or cleaned.get(answer) is True
+        for details, yes in needs.items():
+            if yes and not (cleaned.get(details) or "").strip():
+                self.add_error(details, "You answered Yes: give the details.")
+        return cleaned
+
+
+class PdsGovIdForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = ["gov_id_type", "gov_id_number", "gov_id_issued"]
+
+    def clean(self):
+        cleaned = super().clean()
+        _fake_id_check(self, "gov_id_number")
+        return cleaned
+
+
+class PdsRowForm(forms.ModelForm):
+    """One row of a PDS table; the person is set by the view."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _dates(self)
+        _bootstrap(self)
+        for field in self.fields.values():
+            if isinstance(field.widget, forms.Textarea):
+                field.widget = forms.TextInput(attrs={"class": "form-control"})
+
+
+class PdsChildForm(PdsRowForm):
+    class Meta:
+        model = PdsChild
+        fields = ["full_name", "birthdate"]
+
+
+class PdsEducationForm(PdsRowForm):
+    class Meta:
+        model = PdsEducation
+        fields = ["level", "school", "degree", "year_from", "year_to", "units_earned", "year_graduated", "honors"]
+
+    def clean(self):
+        cleaned = super().clean()
+        this_year = date.today().year
+        for name in ["year_from", "year_to", "year_graduated"]:
+            year = cleaned.get(name)
+            if year is not None and not 1940 <= year <= this_year + 6:
+                self.add_error(name, "Use a four-digit year.")
+        if cleaned.get("year_from") and cleaned.get("year_to") and cleaned["year_to"] < cleaned["year_from"]:
+            self.add_error("year_to", "Cannot be before the start year.")
+        return cleaned
+
+
+class PdsEligibilityForm(PdsRowForm):
+    class Meta:
+        model = PdsEligibility
+        fields = ["name", "rating", "exam_date", "exam_place", "license_number", "license_valid_until"]
+
+    def clean(self):
+        cleaned = super().clean()
+        _fake_id_check(self, "license_number")
+        return cleaned
+
+
+class PdsWorkForm(PdsRowForm):
+    class Meta:
+        model = PdsWorkExperience
+        fields = ["date_from", "date_to", "position", "employer", "monthly_salary", "grade_step",
+                  "appointment_status", "government"]
+
+
+class PdsVoluntaryForm(PdsRowForm):
+    class Meta:
+        model = PdsVoluntaryWork
+        fields = ["organization", "date_from", "date_to", "hours", "position"]
+
+
+class PdsTrainingForm(PdsRowForm):
+    class Meta:
+        model = PdsTraining
+        fields = ["title", "date_from", "date_to", "hours", "kind", "sponsor"]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("date_from") and cleaned.get("date_to") and cleaned["date_to"] < cleaned["date_from"]:
+            self.add_error("date_to", "Cannot be before the start date.")
+        return cleaned
+
+
+class PdsReferenceForm(PdsRowForm):
+    class Meta:
+        model = PdsReference
+        fields = ["name", "address", "telephone"]

@@ -1,0 +1,138 @@
+{% comment %}The PDS read-only, section by section. Pass d (pds.display), work, qrows, changed (section keys to
+mark) and, to show Edit links, edit_pk.{% endcomment %}
+{% with p=d.profile pe=d.person %}
+<div class="pds-view">
+
+<section class="card border-0 shadow-sm mb-3 {% if 'personal' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">I. Personal information {% if 'personal' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'personal' %}">Edit</a>{% endif %}
+  </div>
+  <div class="card-body small">
+    <dl class="row mb-0">
+      <dt class="col-sm-4 text-muted">Name</dt><dd class="col-sm-8">{{ pe.last_name }}, {{ pe.first_name }} {{ pe.middle_name }} {{ pe.suffix }}</dd>
+      <dt class="col-sm-4 text-muted">Born</dt><dd class="col-sm-8">{{ pe.birthdate|date:"F d, Y" }}{% if p.place_of_birth %} · {{ p.place_of_birth }}{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Sex · civil status</dt><dd class="col-sm-8">{% if pe.sex == "M" %}Male{% elif pe.sex == "F" %}Female{% else %}—{% endif %} · {{ p.civil_status_label|default:"—" }}{% if p.civil_status == "other" %} ({{ p.civil_status_other }}){% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Height · weight · blood type</dt><dd class="col-sm-8">{% if p.height_m or p.weight_kg or p.blood_type %}{% if p.height_m %}{{ p.height_m }} m{% else %}—{% endif %} · {% if p.weight_kg %}{{ p.weight_kg }} kg{% else %}—{% endif %} · {{ p.blood_type|default:"—" }}{% else %}—{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Citizenship</dt><dd class="col-sm-8">{{ p.citizenship_label }}{% if p.citizenship == "dual" %} ({{ p.dual_by_label|lower }}, {{ p.dual_country }}){% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Residential address</dt><dd class="col-sm-8">{% include "hr/_pds_address.html" with k="res" %}</dd>
+      <dt class="col-sm-4 text-muted">Permanent address</dt><dd class="col-sm-8">{% if p.perm_same %}Same as residential{% else %}{% include "hr/_pds_address.html" with k="perm" %}{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Contact</dt><dd class="col-sm-8">{{ pe.mobile|default:"—" }}{% if p.telephone %} · tel. {{ p.telephone }}{% endif %}{% if pe.email %} · {{ pe.email }}{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">GSIS · Pag-IBIG · PhilHealth</dt><dd class="col-sm-8 font-monospace">{{ pe.gsis_no|default:"—" }} · {{ pe.pagibig_no|default:"—" }} · {{ pe.philhealth_no|default:"—" }}</dd>
+      <dt class="col-sm-4 text-muted">SSS · TIN · employee no.</dt><dd class="col-sm-8 font-monospace">{{ pe.sss_no|default:"—" }} · {{ pe.tin|default:"—" }} · {{ pe.employee_no }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'family' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">II. Family background {% if 'family' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'family' %}">Edit</a>{% endif %}
+  </div>
+  <div class="card-body small">
+    <dl class="row mb-2">
+      <dt class="col-sm-4 text-muted">Spouse</dt><dd class="col-sm-8">{% if p.spouse_surname %}{{ p.spouse_surname }}, {{ p.spouse_first_name }} {{ p.spouse_middle_name }} {{ p.spouse_extension }}{% if p.spouse_occupation %} · {{ p.spouse_occupation }}{% endif %}{% if p.spouse_employer %}, {{ p.spouse_employer }}{% endif %}{% else %}—{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Father</dt><dd class="col-sm-8">{% if p.father_surname %}{{ p.father_surname }}, {{ p.father_first_name }} {{ p.father_middle_name }} {{ p.father_extension }}{% else %}—{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Mother (maiden name)</dt><dd class="col-sm-8">{% if p.mother_surname %}{{ p.mother_surname }}, {{ p.mother_first_name }} {{ p.mother_middle_name }}{% else %}—{% endif %}</dd>
+      <dt class="col-sm-4 text-muted">Children</dt><dd class="col-sm-8">{% for c in d.children %}{{ c.full_name }}{% if c.birthdate %} ({{ c.birthdate|date:"M d, Y" }}){% endif %}{% if not forloop.last %}; {% endif %}{% empty %}None listed{% endfor %}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'education' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">III. Educational background {% if 'education' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'education' %}">Edit</a>{% endif %}
+  </div>
+  <div class="table-responsive"><table class="table table-sm small mb-0">
+    <thead class="table-light"><tr><th>Level</th><th>School</th><th>Degree/course</th><th>Attended</th><th>Graduated / units</th><th>Honors</th></tr></thead>
+    <tbody>{% for e in d.education %}<tr><td>{{ e.level_label }}</td><td>{{ e.school }}</td><td>{{ e.degree }}</td><td class="text-nowrap">{{ e.year_from|default:"" }}–{{ e.year_to|default:"" }}</td><td>{{ e.year_graduated|default:e.units_earned }}</td><td>{{ e.honors }}</td></tr>{% empty %}<tr><td colspan="6" class="text-muted">None listed</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'eligibility' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">IV. Civil service eligibility {% if 'eligibility' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'eligibility' %}">Edit</a>{% endif %}
+  </div>
+  <div class="table-responsive"><table class="table table-sm small mb-0">
+    <thead class="table-light"><tr><th>Eligibility</th><th>Rating</th><th>Exam / conferment</th><th>License no.</th><th>Valid until</th></tr></thead>
+    <tbody>{% for e in d.eligibility %}<tr><td>{{ e.name }}</td><td>{{ e.rating }}</td><td>{{ e.exam_date|date:"M d, Y" }}{% if e.exam_place %}, {{ e.exam_place }}{% endif %}</td><td class="font-monospace">{{ e.license_number }}</td><td>{{ e.license_valid_until|date:"M d, Y" }}</td></tr>{% empty %}<tr><td colspan="5" class="text-muted">None listed</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'work' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">V. Work experience {% if 'work' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'work' %}">Edit</a>{% endif %}
+  </div>
+  <div class="table-responsive"><table class="table table-sm small mb-0">
+    <thead class="table-light"><tr><th>From</th><th>To</th><th>Position</th><th>Office / company</th><th>Monthly salary</th><th>SG-step</th><th>Status</th><th>Gov't</th></tr></thead>
+    <tbody>{% for w in work %}<tr{% if w.lgu %} class="table-light"{% endif %}><td class="text-nowrap">{{ w.date_from|date:"m/d/Y" }}</td><td class="text-nowrap">{% if w.date_to %}{{ w.date_to|date:"m/d/Y" }}{% else %}present{% endif %}</td><td>{{ w.position }}</td><td>{{ w.employer }}{% if w.lgu %} <span class="badge text-bg-light border" title="From HRMO's appointment records">on file</span>{% endif %}</td><td>{{ w.salary }}</td><td>{{ w.grade_step }}</td><td>{{ w.appointment_status }}</td><td>{{ w.government|yesno:"Y,N" }}</td></tr>{% empty %}<tr><td colspan="8" class="text-muted">None listed</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'voluntary' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">VI. Voluntary work {% if 'voluntary' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'voluntary' %}">Edit</a>{% endif %}
+  </div>
+  <div class="table-responsive"><table class="table table-sm small mb-0">
+    <thead class="table-light"><tr><th>Organization</th><th>From</th><th>To</th><th>Hours</th><th>Position / nature of work</th></tr></thead>
+    <tbody>{% for v in d.voluntary %}<tr><td>{{ v.organization }}</td><td>{{ v.date_from|date:"m/d/Y" }}</td><td>{{ v.date_to|date:"m/d/Y" }}</td><td>{{ v.hours|default:"" }}</td><td>{{ v.position }}</td></tr>{% empty %}<tr><td colspan="5" class="text-muted">None listed</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'training' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">VII. Learning and development {% if 'training' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'training' %}">Edit</a>{% endif %}
+  </div>
+  <div class="table-responsive"><table class="table table-sm small mb-0">
+    <thead class="table-light"><tr><th>Title</th><th>From</th><th>To</th><th>Hours</th><th>Type</th><th>Conducted by</th></tr></thead>
+    <tbody>{% for t in d.training %}<tr><td>{{ t.title }}</td><td>{{ t.date_from|date:"m/d/Y" }}</td><td>{{ t.date_to|date:"m/d/Y" }}</td><td>{{ t.hours|default:"" }}</td><td>{{ t.kind_label|default:"" }}</td><td>{{ t.sponsor }}</td></tr>{% empty %}<tr><td colspan="6" class="text-muted">None listed</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'other' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">VIII. Other information {% if 'other' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'other' %}">Edit</a>{% endif %}
+  </div>
+  <div class="card-body small row g-2">
+    <div class="col-md-4"><div class="text-muted">Skills and hobbies</div>{% for i in p.skills_lines %}<div>{{ i }}</div>{% empty %}—{% endfor %}</div>
+    <div class="col-md-4"><div class="text-muted">Distinctions / recognition</div>{% for i in p.distinctions_lines %}<div>{{ i }}</div>{% empty %}—{% endfor %}</div>
+    <div class="col-md-4"><div class="text-muted">Memberships</div>{% for i in p.memberships_lines %}<div>{{ i }}</div>{% empty %}—{% endfor %}</div>
+  </div>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'questions' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">Questions 34 to 40 {% if 'questions' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'questions' %}">Edit</a>{% endif %}
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% for q in qrows %}{% for line in q.lines %}
+      <li class="list-group-item d-flex justify-content-between gap-3">
+        <span><b>{{ q.number }}{% if q.lines|length > 1 %}{{ line.text|slice:":1" }}{% endif %}.</b> {% if q.lines|length > 1 %}{{ line.text|slice:"3:" }}{% else %}{{ line.text }}{% endif %}
+          {% if line.value and line.details %}<div class="text-muted">{{ line.details_label }}: {{ line.details }}</div>{% endif %}
+          {% if line.value and line.extra %}{% for label, val in line.extra %}{% if val %}<div class="text-muted">{{ label }}: {% if val.year %}{{ val|date:"M d, Y" }}{% else %}{{ val }}{% endif %}</div>{% endif %}{% endfor %}{% endif %}</span>
+        <span class="text-nowrap fw-semibold">{% if line.value is None %}<span class="text-danger">Not answered</span>{% elif line.value %}Yes{% else %}No{% endif %}</span>
+      </li>
+    {% endfor %}{% endfor %}
+  </ul>
+</section>
+
+<section class="card border-0 shadow-sm mb-3 {% if 'references' in changed %}card-changed{% endif %}">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+    <span class="fw-bold">References and government ID {% if 'references' in changed %}<span class="badge text-bg-warning ms-1">Changed</span>{% endif %}</span>
+    {% if edit_pk %}<a class="btn btn-sm btn-outline-primary" href="{% url 'pds_section' edit_pk 'references' %}">Edit</a>{% endif %}
+  </div>
+  <div class="card-body small">
+    {% for r in d.references %}<div>{{ r.name }}{% if r.address %} · {{ r.address }}{% endif %}{% if r.telephone %} · {{ r.telephone }}{% endif %}</div>{% empty %}<div class="text-muted">No references listed</div>{% endfor %}
+    <div class="mt-2"><span class="text-muted">Government ID:</span> {% if p.gov_id_type %}{{ p.gov_id_type }} <span class="font-monospace">{{ p.gov_id_number }}</span>{% if p.gov_id_issued %}, issued {{ p.gov_id_issued }}{% endif %}{% else %}—{% endif %}</div>
+  </div>
+</section>
+
+</div>
+{% endwith %}

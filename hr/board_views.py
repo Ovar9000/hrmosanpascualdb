@@ -23,7 +23,7 @@ from .forms import (
     ApplicantForm, LeaveCreditForm, LeaveRequestForm, MemoForm, VacancyForm, sanitize_filename,
 )
 from .models import (
-    Applicant, AuditLog, CalendarEvent, CertificateRequest, Engagement, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
+    Applicant, AuditLog, CalendarEvent, CertificateRequest, Engagement, PdsSubmission, LeaveApprovalStep, LeaveCredit, LeaveRequest, LeaveType,
     Memo, MemoAcknowledgment, Office, Person, SalaryAction, Vacancy,
 )
 from .permissions import (
@@ -140,7 +140,7 @@ def _workforce(today):
     }
 
 
-def _todo(my, inbox, unread, hrmo, today, ready=0):
+def _todo(my, inbox, unread, hrmo, today, ready=0, pds_state=None):
     """What needs this person, most urgent first. Each item: tone, count, label, url.
     HRMO's certify step is in the inbox already (leave.inbox), so it is not listed twice."""
     items = []
@@ -155,6 +155,14 @@ def _todo(my, inbox, unread, hrmo, today, ready=0):
         late = ", at least one past its comply-by date" if any(m.comply_by and m.comply_by < today for m in unread) else ""
         add("danger" if late else "primary", len(unread), f"memo to read and acknowledge{late}",
             f"memos to read and acknowledge{late}", reverse("memo_list") + "?show=unread")
+    if pds_state:
+        if pds_state["returned"]:
+            add("warning", 1, "Personal Data Sheet returned by HRMO for correction", "", reverse("pds_home"))
+        elif pds_state["never"] and pds_state["missing"]:
+            add("primary", len(pds_state["missing"]), "section of your Personal Data Sheet to fill in",
+                "sections of your Personal Data Sheet to fill in", reverse("pds_home"))
+        elif pds_state["never"]:
+            add("primary", 1, "Personal Data Sheet ready to send to HRMO", "", reverse("pds_home"))
     if ready:
         add("primary", ready, "document ready for release at HRMO: bring a valid ID",
             "documents ready for release at HRMO: bring a valid ID", reverse("my_certificates"))
@@ -184,6 +192,7 @@ def _todo(my, inbox, unread, hrmo, today, ready=0):
              "step increments or loyalty awards due"),
             ("certificates", "warning", "certificate_list", "service record or certificate to prepare",
              "service records or certificates to prepare"),
+            ("pds", "warning", "pds_queue", "Personal Data Sheet to verify", "Personal Data Sheets to verify"),
         ]:
             if hrmo.get(key):
                 add(tone, hrmo[key], one, many, reverse(url))
@@ -231,6 +240,8 @@ def dashboard(request):
             "memos": Memo.objects.filter(is_published=True, requires_ack=True).count(),
             "certificates": CertificateRequest.objects.filter(status=CertificateRequest.Status.PENDING).count()
                             if can_manage_hr_records(user) else 0,
+            "pds": PdsSubmission.objects.filter(status=PdsSubmission.Status.SUBMITTED).count()
+                   if can_manage_hr_records(user) else 0,
             "can_manage": can_manage_hr_records(user),
             "is_auditor": is_auditor(user) and not is_hrmo(user),
             "last_month": (today.replace(day=1) - timedelta(days=1)),
@@ -258,7 +269,9 @@ def dashboard(request):
             }
     ready = (CertificateRequest.objects.filter(person=person, status=CertificateRequest.Status.READY).count()
              if person else 0)
-    todo = _todo(my, inbox, unread, hrmo, today, ready)
+    from . import pds
+
+    todo = _todo(my, inbox, unread, hrmo, today, ready, pds.state(person) if person else None)
     return render(request, "hr/dashboard.html", {
         "person": person,
         "my": my,

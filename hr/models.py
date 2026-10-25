@@ -1296,6 +1296,276 @@ class CertificateRequest(models.Model):
     @property
     def is_open(self):
         return self.status in self.OPEN_STATUSES
+
+
+# --- Personal Data Sheet, CS Form No. 212 Revised 2017 (DECISIONS PD1-PD7) --------------
+# Name, birthdate, sex, contact numbers and government IDs stay on Person (HRMO keeps them);
+# work in this LGU comes from Engagement. These tables hold the rest of the form.
+
+
+def _fake_only(model, field):
+    return models.CheckConstraint(
+        condition=Q(**{field: ""}) | Q(**{f"{field}__regex": FAKE_ID_REGEX}),
+        name=f"{model}_{field}_fake_only",
+        violation_error_message="Prototype accepts fake ID numbers only (must start with 00).",
+    )
+
+
+class PdsProfile(models.Model):
+    """Sections I, II, VIII and questions 34-42 of the PDS: one row per person."""
+
+    class CivilStatus(models.TextChoices):
+        SINGLE = "single", "Single"
+        MARRIED = "married", "Married"
+        WIDOWED = "widowed", "Widowed"
+        SEPARATED = "separated", "Separated"
+        OTHER = "other", "Other/s"
+
+    class Citizenship(models.TextChoices):
+        FILIPINO = "filipino", "Filipino"
+        DUAL = "dual", "Dual citizenship"
+
+    class DualBy(models.TextChoices):
+        BIRTH = "birth", "By birth"
+        NATURALIZATION = "naturalization", "By naturalization"
+
+    BLOOD_TYPES = [(t, t) for t in ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]]
+
+    person = models.OneToOneField(Person, on_delete=models.PROTECT, related_name="pds")
+    # I. Personal information
+    place_of_birth = models.CharField(max_length=150, blank=True)
+    civil_status = models.CharField(max_length=20, choices=CivilStatus.choices, blank=True)
+    civil_status_other = models.CharField("Other civil status", max_length=50, blank=True)
+    height_m = models.DecimalField("Height (m)", max_digits=3, decimal_places=2, null=True, blank=True)
+    weight_kg = models.DecimalField("Weight (kg)", max_digits=5, decimal_places=1, null=True, blank=True)
+    blood_type = models.CharField(max_length=3, choices=BLOOD_TYPES, blank=True)
+    citizenship = models.CharField(max_length=20, choices=Citizenship.choices, default=Citizenship.FILIPINO)
+    dual_by = models.CharField("Dual citizenship", max_length=20, choices=DualBy.choices, blank=True)
+    dual_country = models.CharField("Country (dual citizenship)", max_length=100, blank=True)
+    res_house = models.CharField("House/block/lot no.", max_length=100, blank=True)
+    res_street = models.CharField("Street", max_length=100, blank=True)
+    res_subdivision = models.CharField("Subdivision/village", max_length=100, blank=True)
+    res_barangay = models.CharField("Barangay", max_length=100, blank=True)
+    res_city = models.CharField("City/municipality", max_length=100, blank=True)
+    res_province = models.CharField("Province", max_length=100, blank=True)
+    res_zip = models.CharField("ZIP code", max_length=10, blank=True)
+    perm_same = models.BooleanField("Permanent address is the same as residential", default=True)
+    perm_house = models.CharField("House/block/lot no.", max_length=100, blank=True)
+    perm_street = models.CharField("Street", max_length=100, blank=True)
+    perm_subdivision = models.CharField("Subdivision/village", max_length=100, blank=True)
+    perm_barangay = models.CharField("Barangay", max_length=100, blank=True)
+    perm_city = models.CharField("City/municipality", max_length=100, blank=True)
+    perm_province = models.CharField("Province", max_length=100, blank=True)
+    perm_zip = models.CharField("ZIP code", max_length=10, blank=True)
+    telephone = models.CharField("Telephone no.", max_length=30, blank=True)
+    # II. Family background
+    spouse_surname = models.CharField("Spouse's surname", max_length=100, blank=True)
+    spouse_first_name = models.CharField("First name", max_length=100, blank=True)
+    spouse_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    spouse_extension = models.CharField("Name extension", max_length=10, blank=True)
+    spouse_occupation = models.CharField("Occupation", max_length=100, blank=True)
+    spouse_employer = models.CharField("Employer/business name", max_length=150, blank=True)
+    spouse_business_address = models.CharField("Business address", max_length=200, blank=True)
+    spouse_telephone = models.CharField("Telephone no.", max_length=30, blank=True)
+    father_surname = models.CharField("Father's surname", max_length=100, blank=True)
+    father_first_name = models.CharField("First name", max_length=100, blank=True)
+    father_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    father_extension = models.CharField("Name extension", max_length=10, blank=True)
+    mother_surname = models.CharField("Mother's maiden surname", max_length=100, blank=True)
+    mother_first_name = models.CharField("First name", max_length=100, blank=True)
+    mother_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    # VIII. Other information, one item per line
+    skills = models.TextField("Special skills and hobbies", blank=True)
+    distinctions = models.TextField("Non-academic distinctions / recognition", blank=True)
+    memberships = models.TextField("Membership in association/organization", blank=True)
+    # Questions 34-40: None means not yet answered.
+    q34a = models.BooleanField(null=True, blank=True)
+    q34b = models.BooleanField(null=True, blank=True)
+    q34_details = models.CharField(max_length=255, blank=True)
+    q35a = models.BooleanField(null=True, blank=True)
+    q35a_details = models.CharField(max_length=255, blank=True)
+    q35b = models.BooleanField(null=True, blank=True)
+    q35b_details = models.CharField(max_length=255, blank=True)
+    q35b_date_filed = models.DateField(null=True, blank=True)
+    q35b_status = models.CharField(max_length=100, blank=True)
+    q36 = models.BooleanField(null=True, blank=True)
+    q36_details = models.CharField(max_length=255, blank=True)
+    q37 = models.BooleanField(null=True, blank=True)
+    q37_details = models.CharField(max_length=255, blank=True)
+    q38a = models.BooleanField(null=True, blank=True)
+    q38a_details = models.CharField(max_length=255, blank=True)
+    q38b = models.BooleanField(null=True, blank=True)
+    q38b_details = models.CharField(max_length=255, blank=True)
+    q39 = models.BooleanField(null=True, blank=True)
+    q39_details = models.CharField(max_length=255, blank=True)
+    q40a = models.BooleanField(null=True, blank=True)
+    q40a_details = models.CharField(max_length=255, blank=True)
+    q40b = models.BooleanField(null=True, blank=True)
+    q40b_details = models.CharField(max_length=255, blank=True)
+    q40c = models.BooleanField(null=True, blank=True)
+    q40c_details = models.CharField(max_length=255, blank=True)
+    # 42. Government-issued ID shown when the PDS is sworn
+    gov_id_type = models.CharField("Government-issued ID", max_length=100, blank=True, help_text="e.g. Passport, UMID, driver's license")
+    gov_id_number = models.CharField("ID/license/passport no.", max_length=50, blank=True)
+    gov_id_issued = models.CharField("Date/place of issuance", max_length=150, blank=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [_fake_only("pdsprofile", "gov_id_number")]
+
+    def __str__(self):
+        return f"PDS of {self.person}"
+
+
+class PdsChild(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_children")
+    full_name = models.CharField("Name of child", max_length=200)
+    birthdate = models.DateField("Date of birth", null=True, blank=True)
+
+    class Meta:
+        ordering = ["birthdate", "pk"]
+
+
+class PdsEducation(models.Model):
+    class Level(models.TextChoices):
+        ELEMENTARY = "elementary", "Elementary"
+        SECONDARY = "secondary", "Secondary"
+        VOCATIONAL = "vocational", "Vocational / trade course"
+        COLLEGE = "college", "College"
+        GRADUATE = "graduate", "Graduate studies"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_education")
+    level = models.CharField(max_length=20, choices=Level.choices)
+    school = models.CharField("Name of school", max_length=200)
+    degree = models.CharField("Basic education/degree/course", max_length=200, blank=True)
+    year_from = models.PositiveSmallIntegerField("From (year)", null=True, blank=True)
+    year_to = models.PositiveSmallIntegerField("To (year)", null=True, blank=True)
+    units_earned = models.CharField("Highest level/units earned", max_length=100, blank=True,
+                                    help_text="If not graduated.")
+    year_graduated = models.PositiveSmallIntegerField(null=True, blank=True)
+    honors = models.CharField("Scholarship/academic honors", max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["pk"]
+
+
+class PdsEligibility(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_eligibility")
+    name = models.CharField("Eligibility", max_length=200,
+                            help_text="Career service, RA 1080 (board/bar), special laws, CES/CSEE, barangay, driver's license")
+    rating = models.CharField(max_length=20, blank=True)
+    exam_date = models.DateField("Date of exam/conferment", null=True, blank=True)
+    exam_place = models.CharField("Place of exam/conferment", max_length=200, blank=True)
+    license_number = models.CharField("License no.", max_length=50, blank=True)
+    license_valid_until = models.DateField("Valid until", null=True, blank=True)
+
+    class Meta:
+        ordering = ["exam_date", "pk"]
+        constraints = [_fake_only("pdseligibility", "license_number")]
+
+
+class PdsWorkExperience(models.Model):
+    """Work before or outside this LGU. Appointments here come from Engagement (PD3)."""
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_work")
+    date_from = models.DateField("From")
+    date_to = models.DateField("To", null=True, blank=True, help_text="Blank for present.")
+    position = models.CharField("Position title", max_length=150)
+    employer = models.CharField("Department/agency/office/company", max_length=200)
+    monthly_salary = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    grade_step = models.CharField("Salary grade and step", max_length=20, blank=True, help_text="e.g. 11-2")
+    appointment_status = models.CharField("Status of appointment", max_length=50, blank=True)
+    government = models.BooleanField("Government service", default=False)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+        constraints = [
+            models.CheckConstraint(condition=Q(date_to__isnull=True) | Q(date_to__gte=F("date_from")),
+                                   name="pdswork_to_after_from",
+                                   violation_error_message="End date cannot be before start date."),
+        ]
+
+
+class PdsVoluntaryWork(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_voluntary")
+    organization = models.CharField("Name and address of organization", max_length=255)
+    date_from = models.DateField("From", null=True, blank=True)
+    date_to = models.DateField("To", null=True, blank=True)
+    hours = models.PositiveIntegerField("Number of hours", null=True, blank=True)
+    position = models.CharField("Position/nature of work", max_length=150, blank=True)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+
+
+class PdsTraining(models.Model):
+    class Kind(models.TextChoices):
+        MANAGERIAL = "managerial", "Managerial"
+        SUPERVISORY = "supervisory", "Supervisory"
+        TECHNICAL = "technical", "Technical"
+        FOUNDATION = "foundation", "Foundation"
+        OTHER = "other", "Other"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_training")
+    title = models.CharField("Title of learning and development intervention", max_length=255)
+    date_from = models.DateField("From")
+    date_to = models.DateField("To", null=True, blank=True)
+    hours = models.PositiveIntegerField("Number of hours", null=True, blank=True)
+    kind = models.CharField("Type of L&D", max_length=20, choices=Kind.choices, blank=True)
+    sponsor = models.CharField("Conducted/sponsored by", max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+
+
+class PdsReference(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_references")
+    name = models.CharField(max_length=200)
+    address = models.CharField(max_length=255, blank=True)
+    telephone = models.CharField("Tel. no.", max_length=30, blank=True)
+
+    class Meta:
+        ordering = ["pk"]
+
+
+class PdsSubmission(models.Model):
+    """The PDS as submitted to HRMO, frozen, and what HRMO decided (PD4)."""
+
+    class Status(models.TextChoices):
+        SUBMITTED = "submitted", "Waiting for HRMO"
+        VERIFIED = "verified", "Verified by HRMO"
+        RETURNED = "returned", "Returned for correction"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_submissions")
+    snapshot = models.JSONField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SUBMITTED, db_index=True)
+    submitted_at = models.DateTimeField(default=timezone.now)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    note = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-submitted_at", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(status="returned") | ~Q(note=""),
+                name="pdssubmission_returned_reason",
+                violation_error_message="Say what to correct.",
+            ),
+            models.UniqueConstraint(fields=["person"], condition=Q(status="submitted"),
+                                    name="pdssubmission_one_waiting"),
+        ]
+
+    def __str__(self):
+        return f"PDS of {self.person} submitted {self.submitted_at:%Y-%m-%d}"
 # --- User Profile -----------------------------------------------------------
 
 

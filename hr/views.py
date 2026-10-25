@@ -57,6 +57,7 @@ from .models import (
 from .permissions import (
     can_manage_certificate_requests,
     can_view_certificate_requests,
+    can_view_pds,
     can_manage_hr_records,
     can_manage_projects,
     can_manage_salary_actions,
@@ -598,6 +599,7 @@ def person_detail(request, pk):
             "leave_balances": leave_balances,
             "can_manage_records": can_manage_hr_records(request.user),
             "salary": _person_salary_summary(request.user, person),
+            "pds": can_view_pds(request.user, person),
             "certificates": {
                 "view": True,
                 "manage": can_manage_certificate_requests(request.user),

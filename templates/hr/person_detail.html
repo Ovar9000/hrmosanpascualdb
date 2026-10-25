@@ -15,6 +15,7 @@
         <div class="text-muted font-monospace">Employee No: {{ person.employee_no }}</div>
       </div>
       <div class="d-flex flex-wrap align-items-center gap-2">
+        {% if pds %}<a href="{% url 'pds_overview' person.pk %}" class="btn btn-sm btn-outline-primary">PDS</a>{% endif %}
         {% if certificates %}
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Service record / COE</button>

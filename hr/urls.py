@@ -1,5 +1,5 @@
 from django.urls import path
-from . import board_views, certificate_views, views
+from . import board_views, certificate_views, pds_views, views
 
 urlpatterns = [
     path("leave/", board_views.my_leave, name="my_leave"),
@@ -33,6 +33,13 @@ urlpatterns = [
     path("certificates/<int:pk>/print/", certificate_views.certificate_print, name="certificate_print"),
     path("people/<int:person_pk>/certificates/new/", certificate_views.certificate_record, name="certificate_record"),
     path("people/<int:pk>/preview/<str:kind>/", certificate_views.person_document_preview, name="person_document_preview"),
+    path("pds/", pds_views.pds_home, name="pds_home"),
+    path("pds/queue/", pds_views.pds_queue, name="pds_queue"),
+    path("pds/review/<int:sub_pk>/", pds_views.pds_review, name="pds_review"),
+    path("people/<int:pk>/pds/", pds_views.pds_overview, name="pds_overview"),
+    path("people/<int:pk>/pds/submit/", pds_views.pds_submit, name="pds_submit"),
+    path("people/<int:pk>/pds/print/", pds_views.pds_print, name="pds_print"),
+    path("people/<int:pk>/pds/<str:section>/", pds_views.pds_section, name="pds_section"),
     path("offices/", views.office_list, name="office_list"),
     path("offices/<int:pk>/", views.office_detail, name="office_detail"),
     path("offices/chart/", views.office_tree, name="office_tree"),

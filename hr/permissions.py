@@ -439,3 +439,31 @@ def can_view_certificate_requests(user):
 def can_manage_certificate_requests(user):
     """Record requests for walk-ins and letters, prepare, release and decline: HRMO."""
     return can_manage_hr_records(user) and can_view_certificate_requests(user)
+
+
+# --- Personal Data Sheet (DECISIONS PD5) ------------------------------------------------------
+
+
+def can_view_pds(user, person):
+    """The PDS holds family, health, offense and disability answers (sensitive personal information
+    under RA 10173): the person, HRMO and Auditor only."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    if is_self(user, person):
+        return True
+    return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))
+
+
+def can_edit_pds(user, person):
+    """The person fills in their own; HRMO encodes paper PDS for people without an account."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    return is_self(user, person) or can_manage_hr_records(user)
+
+
+def can_verify_pds(user):
+    return can_manage_hr_records(user) and not _no_hr_access(user)
+
+
+def can_view_pds_queue(user):
+    return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))

@@ -24,11 +24,12 @@ An HR records prototype for HRMO, running on synthetic data for about 420 people
 | Plantilla of Personnel | The posted Plantilla generated from the appointments, by office and item number, with vacant items marked. Print and Excel. HRMO and Auditor only. |
 | Vacancies and HRMPSB | Vacancy notices for everyone, with an "I'm interested" button for employees. HRMO tracks applicants and their documents, and prints the request for publication and a draft HRMPSB resolution. |
 | Memos | Memos addressed to everyone, an office or chosen people; each employee acknowledges online instead of signing a routing slip, and HRMO and office heads see who has not. Deadlines go on the calendar. |
+| Personal Data Sheet | CS Form No. 212 filled in online, section by section, with a progress bar; work in the LGU is filled in from the appointments. HRMO checks it against the 201 file and verifies it or returns it with what to fix; later edits show as changed until sent again. HRMO can encode paper PDS. Prints as the four-page form for signature and oath. Seen only by the person, HRMO and the Auditor. |
 | Service records and COEs | The service record (GSIS layout) and certificate of employment, with or without compensation, generated from the appointment history. Employees, including former employees with an account, request online and see when it is ready; HRMO records walk-in, letter and email requests, including from representatives and heirs. Each has a control number and is tracked to release (who received it, ID seen). |
 | Roles | HRMO, Office Head, Office Staff, Executive and Delegate, Auditor, Project Maintainer, Employee, System Admin. Each sees only what its role allows; the server checks every request. |
 | Audit trail | Every change and every view of a personnel record is logged in a trail that cannot be edited or deleted, with a tamper check the DPO can run independently. |
 | Accounts | Bulk employee accounts with one-time passwords that must be changed at first login and expire after 14 days. |
-| Quality | 278 automated tests, including forged-request ("Inspect Element") attacks. |
+| Quality | 286 automated tests, including forged-request ("Inspect Element") attacks. |
 
 Where things are: the code repository (GitHub, private), `README.md` (setup), `DECISIONS.md` (every rule and why), `docs/DEMO.md` (presentation run sheet).
 

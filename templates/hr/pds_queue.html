@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}PDS to verify{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Personal Data Sheets</h1>
+    <div class="text-muted small">Sent by employees for verification, oldest first. To encode a paper PDS, open the person's record and choose PDS.</div>
+  </div>
+</div>
+<ul class="nav nav-pills small mb-3">
+  <li class="nav-item"><a class="nav-link{% if show == 'waiting' %} active{% endif %}" href="?">To verify {% if waiting %}<span class="badge text-bg-warning">{{ waiting }}</span>{% endif %}</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'done' %} active{% endif %}" href="?show=done">Decided</a></li>
+</ul>
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 small">
+      <thead class="table-light"><tr>
+        <th>Person</th>
+        {% if show == 'waiting' %}<th>Sent</th><th>What changed</th>{% else %}<th>Decision</th><th>Decided</th><th>Note</th>{% endif %}
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {% for sub in page %}
+          <tr>
+            <td>{{ sub.person.full_name }}<div class="text-muted font-monospace">{{ sub.person.employee_no }}</div></td>
+            {% if show == 'waiting' %}
+              <td class="text-nowrap">{{ sub.submitted_at|date:"M d" }}<div class="text-muted">{{ sub.submitted_at|timesince }} ago</div></td>
+              <td>{% if sub.first_time %}<span class="badge text-bg-info">First PDS</span>{% else %}{{ sub.changed|join:", "|default:"Nothing" }}{% endif %}</td>
+            {% else %}
+              <td>{% if sub.status == "verified" %}<span class="badge text-bg-success">Verified</span>{% else %}<span class="badge text-bg-warning">Returned</span>{% endif %}</td>
+              <td class="text-nowrap">{{ sub.reviewed_at|date:"M d, Y" }}{% if sub.reviewed_by %}<div class="text-muted">{{ sub.reviewed_by.get_username }}</div>{% endif %}</td>
+              <td>{{ sub.note|truncatechars:80 }}</td>
+            {% endif %}
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'pds_review' sub.pk %}">{% if show == 'waiting' %}Review{% else %}Open{% endif %}</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-muted p-3">{% if show == 'waiting' %}Nothing to verify.{% else %}Nothing decided yet.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-2"><ul class="pagination pagination-sm">
+  {% if page.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page.previous_page_number }}&show={{ show }}">Previous</a></li>{% endif %}
+  {% if page.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page.next_page_number }}&show={{ show }}">Next</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endblock %}

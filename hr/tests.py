@@ -5355,3 +5355,196 @@ class CertificateRequestTestCase(TestCase):
         req.status = CertificateRequest.Status.RELEASED
         with self.assertRaises(IntegrityError), transaction.atomic():
             req.save()
+
+
+class PersonalDataSheetTestCase(TestCase):
+    """PD1-PD7: the PDS filled in online, verified by HRMO, and printed as CS Form No. 212."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        self.emp = self.emp_a_user
+        self.url = f"/people/{self.person_a.pk}/pds/"
+
+    def _complete(self, person):
+        """Fill every required section through the models."""
+        from hr.models import PdsEducation, PdsProfile, PdsReference
+
+        answers = {q: False for q in ["q34a", "q34b", "q35a", "q35b", "q36", "q37", "q38a", "q38b", "q39",
+                                       "q40a", "q40b", "q40c"]}
+        PdsProfile.objects.update_or_create(person=person, defaults=dict(
+            place_of_birth="San Pascual, Masbate", civil_status="single", res_barangay="Poblacion",
+            res_city="San Pascual", res_province="Masbate", father_surname="Rizal", father_first_name="Francisco",
+            mother_surname="Alonso", mother_first_name="Teodora", gov_id_type="UMID", gov_id_number="0011-2233",
+            **answers))
+        PdsEducation.objects.create(person=person, level="college", school="Masbate State College", degree="BSBA",
+                                    year_from=1998, year_to=2002, year_graduated=2002)
+        for n in range(3):
+            PdsReference.objects.create(person=person, name=f"Reference {n}", address="San Pascual")
+
+    def _rows(self, prefix, rows, initial=0):
+        data = {f"{prefix}-TOTAL_FORMS": len(rows), f"{prefix}-INITIAL_FORMS": initial,
+                f"{prefix}-MIN_NUM_FORMS": 0, f"{prefix}-MAX_NUM_FORMS": 1000}
+        for i, row in enumerate(rows):
+            data.update({f"{prefix}-{i}-{k}": v for k, v in row.items()})
+        return data
+
+    # --- Filling in (PD2) -------------------------------------------------------------------
+
+    def test_employee_fills_sections_then_sends(self):
+        from hr.models import PdsSubmission
+
+        self.client.force_login(self.emp)
+        self.assertContains(self.client.get("/"), "sections of your Personal Data Sheet to fill in")
+        self.client.post(f"{self.url}submit/")
+        self.assertFalse(PdsSubmission.objects.exists())  # required sections still empty
+        resp = self.client.post(f"{self.url}personal/", {
+            "version": 1, "place_of_birth": "San Pascual", "civil_status": "married", "citizenship": "filipino",
+            "res_barangay": "Poblacion", "res_city": "San Pascual", "perm_same": "on", "height_m": "1.65",
+        })
+        self.assertRedirects(resp, self.url)
+        resp = self.client.post(f"{self.url}family/", {
+            "version": 2, "father_surname": "Rizal", "mother_surname": "Alonso",
+            **self._rows("family", [{"full_name": "Maria Rizal", "birthdate": "2010-05-01"}]),
+        })
+        self.assertRedirects(resp, self.url)
+        self.assertContains(self.client.get(self.url), "Fill in every required section")  # married, no spouse yet
+        self.client.post(f"{self.url}family/", {"version": 3, "father_surname": "Rizal", "mother_surname": "Alonso",
+                                                "spouse_surname": "Bracken", **self._rows("family", [])})
+        self.client.post(f"{self.url}education/", self._rows("education", [
+            {"level": "college", "school": "Masbate State College", "year_from": 1998, "year_to": 2002}]))
+        self.client.post(f"{self.url}questions/", {"version": 4, **{q: "False" for q in [
+            "q34a", "q34b", "q35a", "q35b", "q36", "q37", "q38a", "q38b", "q39", "q40a", "q40b", "q40c"]}})
+        self.client.post(f"{self.url}references/", {
+            "version": 5, "gov_id_type": "UMID", "gov_id_number": "00-1234",
+            **self._rows("references", [{"name": f"Ref {n}"} for n in range(3)]),
+        })
+        resp = self.client.post(f"{self.url}submit/")
+        sub = PdsSubmission.objects.get()
+        self.assertEqual((sub.status, sub.submitted_by), ("submitted", self.emp))
+        self.assertEqual(sub.snapshot["children"][0]["full_name"], "Maria Rizal")
+        self.assertEqual(sub.snapshot["profile"]["spouse_surname"], "Bracken")
+        self.assertNotContains(self.client.get("/"), "Personal Data Sheet to fill in")
+
+    def test_yes_needs_details_and_fake_ids_only(self):
+        self.client.force_login(self.emp)
+        answers = {q: "False" for q in ["q34a", "q34b", "q35a", "q35b", "q36", "q37", "q38a", "q38b", "q39",
+                                         "q40a", "q40b", "q40c"]}
+        resp = self.client.post(f"{self.url}questions/", {"version": 1, **answers, "q34a": "True", "q40b": "True"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.content.decode().count("You answered Yes: give the details."), 2)
+        resp = self.client.post(f"{self.url}references/", {"version": 1, "gov_id_type": "UMID",
+                                                           "gov_id_number": "1234-5678", **self._rows("references", [])})
+        self.assertContains(resp, "fake ID numbers only")
+        resp = self.client.post(f"{self.url}references/", {"version": 1, **self._rows(
+            "references", [{"name": f"Ref {n}"} for n in range(4)])})
+        self.assertContains(resp, "Please submit at most 3 forms")
+
+    # --- Verification (PD4) -----------------------------------------------------------------
+
+    def test_verify_then_changes_are_marked_and_resent(self):
+        from hr import pds
+        from hr.models import PdsEducation, PdsSubmission
+
+        self._complete(self.person_a)
+        self.client.force_login(self.emp)
+        self.client.post(f"{self.url}submit/")
+        self.client.post(f"{self.url}submit/")  # a second send replaces the waiting copy
+        sub = PdsSubmission.objects.get()
+        self.client.force_login(self.hrmo_user)
+        self.client.post(f"/pds/review/{sub.pk}/", {"action": "return", "version": sub.version})
+        sub.refresh_from_db()
+        self.assertEqual(sub.status, "submitted")  # a reason is required
+        self.client.post(f"/pds/review/{sub.pk}/", {"action": "verify", "version": sub.version})
+        sub.refresh_from_db()
+        self.assertEqual((sub.status, sub.reviewed_by), ("verified", self.hrmo_user))
+        self.assertEqual(pds.state(self.person_a)["unsent"], set())
+        # HRMO correcting the mobile number is not a change the employee must resend.
+        Person.objects.filter(pk=self.person_a.pk).update(mobile="0917-000-0000")
+        self.assertEqual(pds.state(self.person_a)["unsent"], set())
+        PdsEducation.objects.create(person=self.person_a, level="graduate", school="Bicol University")
+        self.assertEqual(pds.state(self.person_a)["unsent"], {"education"})
+        self.client.force_login(self.emp)
+        self.assertContains(self.client.get(self.url), "You changed 1 section")
+        self.client.post(f"{self.url}submit/")
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get("/pds/queue/"), "<td>III. Educational background</td>", html=False)
+        waiting = PdsSubmission.objects.get(status="submitted")
+        self.client.post(f"/pds/review/{waiting.pk}/", {"action": "return", "version": waiting.version,
+                                                        "note": "Attach the diploma."})
+        self.client.force_login(self.emp)
+        self.assertContains(self.client.get("/"), "Personal Data Sheet returned by HRMO")
+        self.assertContains(self.client.get(self.url), "Attach the diploma.")
+
+    def test_hrmo_encodes_paper_pds_and_verifies(self):
+        from hr.models import PdsSubmission
+
+        self._complete(self.person_b)
+        self.client.force_login(self.hrmo_user)
+        self.assertEqual(self.client.get(f"/people/{self.person_b.pk}/pds/personal/").status_code, 200)
+        self.client.post(f"/people/{self.person_b.pk}/pds/submit/", {"verify": "1"})
+        sub = PdsSubmission.objects.get(person=self.person_b)
+        self.assertEqual((sub.status, sub.reviewed_by), ("verified", self.hrmo_user))
+        # An employee cannot verify their own.
+        self._complete(self.person_a)
+        self.client.force_login(self.emp)
+        self.client.post(f"{self.url}submit/", {"verify": "1"})
+        self.assertEqual(PdsSubmission.objects.get(person=self.person_a).status, "submitted")
+
+    # --- Who sees what (PD5) ----------------------------------------------------------------
+
+    def test_only_self_hrmo_and_auditor(self):
+        from hr.models import PdsSubmission
+
+        self._complete(self.person_a)
+        sub = PdsSubmission.objects.create(person=self.person_a, snapshot={})
+        for user in (self.head_a, self.mayor, self.staff_a, self.sysadmin):
+            self.client.force_login(user)
+            for url in (self.url, f"{self.url}print/", f"{self.url}personal/", f"/pds/review/{sub.pk}/"):
+                self.assertEqual(self.client.get(url).status_code, 403, (user, url))
+            self.assertEqual(self.client.get("/pds/queue/").status_code, 403, user)
+        self.client.force_login(self.auditor_user)
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+        self.assertEqual(self.client.get(f"{self.url}personal/").status_code, 403)
+        self.assertEqual(self.client.post(f"/pds/review/{sub.pk}/", {"action": "verify", "version": 1}).status_code, 403)
+        self.assertEqual(self.client.get(f"/people/{self.person_b.pk}/pds/").status_code, 200)
+        self.client.force_login(self.emp)
+        self.assertEqual(self.client.get(f"/people/{self.person_b.pk}/pds/").status_code, 403)
+
+    def test_print_fills_lgu_work_and_hides_pay_from_employee(self):
+        self._complete(self.person_a)
+        self.client.force_login(self.emp)
+        resp = self.client.get(f"{self.url}print/")
+        self.assertContains(resp, "PERSONAL DATA SHEET")
+        self.assertContains(resp, "Executive Assistant IV")
+        self.assertContains(resp, "Not yet verified by HRMO")
+        self.assertNotContains(resp, "50,000.00")
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.Action.EXPORT, object_repr__startswith="PDS print").exists())
+        self.client.force_login(self.hrmo_user)
+        resp = self.client.get(f"{self.url}print/")
+        self.assertContains(resp, "50,000.00")
+        self.assertContains(resp, "22-1")
+
+    def test_ids_and_answers_are_redacted_in_audit(self):
+        from hr.models import PdsProfile
+
+        self._complete(self.person_a)
+        profile = PdsProfile.objects.get(person=self.person_a)
+        profile.gov_id_number = "00-9999"
+        profile.q36_details = "Sample case"
+        profile.save()
+        entry = AuditLog.objects.filter(model_name="PdsProfile").order_by("-pk").first()
+        self.assertEqual(entry.changes["gov_id_number"], "[REDACTED]")
+        self.assertEqual(entry.changes["q36_details"], "[REDACTED]")
+
+    def test_opening_a_section_changes_nothing(self):
+        from hr.models import PdsProfile
+
+        self.client.force_login(self.emp)
+        for section in ("personal", "family", "questions", "references"):
+            self.assertEqual(self.client.get(f"{self.url}{section}/").status_code, 200)
+        self.assertFalse(PdsProfile.objects.filter(person=self.person_a).exists())
+        resp = self.client.post(f"{self.url}other/", {"version": 1, "skills": "Driving"})
+        self.assertRedirects(resp, self.url)
+        self.assertEqual(PdsProfile.objects.get(person=self.person_a).skills, "Driving")
