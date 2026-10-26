@@ -55,7 +55,7 @@
         <tbody>
           {% for r in rows %}
             <tr>
-              {% if can_manage %}<td>{% if r.state != 'received' %}<input type="checkbox" class="form-check-input" name="person" value="{{ r.person.pk }}" aria-label="Received from {{ r.person.full_name }}">{% endif %}</td>{% endif %}
+              {% if can_manage %}<td>{% if r.state != 'received' and r.person.pk != own_pk %}<input type="checkbox" class="form-check-input" name="person" value="{{ r.person.pk }}" aria-label="Received from {{ r.person.full_name }}">{% endif %}</td>{% endif %}
               <td>{{ r.person.full_name }}<div class="text-muted font-monospace">{{ r.person.employee_no }}</div></td>
               <td>{{ r.office.acronym|default:r.office.name }}</td>
               <td>{% if r.state == 'received' %}<span class="badge text-bg-success"><span class="mk mk-check" aria-hidden="true"></span>Received {{ r.filing.received_on|date:"M d, Y" }}</span>{% if r.late %} <span class="badge text-bg-warning">Late</span>{% endif %}

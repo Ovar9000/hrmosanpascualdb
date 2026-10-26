@@ -42,9 +42,19 @@ def _own_person(user):
     return profile.person if profile and profile.person_id else None
 
 
-def _picker_people(office=None, exclude_types=()):
-    """People in active service, with their office, for the "who attended" pickers."""
+def _not_self(user, people):
+    """HRMO never credits their own record (R10): drop the user's own person from a picker's people."""
+    own = _own_person(user)
+    return people.exclude(pk=own.pk) if own else people
+
+
+def _picker_people(user, office=None, exclude_types=()):
+    """People in active service, with their office, for the "who attended" pickers. The user's own
+    record is left out (R10)."""
     engs = Engagement.objects.filter(status=Engagement.Status.ACTIVE).exclude(type__in=exclude_types)
+    own = _own_person(user)
+    if own:
+        engs = engs.exclude(person=own)
     if office:
         engs = engs.filter(office=office)
     rows = {}
@@ -144,7 +154,8 @@ def learning_record(request):
         if values["kind"] not in PdsTraining.Kind.values:
             values["kind"] = ""
         ids = [int(i) for i in request.POST.getlist("person") if i.isdigit()]
-        people = list(Person.objects.filter(pk__in=ids, engagements__status=Engagement.Status.ACTIVE).distinct())
+        people = list(_not_self(request.user, Person.objects.filter(
+            pk__in=ids, engagements__status=Engagement.Status.ACTIVE).distinct()))
         if not people:
             errors["people"] = "Tick everyone who attended."
         if not errors:
@@ -159,7 +170,7 @@ def learning_record(request):
             return redirect("tracker_learning")
     return render(request, "hr/learning_record.html", {
         "tracker": "learning", "errors": errors, "values": values, "kinds": PdsTraining.Kind.choices,
-        "people": _picker_people(), "ticked": set(request.POST.getlist("person")),
+        "people": _picker_people(request.user), "ticked": set(request.POST.getlist("person")),
     })
 
 
@@ -217,6 +228,8 @@ def ratings_office(request, office_pk):
         changes = []
         for row in sheet:
             pid = row["person"].pk
+            if is_self(request.user, row["person"]):
+                continue  # another HRMO staff member enters one's own rating (R10)
             raw = request.POST.get(f"rating-{pid}", "").strip()
             note = request.POST.get(f"note-{pid}", "").strip()[:255]
             if not raw:
@@ -259,6 +272,7 @@ def ratings_office(request, office_pk):
             row["value"] = existing.rating if existing else ""
             row["note"] = existing.notes if existing else ""
         row["error"] = errors.get(pid)
+        row["own"] = is_self(request.user, row["person"])
     return render(request, "hr/ratings_office.html", {
         "tracker": "ratings", "office": office, "sheet": sheet, "year": year, "semester": semester,
         "label": spms.period_label(year, semester), "errors": errors,
@@ -290,6 +304,8 @@ def tracker_saln(request):
         count = 0
         with transaction.atomic():
             for person in saln.covered_people(ids):
+                if is_self(request.user, person):
+                    continue  # another HRMO staff member receives one's own SALN (R10)
                 filing, _ = SalnFiling.objects.get_or_create(person=person, year=year)
                 if not filing.received_on:
                     filing.received_on, filing.received_by = received_on, request.user
@@ -318,6 +334,7 @@ def tracker_saln(request):
         "open": saln.is_open(year, today),
         "deadline": saln.deadline(year), "today": today, "office": office, "scoped": scope is not None,
         "offices": Office.objects.order_by("name"), "show": show, "can_manage": can_manage,
+        "own_pk": getattr(_own_person(request.user), "pk", None),
         "counts": {s: sum(1 for r in all_rows if r["state"] == s) for s in ("received", "reported", "missing")},
         "total": len(all_rows), "export_qs": urlencode(params + [("export", "xlsx")]),
     })
@@ -405,7 +422,7 @@ def coc_record(request):
         if not values["reference"]:
             errors["reference"] = "Give the office order or certificate number."
         ids = [int(i) for i in request.POST.getlist("person") if i.isdigit()]
-        people = list(coc.eligible_people().filter(pk__in=ids))
+        people = list(_not_self(request.user, coc.eligible_people().filter(pk__in=ids)))
         if not people:
             errors["people"] = "Tick everyone who worked the overtime."
         if not errors:
@@ -425,7 +442,7 @@ def coc_record(request):
             return redirect("coc_record")
     return render(request, "hr/coc_record.html", {
         "errors": errors, "values": values, "day_kinds": CocEntry.DayKind.choices,
-        "people": _picker_people(exclude_types=settings.COC_EXCLUDED_TYPES), "ticked": set(request.POST.getlist("person")),
+        "people": _picker_people(request.user, exclude_types=settings.COC_EXCLUDED_TYPES), "ticked": set(request.POST.getlist("person")),
         "workday_rate": settings.COC_WORKDAY_RATE, "restday_rate": settings.COC_RESTDAY_RATE,
         "monthly_cap": settings.COC_MONTHLY_CAP, "balance_cap": settings.COC_BALANCE_CAP,
         "valid_months": settings.COC_VALID_MONTHS, "today": today,

@@ -19,12 +19,12 @@
             {% for row in sheet %}
               {% with pid=row.person.pk %}
               <tr>
-                <td class="small">{{ row.person.full_name }}</td>
+                <td class="small">{{ row.person.full_name }}{% if can_manage and row.own %} <span class="text-muted">(yours: entered by another HRMO staff member)</span>{% endif %}</td>
                 <td class="small text-muted">{{ row.eng.position_title }}</td>
-                <td>{% if can_manage %}<input class="form-control form-control-sm rating-input" type="number" step="0.001" min="1" max="5" name="rating-{{ pid }}" aria-label="Rating of {{ row.person.full_name }}" value="{{ row.value }}">{% else %}{{ row.rating.rating|default:"—" }}{% endif %}
+                <td>{% if can_manage and not row.own %}<input class="form-control form-control-sm rating-input" type="number" step="0.001" min="1" max="5" name="rating-{{ pid }}" aria-label="Rating of {{ row.person.full_name }}" value="{{ row.value }}">{% else %}{{ row.rating.rating|default:"—" }}{% endif %}
                   {% if row.error %}<div class="invalid-feedback d-block">{{ row.error }}</div>{% endif %}</td>
                 <td class="small adjectival">{{ row.rating.adjectival|default:"" }}</td>
-                <td>{% if can_manage %}<input class="form-control form-control-sm" name="note-{{ pid }}" maxlength="255" value="{{ row.note }}" aria-label="Notes for {{ row.person.full_name }}">{% else %}<span class="small">{{ row.rating.notes }}</span>{% endif %}</td>
+                <td>{% if can_manage and not row.own %}<input class="form-control form-control-sm" name="note-{{ pid }}" maxlength="255" value="{{ row.note }}" aria-label="Notes for {{ row.person.full_name }}">{% else %}<span class="small">{{ row.rating.notes }}</span>{% endif %}</td>
               </tr>
               {% endwith %}
             {% empty %}

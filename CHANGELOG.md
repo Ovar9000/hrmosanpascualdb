@@ -9,6 +9,16 @@ The version in every page footer is `MAJOR.MINOR.PATCH` from the `VERSION` file 
 Bump `VERSION`, add a section here, and tag the commit (`git tag v1.2.0`) in the same release. Hover over the
 version in the footer to see the exact commit that is running.
 
+## 1.1.1 (October 2026)
+
+Fixed:
+- System Admin could reset the password of an employee or delegate account in `/admin/` and log in as
+  them, reaching that person's PDS, IDs and leave, or a delegate's view of every office. Every account
+  that reaches HR records is now managed by the emergency superuser only (R3, A2).
+- HRMO staff could change their own record: appointment and pay, leave and overtime credits, rating,
+  trainings, SALN receipt, salary actions, and verify their own PDS. Another HRMO staff member now does
+  these (R10).
+
 ## 1.1.0 (October 2026)
 
 Added:

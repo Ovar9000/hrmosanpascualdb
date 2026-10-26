@@ -382,6 +382,9 @@ def cancel(req, user, note=""):
     elif req.status == LeaveRequest.Status.APPROVED:
         if not (is_hrmo(user) or user.is_superuser):
             raise LeaveError("Ask HRMO to cancel approved leave.")
+        if _is_applicant(user, req):
+            # Cancelling puts the days back on the ledger: not for one's own leave (R10).
+            raise LeaveError("Ask another HRMO staff member to cancel your own approved leave.")
         if not note:
             raise LeaveError("Give the reason for cancelling approved leave.")
         for entry in req.credit_entries.all():

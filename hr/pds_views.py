@@ -94,6 +94,11 @@ def _person(request, pk, edit=False):
     return person
 
 
+def _can_verify_pds_of(user, person):
+    """HRMO verifies, but never their own PDS: another HRMO staff member does (R10)."""
+    return can_verify_pds(user) and not is_self(user, person)
+
+
 @login_required
 def pds_home(request):
     person = _own_person(request.user)
@@ -126,7 +131,7 @@ def pds_overview(request, pk):
                      "pct": round(100 * sum(1 for r in required if r["done"]) / len(required))},
         "qrows": pds.question_rows(loaded["profile"]),
         "can_edit": can_edit_pds(request.user, person),
-        "can_verify": can_verify_pds(request.user),
+        "can_verify": _can_verify_pds_of(request.user, person),
         "is_self": is_self(request.user, person),
         "history": Sub.objects.filter(person=person).select_related("reviewed_by")[:6],
         "changed": st["unsent"],
@@ -160,7 +165,7 @@ def pds_section(request, pk, section):
     # The profile row is made on the first save, so opening a page changes nothing.
     profile = pds.profile_for(person, create=request.method == "POST") if form_class else None
     form = formset = None
-    hide_hrmo = section == "training" and not can_verify_pds(request.user)
+    hide_hrmo = section == "training" and not _can_verify_pds_of(request.user, person)
     if request.method == "POST":
         form = form_class(request.POST, instance=profile) if form_class else None
         formset = _formset(person, section, request.POST, hide_hrmo)
@@ -222,7 +227,7 @@ def pds_submit(request, pk):
     if pds.missing(snap):
         messages.error(request, "Fill in " + ", ".join(r["title"] for r in pds.missing(snap)) + " first.")
         return redirect("pds_overview", pk=pk)
-    verify_now = request.POST.get("verify") == "1" and can_verify_pds(request.user) and not is_self(request.user, person)
+    verify_now = request.POST.get("verify") == "1" and _can_verify_pds_of(request.user, person)
     try:
         with transaction.atomic():
             waiting = Sub.objects.select_for_update().filter(person=person, status=Sub.Status.SUBMITTED).first()
@@ -280,8 +285,8 @@ def pds_review(request, sub_pk):
     sub = get_object_or_404(Sub.objects.select_related("person", "submitted_by", "reviewed_by"), pk=sub_pk)
     person = _person(request, sub.person_id)
     if request.method == "POST":
-        if not can_verify_pds(request.user):
-            raise PermissionDenied("Only HRMO verifies a PDS.")
+        if not _can_verify_pds_of(request.user, person):
+            raise PermissionDenied("Only HRMO verifies a PDS, and another HRMO staff member verifies your own (R10).")
         action, note = request.POST.get("action"), request.POST.get("note", "").strip()
         with transaction.atomic():
             locked = Sub.objects.select_for_update().get(pk=sub.pk)
@@ -298,7 +303,8 @@ def pds_review(request, sub_pk):
             locked.version += 1
             locked.save()
         messages.success(request, "Verified." if action == "verify" else "Returned for correction.")
-        nxt = Sub.objects.filter(status=Sub.Status.SUBMITTED).order_by("submitted_at").first()
+        nxt = (Sub.objects.filter(status=Sub.Status.SUBMITTED).exclude(person=_own_person(request.user))
+               .order_by("submitted_at").first())
         return redirect("pds_review", sub_pk=nxt.pk) if nxt else redirect("pds_queue")
     previous = (Sub.objects.filter(person=person, status=Sub.Status.VERIFIED, submitted_at__lt=sub.submitted_at)
                 .exclude(pk=sub.pk).first())
@@ -310,7 +316,7 @@ def pds_review(request, sub_pk):
         "changed": pds.changed_sections(previous.snapshot if previous else None, sub.snapshot),
         "previous": previous,
         "qrows": pds.question_rows(loaded["profile"]),
-        "can_verify": can_verify_pds(request.user) and sub.status == Sub.Status.SUBMITTED,
+        "can_verify": _can_verify_pds_of(request.user, person) and sub.status == Sub.Status.SUBMITTED,
     })
 
 

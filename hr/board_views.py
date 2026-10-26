@@ -27,7 +27,7 @@ from .models import (
     Memo, MemoAcknowledgment, Office, Person, SalaryAction, Vacancy,
 )
 from .permissions import (
-    can_approve_leave, can_manage_hr_records, can_view_applicants, can_view_leave_of, can_view_leave_register,
+    can_approve_leave, can_manage_hr_records, can_manage_record_of, can_view_applicants, can_view_leave_of, can_view_leave_register,
     can_view_memo, can_view_plantilla_report, can_view_trackers, can_view_vacancies, get_user_office,
     has_all_office_scope, is_auditor, is_executive, is_hrmo, is_office_head, is_office_staff, is_sysadmin,
     memo_ack_scope, memo_is_for,
@@ -479,7 +479,7 @@ def leave_detail(request, pk):
     with_pay, without_pay = leave.pay_split(req) if req.status == LeaveRequest.Status.PENDING else (None, None)
     is_applicant = _own_person(request.user) is not None and _own_person(request.user).pk == req.person_id
     can_cancel = (req.status == LeaveRequest.Status.PENDING and (is_applicant or is_hrmo(request.user))) or (
-        req.status == LeaveRequest.Status.APPROVED and is_hrmo(request.user))
+        req.status == LeaveRequest.Status.APPROVED and is_hrmo(request.user) and not is_applicant)
     return render(request, "hr/leave_detail.html", {
         "req": req,
         "steps": steps,
@@ -639,10 +639,11 @@ def leave_card(request, person_pk):
     person = get_object_or_404(Person, pk=person_pk)
     if not can_view_leave_of(request.user, person):
         raise PermissionDenied("You cannot see this leave card.")
-    can_manage = can_manage_hr_records(request.user)
+    can_manage = can_manage_record_of(request.user, person)
     if request.method == "POST":
         if not can_manage:
-            raise PermissionDenied("Only HRMO can change the leave ledger.")
+            raise PermissionDenied("Only HRMO can change the leave ledger, and another HRMO staff member "
+                                   "changes your own (R10).")
         form = LeaveCreditForm(request.POST)
         if form.is_valid():
             if not person.earns_leave_credits():

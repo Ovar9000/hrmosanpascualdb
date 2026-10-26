@@ -61,6 +61,7 @@ from .permissions import (
     can_view_ratings,
     can_manage_hr_records,
     can_manage_projects,
+    can_manage_record_of,
     can_manage_salary_actions,
     can_view_contacts,
     can_view_document_content,
@@ -85,6 +86,7 @@ from .permissions import (
     is_hrmo,
     is_office_head,
     is_office_staff,
+    is_self,
     is_sysadmin,
 )
 from .sequences import get_next_employee_no
@@ -598,7 +600,7 @@ def person_detail(request, pk):
             "can_view_contacts": can_view_contacts(request.user, person),
             "can_view_notes": can_view_hr_notes(request.user),
             "leave_balances": leave_balances,
-            "can_manage_records": can_manage_hr_records(request.user),
+            "can_manage_records": can_manage_record_of(request.user, person),
             "salary": _person_salary_summary(request.user, person),
             "pds": can_view_pds(request.user, person),
             "ratings": person.ratings.all()[:6] if can_view_ratings(request.user, person) else None,
@@ -610,6 +612,12 @@ def person_detail(request, pk):
         },
     )
 
+
+
+def _require_record_of(request, person):
+    """HRMO changes the record, but never their own: another HRMO staff member does (R10)."""
+    if person is not None and not can_manage_record_of(request.user, person):
+        raise PermissionDenied("Another HRMO staff member changes your own record (R10).")
 
 
 def _person_salary_summary(user, person):
@@ -663,6 +671,7 @@ def person_edit(request, pk):
         raise PermissionDenied("You do not have permission to edit personnel records.")
 
     person = get_object_or_404(Person, pk=pk)
+    _require_record_of(request, person)
 
     if request.method == "POST":
         form = PersonForm(request.POST, instance=person, user=request.user)
@@ -716,6 +725,7 @@ def engagement_create(request, person_pk):
         raise PermissionDenied("You do not have permission to manage appointments.")
 
     person = get_object_or_404(Person, pk=person_pk)
+    _require_record_of(request, person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, user=request.user, person=person)
@@ -752,6 +762,7 @@ def engagement_edit(request, pk):
         raise PermissionDenied("You do not have permission to edit appointments.")
 
     eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, eng.person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, instance=eng, user=request.user, person=eng.person)
@@ -809,6 +820,7 @@ def engagement_end(request, pk):
         raise PermissionDenied("You do not have permission to end appointments.")
 
     eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, eng.person)
 
     if request.method == "POST":
         form = EndEngagementForm(request.POST, engagement=eng)
@@ -863,6 +875,7 @@ def engagement_renew(request, pk):
         raise PermissionDenied("You do not have permission to renew appointments.")
 
     old_eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, old_eng.person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, user=request.user, person=old_eng.person)
@@ -919,6 +932,7 @@ def document_create_person(request, person_pk):
         raise PermissionDenied("You do not have permission to upload or manage HR documents.")
 
     person = get_object_or_404(Person, pk=person_pk)
+    _require_record_of(request, person)
     if request.method == "POST":
         form = DocumentForm(request.POST, request.FILES, person=person)
         if form.is_valid():
@@ -951,6 +965,7 @@ def document_create_engagement(request, engagement_pk):
         raise PermissionDenied("You do not have permission to upload or manage HR documents.")
 
     engagement = get_object_or_404(Engagement, pk=engagement_pk)
+    _require_record_of(request, engagement.person)
     if request.method == "POST":
         form = DocumentForm(request.POST, request.FILES, engagement=engagement)
         if form.is_valid():
@@ -985,6 +1000,7 @@ def document_edit(request, pk):
 
     doc = get_object_or_404(Document, pk=pk)
     target_person = doc.person or (doc.engagement.person if doc.engagement else None)
+    _require_record_of(request, target_person)
 
     if request.method == "POST":
         form = DocumentEditForm(request.POST, instance=doc)
@@ -1028,6 +1044,7 @@ def document_replace(request, pk):
 
     old_doc = get_object_or_404(Document, pk=pk)
     target_person = old_doc.person or (old_doc.engagement.person if old_doc.engagement else None)
+    _require_record_of(request, target_person)
 
     # Only the current scan can be replaced; replacing a superseded one would fork the
     # replacement history into two "current" documents.
@@ -1324,12 +1341,13 @@ def salary_action_detail(request, pk):
     """One case: the counted service, warnings, HRMO's checklist and the next step."""
     _require_salary_view(request)
     case = get_object_or_404(SalaryAction.objects.select_related("person", "engagement__office", "issued_by"), pk=pk)
-    can_manage = can_manage_salary_actions(request.user)
+    can_manage = can_manage_salary_actions(request.user) and not is_self(request.user, case.person)
     today = timezone.localdate()
 
     if request.method == "POST":
         if not can_manage:
-            raise PermissionDenied("Only HRMO can work on salary actions.")
+            raise PermissionDenied("Only HRMO can work on salary actions, and another HRMO staff member "
+                                   "works on your own (R10).")
         action = request.POST.get("action", "")
         try:
             with transaction.atomic():
@@ -1399,6 +1417,8 @@ def salary_interruption_create(request, pk):
     if not can_manage_salary_actions(request.user):
         raise PermissionDenied("Only HRMO can record service interruptions.")
     case = get_object_or_404(SalaryAction.objects.select_related("person"), pk=pk)
+    if is_self(request.user, case.person):
+        raise PermissionDenied("Another HRMO staff member records your own service interruptions (R10).")
     form = ServiceInterruptionForm(request.POST)
     if form.is_valid():
         with transaction.atomic():

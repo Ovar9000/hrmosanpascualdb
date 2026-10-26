@@ -40,6 +40,20 @@ PROTECTED_ROLES = [
 ]
 
 
+def hr_access_accounts(users):
+    """The accounts in `users` that reach HR records: superusers, members of a protected role, and
+    accounts with no role that still get in: linked to a person (employee self-service), holding a
+    current or future delegation (R7), or given an HR permission directly. Only the emergency
+    superuser may edit them or reset their passwords in /admin/ (DECISIONS R3)."""
+    return users.filter(
+        Q(is_superuser=True)
+        | Q(groups__name__in=PROTECTED_ROLES)
+        | Q(profile__person__isnull=False)
+        | Q(delegations_received__valid_to__gte=timezone.localdate())
+        | Q(user_permissions__content_type__app_label="hr")
+    ).distinct()
+
+
 def is_in_group(user, group_name):
     if not user or not user.is_authenticated:
         return False
@@ -208,6 +222,13 @@ def can_manage_hr_records(user):
     if user.is_superuser:
         return True
     return user.has_perm("hr.manage_hr_records") or is_hrmo(user)
+
+
+def can_manage_record_of(user, person):
+    """Change one person's HR record: HRMO, except on their own (DECISIONS R10). Appointments and
+    pay, documents, leave and overtime credits, ratings, trainings, SALN receipts, salary actions
+    and PDS verification of an HRMO staff member are entered by another HRMO staff member."""
+    return can_manage_hr_records(user) and not is_self(user, person)
 
 
 def can_manage_projects(user):

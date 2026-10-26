@@ -23,13 +23,16 @@ from .models import (
 )
 
 from .accounts import require_password_change
-from .permissions import PROTECTED_ROLES
+from .permissions import PROTECTED_ROLES, hr_access_accounts
 
 
 class CustomUserAdmin(BaseUserAdmin):
     """Custom User admin preventing privilege escalation by System Admin (DECISIONS R2/R5).
 
-    - Non-superusers cannot view, edit, or delete emergency superusers or users in protected roles.
+    - Non-superusers cannot view, edit, delete or reset the password of any account that reaches
+      HR records (hr_access_accounts): superusers, protected roles, employee self-service accounts,
+      delegates and accounts with direct HR permissions. Otherwise a password reset would let
+      System Admin log in as that person.
     - Non-superusers cannot assign protected roles (groups) or direct HR permissions.
     - Non-superusers cannot escalate privileges via is_superuser.
     - A password set by an admin for someone else is one-time: the user must change it at
@@ -39,24 +42,25 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if not request.user.is_superuser:
-            # Hide superusers and members of protected roles from non-superusers
-            qs = qs.filter(is_superuser=False).exclude(groups__name__in=PROTECTED_ROLES)
+            qs = qs.exclude(pk__in=hr_access_accounts(User.objects.all()).values("pk"))
         return qs
+
+    @staticmethod
+    def _reaches_hr(obj):
+        return hr_access_accounts(User.objects.filter(pk=obj.pk)).exists()
 
     def has_change_permission(self, request, obj=None):
         if not super().has_change_permission(request, obj):
             return False
-        if obj and not request.user.is_superuser:
-            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
-                return False
+        if obj and not request.user.is_superuser and self._reaches_hr(obj):
+            return False
         return True
 
     def has_delete_permission(self, request, obj=None):
         if not super().has_delete_permission(request, obj):
             return False
-        if obj and not request.user.is_superuser:
-            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
-                return False
+        if obj and not request.user.is_superuser and self._reaches_hr(obj):
+            return False
         return True
 
     def formfield_for_manytomany(self, db_field, request, **kwargs):

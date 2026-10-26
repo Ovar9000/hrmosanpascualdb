@@ -2949,15 +2949,71 @@ class SysadminEscalationTestCase(TestCase):
         self.assertNotEqual(resp.status_code, 200)
 
     def test_admin_password_reset_forces_change_at_next_login(self):
+        # An account with no HR access (here: an office link but no role or person).
+        clerk = get_user_model().objects.create_user("it_clerk", password="Password123!")
+        UserProfile.objects.create(user=clerk, office=self.office_a)
         self.client.force_login(self.sysadmin)
         new_pw = "Rq7!fresh-one-time-pass"
         resp = self.client.post(
-            f"/admin/auth/user/{self.emp_a_user.pk}/password/",
+            f"/admin/auth/user/{clerk.pk}/password/",
             {"password1": new_pw, "password2": new_pw, "usable_password": "true"},
         )
         self.assertEqual(resp.status_code, 302)
-        self.emp_a_user.profile.refresh_from_db()
-        self.assertTrue(self.emp_a_user.profile.must_change_password)
+        clerk.profile.refresh_from_db()
+        self.assertTrue(clerk.profile.must_change_password)
+
+    def _assert_locked_for_sysadmin(self, target):
+        """System Admin can neither open, list, reset nor delete the account (R3)."""
+        self.client.force_login(self.sysadmin)
+        old_hash = get_user_model().objects.get(pk=target.pk).password
+        for url in (f"/admin/auth/user/{target.pk}/change/", f"/admin/auth/user/{target.pk}/password/",
+                    f"/admin/auth/user/{target.pk}/delete/"):
+            self.assertNotEqual(self.client.get(url).status_code, 200, url)
+        new_pw = "Zt8!taken-over-account"
+        self.client.post(f"/admin/auth/user/{target.pk}/password/",
+                         {"password1": new_pw, "password2": new_pw, "usable_password": "true"})
+        self.assertEqual(get_user_model().objects.get(pk=target.pk).password, old_hash)
+        listing = self.client.get("/admin/auth/user/")
+        self.assertEqual(listing.status_code, 200)
+        self.assertNotContains(listing, f"/admin/auth/user/{target.pk}/change/")
+
+    def test_sysadmin_cannot_take_over_an_employee_account(self):
+        # No role, but linked to a person: a reset would open that person's PDS, IDs and leave.
+        self._assert_locked_for_sysadmin(self.emp_a_user)
+
+    def test_sysadmin_cannot_take_over_a_delegate_account(self):
+        today = date.today()
+        Delegate.objects.create(principal=self.mayor, delegate=self.delegate_user,
+                                valid_from=today, valid_to=today + timedelta(days=30))
+        self._assert_locked_for_sysadmin(self.delegate_user)
+
+    def test_future_delegate_is_locked_but_an_expired_one_is_not(self):
+        today = date.today()
+        delegation = Delegate.objects.create(principal=self.mayor, delegate=self.delegate_user,
+                                             valid_from=today + timedelta(days=5), valid_to=today + timedelta(days=9))
+        self._assert_locked_for_sysadmin(self.delegate_user)
+        delegation.valid_from, delegation.valid_to = today - timedelta(days=9), today - timedelta(days=5)
+        delegation.save()
+        self.client.force_login(self.sysadmin)
+        self.assertEqual(self.client.get(f"/admin/auth/user/{self.delegate_user.pk}/change/").status_code, 200)
+
+    def test_sysadmin_cannot_take_over_an_account_with_direct_hr_permissions(self):
+        from django.contrib.auth.models import Permission
+
+        reader = get_user_model().objects.create_user("pay_reader", password="Password123!")
+        reader.user_permissions.add(Permission.objects.get(content_type__app_label="hr", codename="view_pay"))
+        self._assert_locked_for_sysadmin(reader)
+
+    def test_sysadmin_still_manages_accounts_without_hr_access_and_superuser_resets_employees(self):
+        plain = get_user_model().objects.create_user("plain_it", password="Password123!")
+        self.client.force_login(self.sysadmin)
+        self.assertEqual(self.client.get(f"/admin/auth/user/{plain.pk}/change/").status_code, 200)
+        self.assertContains(self.client.get("/admin/auth/user/"), f"/admin/auth/user/{plain.pk}/change/")
+        self.client.force_login(self.superuser)
+        new_pw = "Wm3!superuser-reset-pass"
+        resp = self.client.post(f"/admin/auth/user/{self.emp_a_user.pk}/password/",
+                                {"password1": new_pw, "password2": new_pw, "usable_password": "true"})
+        self.assertEqual(resp.status_code, 302)
 
     def test_admin_created_account_must_change_password(self):
         self.client.force_login(self.sysadmin)
@@ -5814,3 +5870,130 @@ class AppVersionTestCase(TestCase):
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         changelog = (django_settings.BASE_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn(f"## {version} ", changelog)  # every release is described
+
+
+class HrmoOwnRecordTestCase(TestCase):
+    """R10: HRMO staff never change their own HR record; another HRMO staff member does."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+    _complete = PersonalDataSheetTestCase._complete
+
+    def setUp(self):
+        self.setUp_roles()
+        self.eng_a.leave_eligible = True
+        self.eng_a.save()
+        # The HRMO user has their own record: a plantilla appointment in Office A.
+        self.person_h = Person.objects.create(employee_no="SP-00303", last_name="Mabini", first_name="Apolinario",
+                                              birthdate=date(1985, 7, 23))
+        self.eng_h = Engagement.objects.create(
+            person=self.person_h, office=self.office_a, type=Engagement.Type.PLANTILLA,
+            position_title="Human Resource Management Officer I", salary_grade=11, step=1, item_number="SP-MO-099",
+            rate=Decimal("27000.00"), rate_basis=Engagement.RateBasis.MONTHLY, leave_eligible=True,
+            start_date=date(2024, 1, 2), status=Engagement.Status.ACTIVE,
+        )
+        UserProfile.objects.create(user=self.hrmo_user, person=self.person_h)
+        self.hrmo2 = get_user_model().objects.create_user("hrmo2", "hrmo2@test.com", "hrmo2pass123")
+        self.hrmo2.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.client.force_login(self.hrmo_user)
+
+    def test_own_person_record_appointments_and_documents_are_read_only(self):
+        doc = Document.objects.create(person=self.person_h, doc_type=Document.Type.APPOINTMENT)
+        for url in (f"/people/{self.person_h.pk}/edit/", f"/people/{self.person_h.pk}/engagements/new/",
+                    f"/engagements/{self.eng_h.pk}/edit/", f"/engagements/{self.eng_h.pk}/end/",
+                    f"/engagements/{self.eng_h.pk}/renew/", f"/people/{self.person_h.pk}/documents/new/",
+                    f"/engagements/{self.eng_h.pk}/documents/new/", f"/documents/{doc.pk}/edit/",
+                    f"/documents/{doc.pk}/replace/"):
+            self.assertEqual(self.client.get(url).status_code, 403, url)
+        resp = self.client.post(f"/engagements/{self.eng_h.pk}/edit/", {"step": 8, "version": self.eng_h.version})
+        self.assertEqual(resp.status_code, 403)
+        self.eng_h.refresh_from_db()
+        self.assertEqual(self.eng_h.step, 1)
+        # No edit links on one's own record; they are still there on someone else's.
+        self.assertNotContains(self.client.get(f"/people/{self.person_h.pk}/"), f"/people/{self.person_h.pk}/edit/")
+        self.assertContains(self.client.get(f"/people/{self.person_a.pk}/"), f"/people/{self.person_a.pk}/edit/")
+        self.assertEqual(self.client.get(f"/engagements/{self.eng_a.pk}/edit/").status_code, 200)
+        self.client.force_login(self.hrmo2)
+        self.assertEqual(self.client.get(f"/engagements/{self.eng_h.pk}/edit/").status_code, 200)
+
+    def test_no_leave_credits_on_own_card(self):
+        credit = {"leave_type": LeaveType.VACATION, "days": "30", "as_of": "2026-01-01", "note": "Beginning balance"}
+        self.assertEqual(self.client.post(f"/leave/card/{self.person_h.pk}/", credit).status_code, 403)
+        self.assertFalse(LeaveCredit.objects.filter(person=self.person_h).exists())
+        self.client.post(f"/leave/card/{self.person_a.pk}/", credit)
+        self.assertTrue(LeaveCredit.objects.filter(person=self.person_a, days=Decimal("30")).exists())
+        self.client.force_login(self.hrmo2)
+        self.client.post(f"/leave/card/{self.person_h.pk}/", credit)
+        self.assertTrue(LeaveCredit.objects.filter(person=self.person_h).exists())
+
+    def test_no_overtime_credit_for_oneself(self):
+        from hr.models import CocEntry
+
+        self.assertNotContains(self.client.get("/leave/coc/record/"), f'value="{self.person_h.pk}"')
+        self.client.post("/leave/coc/record/", {
+            "worked_on": (date.today() - timedelta(days=1)).isoformat(), "hours": "4",
+            "day_kind": CocEntry.DayKind.WORKDAY, "reference": "OO 12", "person": [self.person_a.pk, self.person_h.pk],
+        })
+        self.assertTrue(CocEntry.objects.filter(person=self.person_a).exists())
+        self.assertFalse(CocEntry.objects.filter(person=self.person_h).exists())
+
+    def test_no_training_rating_or_saln_receipt_for_oneself(self):
+        from hr import spms
+        from hr.models import PdsTraining, PerformanceRating, SalnFiling
+
+        self.client.post("/tracker/learning/record/", {"title": "Records management", "date_from": "2026-03-02",
+                                                       "hours": "8", "person": [self.person_a.pk, self.person_h.pk]})
+        self.assertTrue(PdsTraining.objects.filter(person=self.person_a).exists())
+        self.assertFalse(PdsTraining.objects.filter(person=self.person_h).exists())
+
+        year, semester = spms.last_ended(date.today())
+        self.client.post(f"/tracker/ratings/{self.office_a.pk}/?year={year}&semester={semester}",
+                         {f"rating-{self.person_a.pk}": "4.2", f"rating-{self.person_h.pk}": "5.0"})
+        self.assertTrue(PerformanceRating.objects.filter(person=self.person_a).exists())
+        self.assertFalse(PerformanceRating.objects.filter(person=self.person_h).exists())
+
+        self.client.post("/tracker/saln/", {"person": [self.person_a.pk, self.person_h.pk], "received_on": "2026-04-15"})
+        self.assertTrue(SalnFiling.objects.filter(person=self.person_a, received_on__isnull=False).exists())
+        self.assertFalse(SalnFiling.objects.filter(person=self.person_h, received_on__isnull=False).exists())
+
+    def test_no_work_on_own_salary_action(self):
+        case = SalaryAction.objects.create(kind=SalaryAction.Kind.STEP_INCREMENT, person=self.person_h,
+                                           engagement=self.eng_h, milestone="Step 2", service_from=date(2024, 1, 2),
+                                           due_date=date(2027, 1, 2), from_step=1, to_step=2,
+                                           status=SalaryAction.Status.DUE)
+        resp = self.client.post(f"/salary-actions/{case.pk}/", {"action": "start_review", "version": case.version})
+        self.assertEqual(resp.status_code, 403)
+        resp = self.client.post(f"/salary-actions/{case.pk}/interruptions/", {
+            "kind": ServiceInterruption.Kind.LWOP, "start_date": "2025-03-02", "end_date": "2025-03-03"})
+        self.assertEqual(resp.status_code, 403)
+        case.refresh_from_db()
+        self.assertEqual(case.status, SalaryAction.Status.DUE)
+        self.assertFalse(ServiceInterruption.objects.filter(person=self.person_h).exists())
+        self.assertEqual(self.client.get(f"/salary-actions/{case.pk}/").status_code, 200)  # still visible
+
+    def test_no_cancelling_own_approved_leave(self):
+        from hr.leave import LeaveError, cancel, file_request
+
+        req = file_request(LeaveRequest(person=self.person_h, leave_type="vl", detail="within_ph",
+                                        start_date=date(2026, 11, 2), end_date=date(2026, 11, 2), days=1), None)
+        req.status = LeaveRequest.Status.APPROVED
+        req.save()
+        with self.assertRaises(LeaveError):
+            cancel(req, self.hrmo_user, note="Changed my mind")
+        cancel(req, self.hrmo2, note="Recalled to duty")
+        self.assertEqual(req.status, LeaveRequest.Status.CANCELLED)
+
+    def test_no_verifying_own_pds(self):
+        from hr.models import PdsSubmission
+
+        self._complete(self.person_h)
+        self.client.post(f"/people/{self.person_h.pk}/pds/submit/", {"verify": "1"})
+        sub = PdsSubmission.objects.get(person=self.person_h)
+        self.assertEqual(sub.status, "submitted")
+        resp = self.client.post(f"/pds/review/{sub.pk}/", {"action": "verify", "version": sub.version})
+        self.assertEqual(resp.status_code, 403)
+        sub.refresh_from_db()
+        self.assertEqual(sub.status, "submitted")
+        self.client.force_login(self.hrmo2)
+        self.client.post(f"/pds/review/{sub.pk}/", {"action": "verify", "version": sub.version})
+        sub.refresh_from_db()
+        self.assertEqual((sub.status, sub.reviewed_by), ("verified", self.hrmo2))
