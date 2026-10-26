@@ -8,7 +8,14 @@ cd "$(dirname "$0")/.."
 
 compose="docker compose -f docker-compose.prod.yml"
 
+before=$(git rev-parse HEAD)
 git pull --ff-only
+# sh keeps running the copy of this file it already loaded, so a pull that changed this script would
+# finish with the old steps. Start again once with the new copy (the second pull finds nothing new).
+if [ -z "$VPS_UPDATE_RESTARTED" ] && ! git diff --quiet "$before" HEAD -- scripts/vps_update.sh; then
+    echo "scripts/vps_update.sh changed: running the new version"
+    VPS_UPDATE_RESTARTED=1 exec sh scripts/vps_update.sh
+fi
 # The footer's version number, worked out from the commit messages since the last release (H9).
 python3 scripts/version.py --write >/dev/null
 # The exact commit behind it: shown when hovering over it.
