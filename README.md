@@ -22,7 +22,11 @@ Requires Docker Desktop (or Docker Engine + Compose v2) and git.
 git clone <this repo> sanpascual-hr
 cd sanpascual-hr
 copy .env.example .env
+git config core.hooksPath .githooks
 ```
+
+The last line turns on the repo's git hooks, which keep the footer's version number up to date after
+every commit, checkout or pull (DECISIONS H9). Without it the local footer shows the last release.
 
 Edit `.env` and replace every `CHANGE-ME`. To generate a secret key:
 

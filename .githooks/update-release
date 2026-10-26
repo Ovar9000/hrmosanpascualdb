@@ -1,0 +1,14 @@
+#!/bin/sh
+# Rewrites RELEASE (the footer's version, DECISIONS H9) after a commit, checkout, merge or rebase, so the
+# local site shows the same number a deploy would. Turned on once per clone with:
+#     git config core.hooksPath .githooks
+# Never fails the git command: if no Python is found, the footer just keeps the old number.
+cd "$(git rev-parse --show-toplevel)" || exit 0
+# Windows has a "python3" that only opens the Store, so each candidate must actually run.
+for py in python3 python py; do
+    if "$py" -c "" >/dev/null 2>&1; then
+        "$py" scripts/version.py --write >/dev/null 2>&1
+        exit 0
+    fi
+done
+exit 0
