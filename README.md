@@ -143,8 +143,8 @@ git clone https://github.com/Ovar9000/hrmosanpascualdb.git /root/sanpascual-hr
 cd /root/sanpascual-hr
 ```
 
-If these server files are not on `main` yet, switch to the branch that has them, e.g.
-`git checkout railway-deploy`. Then prepare the server (Docker, firewall, swap,
+The server deploys `main`: `scripts/vps_update.sh` pulls the branch that is checked out, so
+stay on `main`. Then prepare the server (Docker, firewall, swap,
 automatic security updates, key-only SSH):
 
 ```bash
