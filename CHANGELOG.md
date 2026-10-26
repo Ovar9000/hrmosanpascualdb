@@ -16,6 +16,12 @@ Added:
   per user, with their office, event count and time range, so events from people working at the same time
   no longer interleave. Filters and paging work in both views; the CSV export stays chronological (U1-U6).
 
+- **Forgot password?** on the login page. The person asks online (or just goes to HRMO); HRMO checks a photo
+  ID and issues a one-time password, shown once with a printable slip, from **Tools → Forgotten passwords** or
+  the person's record. It lifts a login lockout, must be changed at first login and stops working after 24
+  hours if unused (`RESET_PASSWORD_HOURS`). HRMO resets plain employee accounts only; accounts with a role or
+  delegation stay with the emergency superuser (A2, R3).
+
 Fixed:
 - Paging through the audit trail dropped the From/To date filters.
 

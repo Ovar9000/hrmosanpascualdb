@@ -43,7 +43,7 @@ Where things are: the code repository (GitHub, private), `README.md` (setup), `D
 |---|---|---|
 | 7 | Reports (headcount, tenure, contract expirations, CSC lists) | Which reports HRMO needs first |
 | 9 | Excel import of existing records | Sample sheets with personal data blanked out |
-| 10 | Employee self-service on phones | HTTPS and an HRMO password-reset screen |
+| 10 | Employee self-service on phones | HTTPS (the HRMO password-reset screen is built: A2) |
 
 ## 3. Before real data can be loaded
 

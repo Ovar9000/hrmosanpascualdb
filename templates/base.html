@@ -59,7 +59,7 @@
           <li class="nav-item"><a class="nav-link" href="{% url 'calendar' %}">Calendar</a></li>
           {% if org_nav.salary or board_nav.register or perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention or board_nav.certificates_pending or board_nav.pds_waiting %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
+              <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tools{% if org_nav.salary_due or org_nav.attention or board_nav.certificates_pending or board_nav.pds_waiting or board_nav.password_requests %}<span class="position-absolute top-0 start-100 translate-middle-x mt-2 p-1 bg-warning rounded-circle" title="Something needs attention"><span class="visually-hidden">(needs attention)</span></span>{% endif %}</a>
               <ul class="dropdown-menu" style="max-height: 80vh; overflow-y: auto;">
                 {% if org_nav.salary %}
                 <li><h6 class="dropdown-header">Trackers</h6></li>
@@ -83,6 +83,9 @@
                 <li><h6 class="dropdown-header">Requests</h6></li>
                 <li><a class="dropdown-item" href="{% url 'certificate_list' %}">Service records &amp; certificates{% if board_nav.certificates_pending %} <span class="badge text-bg-warning">{{ board_nav.certificates_pending }}</span>{% endif %}</a></li>
                 <li><a class="dropdown-item" href="{% url 'pds_queue' %}">Personal Data Sheets to verify{% if board_nav.pds_waiting %} <span class="badge text-bg-warning">{{ board_nav.pds_waiting }}</span>{% endif %}</a></li>
+                {% endif %}
+                {% if board_nav.password_resets %}
+                <li><a class="dropdown-item" href="{% url 'reset_request_list' %}">Forgotten passwords{% if board_nav.password_requests %} <span class="badge text-bg-warning">{{ board_nav.password_requests }}</span>{% endif %}</a></li>
                 {% endif %}
                 {% if perms.hr.view_project or perms.hr.view_audit_log or user.is_superuser or user.is_staff %}
                 <li><h6 class="dropdown-header">Records</h6></li>

@@ -1713,6 +1713,50 @@ class UserProfile(models.Model):
         return f"Profile of {self.user.username}"
 
 
+class PasswordResetRequest(models.Model):
+    """"Forgot password" from the login page, or a walk-in at the HRMO counter (DECISIONS A2).
+
+    There is no email reset: HRMO checks the person's ID and issues a one-time password. The
+    request stores what was typed; `user` is set only when it matched an account, and the login
+    page answers the same either way, so it never tells a stranger which usernames exist.
+    """
+
+    class Via(models.TextChoices):
+        ONLINE = "online", "Forgot password page"
+        COUNTER = "counter", "HRMO counter"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting for HRMO"
+        ISSUED = "issued", "One-time password issued"
+        DISMISSED = "dismissed", "Dismissed"
+
+    username_entered = models.CharField("Username typed", max_length=150)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="password_reset_requests"
+    )
+    contact = models.CharField(
+        max_length=100, blank=True, help_text="Mobile number or office where HRMO can reach the person."
+    )
+    received_via = models.CharField(max_length=20, choices=Via.choices, default=Via.ONLINE)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    requested_at = models.DateTimeField(default=timezone.now, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    handled_at = models.DateTimeField(null=True, blank=True)
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    id_checked = models.CharField(
+        "ID seen", max_length=100, blank=True, help_text="The ID HRMO checked before issuing, e.g. LGU ID, UMID."
+    )
+    note = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+
+    def __str__(self):
+        return f"Password reset for {self.username_entered} ({self.get_status_display().lower()})"
+
+
 # --- Delegation -------------------------------------------------------------
 
 

@@ -6105,3 +6105,188 @@ class AuditGroupedViewTestCase(TestCase):
         content = self.client.get("/audit/export/csv/?view=grouped").content.decode()
         reprs = [row[7] for row in csv.reader(content.splitlines()[1:]) if row[7].startswith("GRP-")]
         self.assertEqual(reprs, ["GRP-sys", "GRP-2", "GRP-2", "GRP-1", "GRP-1", "GRP-0", "GRP-0"])
+
+
+class ForgotPasswordTestCase(TestCase):
+    """A2: "Forgot password?" asks HRMO, who checks an ID and issues a one-time password."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        # The fixture's employee account for person A, renamed to the employee number (D9).
+        self.employee = self.emp_a_user
+        self.employee.username = "SP-00101"
+        self.employee.set_password("Forgotten-Pass-2026")
+        self.employee.save()
+
+    def _ask(self, username, contact="", ip="203.0.113.7"):
+        return self.client.post("/accounts/forgot/", {"username": username, "contact": contact}, REMOTE_ADDR=ip)
+
+    def _issue_from_request(self, req, **data):
+        payload = {"action": "issue", "id_checked": "LGU ID", "confirm": "on"}
+        payload.update(data)
+        return self.client.post(f"/accounts/reset-requests/{req.pk}/", payload)
+
+    def test_login_page_links_to_forgot_password(self):
+        self.assertContains(self.client.get("/accounts/login/"), 'href="/accounts/forgot/"')
+        self.assertEqual(self.client.get("/accounts/forgot/").status_code, 200)
+
+    def test_known_and_unknown_usernames_get_the_same_answer(self):
+        from hr.models import PasswordResetRequest
+
+        known = self._ask("sp-00101", "0917 000 0000")  # case does not matter
+        unknown = self._ask("SP-99999")
+        self.assertRedirects(known, "/accounts/forgot/sent/")
+        self.assertRedirects(unknown, "/accounts/forgot/sent/")
+        stored = {r.username_entered: r for r in PasswordResetRequest.objects.all()}
+        self.assertEqual(stored["sp-00101"].user, self.employee)
+        self.assertEqual(stored["sp-00101"].contact, "0917 000 0000")
+        self.assertIsNone(stored["SP-99999"].user)
+        self.assertEqual(stored["sp-00101"].status, PasswordResetRequest.Status.PENDING)
+        self.assertTrue(self.employee.check_password("Forgotten-Pass-2026"))  # nothing changes until HRMO acts
+
+    def test_duplicates_and_floods_are_not_stored(self):
+        from hr.models import PasswordResetRequest
+
+        self._ask("SP-00101")
+        self._ask("SP-00101")
+        self.assertEqual(PasswordResetRequest.objects.filter(user=self.employee).count(), 1)
+        for i in range(10):
+            self.assertRedirects(self._ask(f"nobody-{i}", ip="198.51.100.9"), "/accounts/forgot/sent/")
+        self.assertEqual(PasswordResetRequest.objects.filter(ip_address="198.51.100.9").count(), 5)
+
+    def test_logged_in_user_is_sent_to_change_password(self):
+        self.client.force_login(self.employee)
+        self.assertRedirects(self.client.get("/accounts/forgot/"), "/accounts/password/")
+
+    def test_only_hrmo_sees_the_queue_and_issues(self):
+        from hr.models import PasswordResetRequest
+
+        self._ask("SP-00101")
+        req = PasswordResetRequest.objects.get()
+        urls = ["/accounts/reset-requests/", f"/accounts/reset-requests/{req.pk}/", f"/people/{self.person_a.pk}/password/"]
+        self.assertRedirects(self.client.get(urls[0]), "/accounts/login/?next=/accounts/reset-requests/")
+        for user in (self.head_a, self.staff_a, self.auditor_user, self.mayor, self.sysadmin, self.employee):
+            self.client.force_login(user)
+            for url in urls:
+                self.assertEqual(self.client.get(url).status_code, 403, (user, url))
+            self.assertEqual(self._issue_from_request(req).status_code, 403, user)
+        self.assertTrue(get_user_model().objects.get(pk=self.employee.pk).check_password("Forgotten-Pass-2026"))
+        self.client.force_login(self.hrmo_user)
+        page = self.client.get(urls[0])
+        self.assertContains(page, "SP-00101")
+        self.assertContains(page, self.person_a.full_name)
+        self.assertContains(self.client.get("/"), 'href="/accounts/reset-requests/"')
+
+    def test_hrmo_issues_a_one_time_password_after_checking_an_id(self):
+        from django.utils import timezone
+        from hr.models import PasswordResetRequest
+
+        self._ask("SP-00101")
+        req = PasswordResetRequest.objects.get()
+        self.client.force_login(self.hrmo_user)
+        # Both the ID and the tick are required.
+        self.assertEqual(self._issue_from_request(req, id_checked="").status_code, 200)
+        self.assertEqual(self._issue_from_request(req, confirm="").status_code, 200)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PasswordResetRequest.Status.PENDING)
+
+        resp = self._issue_from_request(req, id_checked="UMID")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Cache-Control"], "no-store")
+        password = resp.context["password"]
+        self.assertContains(resp, password)
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.handled_by, req.id_checked),
+                         (PasswordResetRequest.Status.ISSUED, self.hrmo_user, "UMID"))
+        profile = UserProfile.objects.get(user=self.employee)
+        self.assertTrue(profile.must_change_password)
+        self.assertLess(profile.password_expires_at - timezone.now(), timedelta(hours=25))
+
+        # A second POST (refresh) does not issue another password.
+        self._issue_from_request(req)
+        self.employee.refresh_from_db()
+        self.assertTrue(self.employee.check_password(password))
+        self.assertFalse(self.employee.check_password("Forgotten-Pass-2026"))
+
+        resets = AuditLog.objects.filter(action=AuditLog.Action.PASSWORD_RESET, object_id=str(self.employee.pk),
+                                         username="hrmo")
+        self.assertEqual(resets.count(), 1)
+        for row in AuditLog.objects.all():
+            self.assertNotIn(password, f"{row.object_repr} {row.changes}")
+        self.assertTrue(verify_chain().is_valid)
+
+        # The person logs in with it and must set their own password first.
+        self.client.logout()
+        resp = self.client.post("/accounts/login/", {"username": "SP-00101", "password": password})
+        self.assertEqual(resp.status_code, 302)
+        self.assertRedirects(self.client.get(f"/people/{self.person_a.pk}/"), "/accounts/password/")
+
+    def test_issuing_lifts_a_login_lockout(self):
+        from axes.models import AccessAttempt
+        from hr.models import PasswordResetRequest
+
+        for _ in range(5):
+            self.client.post("/accounts/login/", {"username": "SP-00101", "password": "wrong-guess"})
+        self.assertTrue(AccessAttempt.objects.filter(username="SP-00101").exists())
+        self._ask("SP-00101")
+        self.client.force_login(self.hrmo_user)
+        password = self._issue_from_request(PasswordResetRequest.objects.get()).context["password"]
+        self.assertFalse(AccessAttempt.objects.filter(username="SP-00101").exists())
+        self.client.logout()
+        self.client.post("/accounts/login/", {"username": "SP-00101", "password": password})
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.employee.pk)
+
+    def test_accounts_with_more_access_than_hrmo_stay_with_the_superuser(self):
+        from hr.models import PasswordResetRequest
+
+        # An Office Head with their own personnel record, a delegate, and HRMO's own account.
+        profile = UserProfile.objects.get(user=self.head_a)
+        profile.person = self.person_b
+        profile.save()
+        UserProfile.objects.create(user=self.delegate_user, person=Person.objects.create(
+            employee_no="SP-00909", last_name="Silang", first_name="Gabriela", birthdate=date(1981, 3, 19)))
+        Delegate.objects.create(principal=self.mayor, delegate=self.delegate_user,
+                                valid_from=date.today(), valid_to=date.today() + timedelta(days=7))
+        UserProfile.objects.create(user=self.hrmo_user, person=Person.objects.create(
+            employee_no="SP-00910", last_name="Mabini", first_name="Apolinario", birthdate=date(1985, 7, 23)))
+        for user in (self.head_a, self.delegate_user, self.hrmo_user):
+            old_hash = user.password
+            self.client.logout()
+            self._ask(user.username)
+            self.client.force_login(self.hrmo_user)
+            req = PasswordResetRequest.objects.get(user=user)
+            self.assertNotContains(self.client.get(f"/accounts/reset-requests/{req.pk}/"), 'value="issue"')
+            self.assertEqual(self._issue_from_request(req).status_code, 200)  # page again, nothing issued
+            user.refresh_from_db()
+            self.assertEqual(user.password, old_hash, user)
+            req.refresh_from_db()
+            self.assertEqual(req.status, PasswordResetRequest.Status.PENDING)
+
+    def test_walk_in_from_the_person_record_closes_the_online_request(self):
+        from hr.models import PasswordResetRequest
+
+        self._ask("SP-00101")
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.get(f"/people/{self.person_a.pk}/"), f"/people/{self.person_a.pk}/password/")
+        self.assertNotContains(self.client.get(f"/people/{self.person_b.pk}/"), f"/people/{self.person_b.pk}/password/")
+        resp = self.client.post(f"/people/{self.person_a.pk}/password/",
+                                {"action": "issue", "id_checked": "LGU ID", "confirm": "on"})
+        self.employee.refresh_from_db()
+        self.assertTrue(self.employee.check_password(resp.context["password"]))
+        statuses = sorted(PasswordResetRequest.objects.values_list("received_via", "status"))
+        self.assertEqual(statuses, [("counter", "issued"), ("online", "issued")])
+
+    def test_dismiss_needs_a_reason(self):
+        from hr.models import PasswordResetRequest
+
+        self._ask("SP-99999")
+        req = PasswordResetRequest.objects.get()
+        self.client.force_login(self.hrmo_user)
+        url = f"/accounts/reset-requests/{req.pk}/"
+        self.assertEqual(self.client.post(url, {"action": "dismiss", "note": ""}).status_code, 200)
+        self.assertRedirects(self.client.post(url, {"action": "dismiss", "note": "No such employee"}),
+                             "/accounts/reset-requests/")
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.note, req.handled_by), ("dismissed", "No such employee", self.hrmo_user))

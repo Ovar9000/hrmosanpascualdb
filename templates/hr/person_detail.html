@@ -35,6 +35,10 @@
             Edit Details
           </a>
         {% endif %}
+        {% if can_reset_password %}
+          <a href="{% url 'person_password_reset' person.pk %}" class="btn btn-sm btn-outline-secondary"
+             title="Forgot their password? Check their ID, then give them a new one">Issue one-time password</a>
+        {% endif %}
         {% with curr=engagements.first %}
           {% if curr and curr.status == 'active' %}
             <span class="badge bg-success fs-6">Active Employee</span>

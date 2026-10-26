@@ -125,6 +125,9 @@ AUTHENTICATION_BACKENDS = [
 
 # Days an unused one-time password stays valid (provision_accounts, admin resets).
 ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
+# Hours a one-time password HRMO issues for "forgot password" stays valid: the person is usually
+# at the counter and logs in right away, so it need not last as long as a provisioning slip (A2).
+RESET_PASSWORD_HOURS = int(os.environ.get("RESET_PASSWORD_HOURS", "24"))
 
 # Salary actions tracker (DECISIONS SA1): the go-live date. Milestones before it are assumed handled
 # on paper, so the tracker starts without a backlog; cases open this many days before they fall due.

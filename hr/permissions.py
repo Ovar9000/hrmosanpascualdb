@@ -519,3 +519,40 @@ def saln_scope(user):
     if is_office_head(user):
         return get_user_office(user) or False
     return False
+
+
+# --- Forgotten passwords (DECISIONS A2) -------------------------------------------------------
+
+
+def can_handle_password_resets(user):
+    """See "forgot password" requests and issue one-time passwords: HRMO."""
+    return not _no_hr_access(user) and can_manage_hr_records(user)
+
+
+def password_reset_blocker(user, target):
+    """Why `user` may not issue a one-time password for the account `target`, or None if they may.
+
+    HRMO resets only plain employee accounts: linked to a personnel record, active, and with no
+    role, permission or delegation of their own. Any other account would let HRMO log in with more
+    than HRMO's own access (an Auditor's, a delegate's, /admin/), so those stay with the emergency
+    superuser in /admin/ (R3). Never one's own account: that is "change password" (R10).
+    """
+    if not can_handle_password_resets(user):
+        return "Only HRMO issues one-time passwords."
+    if target is None:
+        return "No account has this username. Check the personnel record, or ask the person to try again."
+    if target.pk == user.pk:
+        return "This is your own account: use Change password, or ask another HRMO staff member."
+    if not target.is_active:
+        return "This account is switched off. Only the emergency superuser can turn it back on."
+    if (
+        target.is_superuser
+        or target.is_staff
+        or target.groups.exists()
+        or target.user_permissions.exists()
+        or target.delegations_received.filter(valid_to__gte=timezone.localdate()).exists()
+    ):
+        return "This account has a role or delegation, so only the emergency superuser can reset it, in /admin/."
+    if not Person.objects.filter(user_profile__user=target).exists():
+        return "This account is not linked to a personnel record, so only the emergency superuser can reset it."
+    return None

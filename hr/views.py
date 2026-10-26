@@ -55,6 +55,7 @@ from .models import (
     Vacancy,
 )
 from .permissions import (
+    can_handle_password_resets,
     can_manage_certificate_requests,
     can_view_certificate_requests,
     can_view_pds,
@@ -601,6 +602,8 @@ def person_detail(request, pk):
             "can_view_notes": can_view_hr_notes(request.user),
             "leave_balances": leave_balances,
             "can_manage_records": can_manage_record_of(request.user, person),
+            "can_reset_password": can_handle_password_resets(request.user)
+            and UserProfile.objects.filter(person=person).exists(),
             "salary": _person_salary_summary(request.user, person),
             "pds": can_view_pds(request.user, person),
             "ratings": person.ratings.all()[:6] if can_view_ratings(request.user, person) else None,

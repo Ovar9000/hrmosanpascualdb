@@ -1183,3 +1183,36 @@ class PdsReferenceForm(PdsRowForm):
     class Meta:
         model = PdsReference
         fields = ["name", "address", "telephone"]
+
+
+# --- Forgotten passwords (DECISIONS A2) -------------------------------------------------------
+
+
+class ForgotPasswordForm(forms.Form):
+    username = forms.CharField(
+        max_length=150, label="Username (your employee number, e.g. SP-00042)",
+        widget=forms.TextInput(attrs={"class": "form-control form-control-lg", "autocomplete": "username",
+                                      "autocapitalize": "none", "autofocus": True}),
+    )
+    contact = forms.CharField(
+        max_length=100, required=False, label="Mobile number or office (optional)",
+        help_text="So HRMO can tell you when to come. Leave it blank if you are going to HRMO now.",
+        widget=forms.TextInput(attrs={"class": "form-control", "autocomplete": "tel", "inputmode": "tel"}),
+    )
+
+
+class IssueResetPasswordForm(forms.Form):
+    id_checked = forms.CharField(
+        max_length=100, label="ID you checked",
+        help_text="Issue only to the person themself, face to face, after checking a photo ID.",
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. LGU ID, UMID, driver's licence",
+                                      "list": "id-kinds"}),
+    )
+    confirm = forms.BooleanField(label="I saw this person and their ID, and the photo and name match the record.")
+
+
+class DismissResetRequestForm(forms.Form):
+    note = forms.CharField(
+        max_length=255, label="Why dismiss it",
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. not ours, they remembered it, duplicate"}),
+    )
