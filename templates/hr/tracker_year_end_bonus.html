@@ -62,7 +62,7 @@
             <td>{{ row.eng.office.acronym|default:row.eng.office.name }}</td>
             <td>{{ row.eng.get_type_display }} · {{ row.eng.position_title }}</td>
             <td>{{ row.days }}</td>
-            <td>{% if row.result == "eligible" %}✔ {% elif row.result == "prorated" %}◐ {% else %}✖ {% endif %}{{ row.label }}</td>
+            <td>{% if row.result == "eligible" %}<span class="mk mk-check" aria-hidden="true"></span>{% elif row.result == "prorated" %}<span class="mk mk-half" aria-hidden="true"></span>{% else %}<span class="mk mk-x" aria-hidden="true"></span>{% endif %}{{ row.label }}</td>
           </tr>
         {% empty %}
           <tr><td colspan="5" class="text-center text-muted py-4">Nobody in this selection.</td></tr>

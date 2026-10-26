@@ -41,7 +41,14 @@ class Command(BaseCommand):
             hrmo_office = Office.objects.filter(acronym="HRMO").first() or Office.objects.first()
             mo_office = Office.objects.filter(acronym="MO").first() or Office.objects.first()
             mto_office = Office.objects.filter(acronym="MTO").first() or Office.objects.first()
-            sample_person = Person.objects.first()
+            # A leave-eligible employee of the demo Office Head's office, so leave filed as demo_employee
+            # goes to demo_head, then demo_hrmo, then demo_exec (DECISIONS L1).
+            sample_person = (
+                Person.objects.filter(
+                    engagements__office=mto_office, engagements__status="active", engagements__leave_eligible=True
+                ).order_by("last_name", "first_name").first()
+                or Person.objects.first()
+            )
 
             roles_config = [
                 {

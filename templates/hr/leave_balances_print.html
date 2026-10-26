@@ -1,0 +1,21 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block back %}{% url 'leave_balances' %}?{{ qs }}{% endblock %}
+{% block style %}
+  .board h1 { font-size: 15pt; font-weight: bold; text-align: center; text-transform: uppercase; }
+  .board table td, .board table th { font-size: 10pt; padding: 1px 6px; }
+  .board th { text-align: center; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait board">
+  <h1>{{ title }}</h1>
+  {% if office %}<div class="text-center mb-2">{{ office.name }}</div>{% endif %}
+  <table class="form-table">
+    <thead><tr><th style="width:5%"></th><th>NAME</th><th style="width:18%">VACATION LEAVE</th><th style="width:18%">SICK LEAVE</th><th style="width:14%">TOTAL</th></tr></thead>
+    <tbody>
+      {% for r in rows %}<tr><td class="text-center">{{ forloop.counter }}</td><td>{{ r.person.full_name }}</td><td class="text-center">{{ r.vl|floatformat:2 }}</td><td class="text-center">{{ r.sl|floatformat:2 }}</td><td class="text-center">{{ r.total|floatformat:2 }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="small-print mt-2">Employees can see their own balance any time under My leave.</p>
+</div>
+{% endblock %}

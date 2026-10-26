@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Certificate requests{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Service records and certificates</h1>
+    <div class="text-muted small">Requests filed online and those recorded at the counter. To record a walk-in, letter or email, open the person's record (former employees included) and choose "Record a request".</div>
+  </div>
+  <form class="d-flex gap-2" method="get">
+    <input type="hidden" name="show" value="{{ show }}">
+    <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}" placeholder="Name, employee or control no." aria-label="Search requests">
+    <button class="btn btn-sm btn-outline-secondary">Search</button>
+  </form>
+</div>
+<ul class="nav nav-pills small mb-3">
+  <li class="nav-item"><a class="nav-link{% if show == 'open' %} active{% endif %}" href="?show=open">To prepare {% if counts.open %}<span class="badge text-bg-warning">{{ counts.open }}</span>{% endif %}</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'ready' %} active{% endif %}" href="?show=ready">Ready for release {% if counts.ready %}<span class="badge text-bg-success">{{ counts.ready }}</span>{% endif %}</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'all' %} active{% endif %}" href="?show=all">All</a></li>
+</ul>
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Control no.</th><th>Person</th><th>Document</th><th>Purpose</th><th>Asked</th><th>Via</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for req in page %}
+          <tr>
+            <td class="font-monospace"><a href="{% url 'certificate_detail' req.pk %}">{{ req.control_no }}</a></td>
+            <td>{{ req.person.full_name }}{% if req.requester != "self" %}<div class="text-muted">asked by {{ req.requester_name }} ({{ req.get_requester_display|lower }})</div>{% endif %}</td>
+            <td>{{ req.get_kind_display }}{% if req.copies > 1 %} ×{{ req.copies }}{% endif %}</td>
+            <td>{{ req.purpose }}</td>
+            <td class="text-nowrap">{{ req.filed_at|date:"M d" }}<div class="text-muted">{{ req.filed_at|timesince }} ago</div></td>
+            <td>{{ req.get_received_via_display }}</td>
+            <td>{% include "hr/_certificate_status.html" %}</td>
+            <td class="text-end text-nowrap"><a class="btn btn-sm btn-outline-primary" href="{% url 'certificate_print' req.pk %}?autoprint=1">Print</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="text-muted p-3">{% if show == 'open' %}Nothing to prepare.{% elif show == 'ready' %}Nothing waiting for release.{% else %}No requests yet.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-2"><ul class="pagination pagination-sm">
+  {% if page.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page.previous_page_number }}&show={{ show }}&q={{ q|urlencode }}">Previous</a></li>{% endif %}
+  {% if page.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page.next_page_number }}&show={{ show }}&q={{ q|urlencode }}">Next</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endblock %}

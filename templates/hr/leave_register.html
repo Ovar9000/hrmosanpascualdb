@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Leave register{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Leave register</h1>
+    <div class="text-muted small">Every application, online or entered from paper.</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'leave_balances' %}">Leave balances list</a>
+    {% if can_manage %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'leave_post_credits' %}">Post monthly credits</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'coc_record' %}">Record overtime (COC)</a>
+    <a class="btn btn-sm btn-primary" href="{% url 'leave_file' %}?paper=1">+ Enter a paper form</a>{% endif %}
+  </div>
+</div>
+
+<form method="get" class="card card-body border-0 shadow-sm mb-3 py-2">
+  <div class="row g-2 align-items-end small">
+    <div class="col-12 col-md-3"><label class="form-label mb-0" for="q">Name or employee no.</label><input class="form-control form-control-sm" id="q" name="q" value="{{ q }}"></div>
+    <div class="col-6 col-md-2"><label class="form-label mb-0" for="status">Status</label>
+      <select class="form-select form-select-sm" id="status" name="status"><option value="">Any</option>{% for v, l in statuses %}<option value="{{ v }}"{% if v == status %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label mb-0" for="waiting">Waiting for</label>
+      <select class="form-select form-select-sm" id="waiting" name="waiting"><option value="">Anyone</option>{% for v, l in waiting_choices %}<option value="{{ v }}"{% if v == waiting %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label mb-0" for="type">Leave</label>
+      <select class="form-select form-select-sm" id="type" name="type"><option value="">Any</option>{% for v, l in types %}<option value="{{ v }}"{% if v == leave_type %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label mb-0" for="office">Office</label>
+      <select class="form-select form-select-sm" id="office" name="office"><option value="">All</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.acronym|default:o.name }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-1 d-flex gap-1"><button class="btn btn-sm btn-primary">Filter</button></div>
+  </div>
+</form>
+
+<div class="d-flex justify-content-between small mb-1">
+  <span class="text-muted">{{ page.paginator.count }} application{{ page.paginator.count|pluralize }}</span>
+  <a href="?{{ export_qs }}">Export to Excel</a>
+</div>
+<div class="table-responsive card border-0 shadow-sm">
+  <table class="table table-sm table-hover mb-0 align-middle small">
+    <thead class="table-light"><tr><th>#</th><th>Name</th><th>Office</th><th>Leave</th><th>Dates</th><th class="text-end">Days</th><th>Progress</th></tr></thead>
+    <tbody>
+      {% for req in page %}
+        <tr>
+          <td><a href="{% url 'leave_detail' req.pk %}">{{ req.pk }}</a></td>
+          <td><a href="{% url 'leave_detail' req.pk %}" class="text-decoration-none">{{ req.person.full_name }}</a></td>
+          <td>{% if req.office %}{{ req.office.acronym|default:req.office.name }}{% endif %}</td>
+          <td>{{ req.type_label }}</td>
+          <td class="text-nowrap">{{ req.start_date|date:"M d" }}{% if req.end_date != req.start_date %}–{{ req.end_date|date:"M d" }}{% endif %}, {{ req.start_date|date:"Y" }}</td>
+          <td class="text-end">{{ req.days|floatformat:"-1" }}{% if req.days_without_pay %} <span class="text-danger" title="without pay">({{ req.days_without_pay|floatformat:"-1" }} LWOP)</span>{% endif %}</td>
+          <td>{% include "hr/_leave_steps.html" %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="text-muted">No applications match.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-2"><ul class="pagination pagination-sm">
+  {% if page.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page.previous_page_number }}{{ filter_qs }}">Previous</a></li>{% endif %}
+  <li class="page-item disabled"><span class="page-link">Page {{ page.number }} of {{ page.paginator.num_pages }}</span></li>
+  {% if page.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page.next_page_number }}{{ filter_qs }}">Next</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,12 @@
+# Public entry point on the VPS (docker-compose.prod.yml). Caddy gets and renews the
+# HTTPS certificate for SITE_ADDRESS on its own and redirects http:// to https://.
+# It sets X-Forwarded-For to the visitor's address and X-Forwarded-Proto to https,
+# which the app trusts from Caddy's fixed address only (TRUSTED_PROXIES, DECISIONS H8).
+{$SITE_ADDRESS} {
+	encode gzip
+	# Uploads are capped at MAX_UPLOAD_SIZE (5 MB) by the app; this stops larger bodies early.
+	request_body {
+		max_size 20MB
+	}
+	reverse_proxy web:8000
+}

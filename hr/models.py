@@ -40,6 +40,11 @@ class Office(models.Model):
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
     head_title = models.CharField(max_length=150, blank=True)
+    # Office tree (DECISIONS O6): drawn beside its parent's head, not in the row of divisions below.
+    coterminous = models.BooleanField(
+        default=False,
+        help_text="Coterminous with the head of the parent office: drawn beside that head on the office tree.",
+    )
     location = models.CharField(max_length=200, blank=True)
     contact = models.CharField(max_length=200, blank=True)
     notes = models.TextField(blank=True)
@@ -49,6 +54,62 @@ class Office(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class OrgUnit(models.Model):
+    """A division or section inside an office, or a body attached to its head, for the
+    office's structure chart (DECISIONS O7)."""
+
+    class Kind(models.TextChoices):
+        DIVISION = "division", "Division"
+        SECTION = "section", "Section"
+        BODY = "body", "Local special bodies"
+
+    office = models.ForeignKey(Office, on_delete=models.CASCADE, related_name="units")
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.CASCADE, related_name="children",
+        help_text="Empty: directly under the head of the office.",
+    )
+    name = models.CharField(max_length=200)
+    acronym = models.CharField(max_length=20, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.DIVISION)
+    beside_head = models.BooleanField(default=False, help_text="Drawn beside the head, not below it.")
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["office", "order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class StructurePosition(models.Model):
+    """A position on an office's approved structure (elected, existing filled-up or proposed for
+    creation), as drawn on its structure chart. Not an appointment: who holds it lives in
+    Engagement (DECISIONS O7)."""
+
+    class Status(models.TextChoices):
+        ELECTED = "elected", "Elected position"
+        FILLED = "filled", "Existing filled-up position"
+        PROPOSED = "proposed", "Proposed for creation"
+
+    office = models.ForeignKey(Office, on_delete=models.CASCADE, related_name="structure_positions")
+    unit = models.ForeignKey(
+        OrgUnit, null=True, blank=True, on_delete=models.CASCADE, related_name="positions",
+        help_text="Empty: the head of the office, or beside the head.",
+    )
+    title = models.CharField(max_length=200)
+    salary_grade = models.PositiveSmallIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    beside_head = models.BooleanField(default=False, help_text="Drawn beside the head, not below it.")
+    coterminous = models.BooleanField(default=False, help_text="Drawn with a dashed line.")
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["office", "order", "title"]
+
+    def __str__(self):
+        return f"{self.title} (SG {self.salary_grade})" if self.salary_grade else self.title
 
 
 # --- People ------------------------------------------------------------------
@@ -257,10 +318,19 @@ class Engagement(models.Model):
         help_text="Eligible to earn leave credits. Default True for Plantilla/Casual, editable by HRMO.",
     )
 
+    class AppointmentStatus(models.TextChoices):
+        PERMANENT = "P", "Permanent"
+        TEMPORARY = "T", "Temporary"
+        COTERMINOUS = "CO", "Coterminous"
+
     # Plantilla only (DECISIONS D5).
     salary_grade = models.PositiveSmallIntegerField(null=True, blank=True)
     step = models.PositiveSmallIntegerField(null=True, blank=True)
     item_number = models.CharField(max_length=50, blank=True)
+    # Status column of the Plantilla of Personnel (DECISIONS RP1).
+    appointment_status = models.CharField(
+        "Appointment status", max_length=2, choices=AppointmentStatus.choices, blank=True,
+    )
 
     # Project-based only.
     project = models.ForeignKey(
@@ -449,40 +519,84 @@ class Document(models.Model):
         return self.get_doc_type_display()
 
 
-# --- Leave (kept simple until the survey, DECISIONS L1-L3) -------------------
+# --- Leave (CS Form No. 6, Revised 2020; DECISIONS L1-L9) --------------------
 
 
 class LeaveType(models.TextChoices):
+    """Section 6.A of CS Form No. 6 (Revised 2020), in the form's order."""
+
     VACATION = "vl", "Vacation leave"
-    SICK = "sl", "Sick leave"
-    SPECIAL_PRIVILEGE = "spl", "Special privilege leave"
     MANDATORY = "fl", "Mandatory/forced leave"
+    SICK = "sl", "Sick leave"
     MATERNITY = "maternity", "Maternity leave"
     PATERNITY = "paternity", "Paternity leave"
+    SPECIAL_PRIVILEGE = "spl", "Special privilege leave"
     SOLO_PARENT = "solo_parent", "Solo parent leave"
+    STUDY = "study", "Study leave"
+    VAWC = "vawc", "10-day VAWC leave"
+    REHABILITATION = "rehab", "Rehabilitation privilege"
+    SPECIAL_WOMEN = "slbw", "Special leave benefits for women"
+    CALAMITY = "calamity", "Special emergency (calamity) leave"
+    ADOPTION = "adoption", "Adoption leave"
+    WELLNESS = "wellness", "Wellness leave"
+    # Not on the form's list: printed under "Others" (DECISIONS CT4).
+    CTO = "cto", "Compensatory time-off (CTO)"
     OTHER = "other", "Other"
+
+
+class LeaveDetail(models.TextChoices):
+    """Section 6.B of CS Form No. 6: where, what illness, or what the leave is for."""
+
+    WITHIN_PH = "within_ph", "Within the Philippines"
+    ABROAD = "abroad", "Abroad"
+    IN_HOSPITAL = "in_hospital", "In hospital"
+    OUT_PATIENT = "out_patient", "Out patient"
+    WOMEN_ILLNESS = "women_illness", "Illness (special leave benefits for women)"
+    MASTERS = "masters", "Completion of Master's degree"
+    BAR_REVIEW = "bar_review", "BAR/Board examination review"
+    MONETIZATION = "monetization", "Monetization of leave credits"
+    TERMINAL = "terminal", "Terminal leave"
 
 
 class LeaveRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         APPROVED = "approved", "Approved"
-        REJECTED = "rejected", "Rejected"
+        REJECTED = "rejected", "Disapproved"
         CANCELLED = "cancelled", "Cancelled"
 
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="leave_requests")
+    # The office the leave is filed in (its head recommends it), kept even if the person transfers.
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="leave_requests"
+    )
+    position_title = models.CharField(max_length=150, blank=True)
     leave_type = models.CharField(max_length=20, choices=LeaveType.choices)
+    leave_type_other = models.CharField("Other leave (specify)", max_length=100, blank=True)
+    detail = models.CharField("Details of leave", max_length=20, choices=LeaveDetail.choices, blank=True)
+    detail_text = models.CharField("Specify", max_length=200, blank=True)
     start_date = models.DateField()
     end_date = models.DateField()
-    # Entered by the employee, not computed (weekends/holidays rules TBD by survey).
+    # Suggested from the dates (weekdays less holidays), editable for half days (L4).
     days = models.DecimalField("Working days", max_digits=5, decimal_places=1)
     reason = models.TextField(blank=True)
+    commutation_requested = models.BooleanField("Commutation requested", default=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     filed_at = models.DateTimeField(auto_now_add=True)
+    filed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Who entered it: the employee, or HRMO for a paper form.",
+    )
     approver = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
     decided_at = models.DateTimeField(null=True, blank=True)
+    # 7.A and 7.C, filled in when HRMO certifies the credits (L5).
+    certified_balances = models.JSONField(default=dict, blank=True)
+    days_with_pay = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    days_without_pay = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ["-filed_at"]
@@ -503,6 +617,58 @@ class LeaveRequest(models.Model):
 
     def __str__(self):
         return f"{self.person} – {self.get_leave_type_display()} {self.start_date}"
+
+    @property
+    def type_label(self):
+        if self.leave_type == LeaveType.OTHER and self.leave_type_other:
+            return self.leave_type_other
+        return self.get_leave_type_display()
+
+    @property
+    def current_step(self):
+        if self.status != self.Status.PENDING:
+            return None
+        return next((s for s in self.steps.all() if s.status == LeaveApprovalStep.Status.PENDING), None)
+
+
+class LeaveApprovalStep(models.Model):
+    """One signature box of section 7 of CS Form No. 6, in the configured order (DECISIONS L1)."""
+
+    class Kind(models.TextChoices):
+        RECOMMEND = "recommend", "Recommendation (office head)"
+        CERTIFY = "certify", "Certification of leave credits (HRMO)"
+        APPROVE = "approve", "Approval (Municipal Mayor)"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting"
+        DONE = "done", "Done"
+        DISAPPROVED = "disapproved", "Disapproved"
+        SKIPPED = "skipped", "Not needed"
+
+    request = models.ForeignKey(LeaveRequest, on_delete=models.CASCADE, related_name="steps")
+    order = models.PositiveSmallIntegerField()
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    acted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    acted_at = models.DateTimeField(null=True, blank=True)
+    # HRMO recorded it from the wet-signed paper form, for signatories without an account (L6).
+    from_paper = models.BooleanField(default=False)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["request", "order"]
+        constraints = [
+            models.UniqueConstraint(fields=["request", "order"], name="leavestep_one_per_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.request} · {self.get_kind_display()}: {self.get_status_display()}"
+
+    @property
+    def short_label(self):
+        return {"recommend": "Office head", "certify": "HRMO", "approve": "Mayor"}[self.kind]
 
 
 class LeaveCredit(models.Model):
@@ -828,6 +994,694 @@ class Meeting(models.Model):
         if today > self.period_end:
             return self.Status.MISSED
         return self.Status.SCHEDULED if self.scheduled_on else self.Status.DUE
+
+
+# --- Vacancies and the selection board (DECISIONS V1-V5) ------------------------------
+
+
+class Vacancy(models.Model):
+    """A vacant plantilla item HRMO publishes (CS request for publication), through HRMPSB to filling."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft (not published)"
+        OPEN = "open", "Open for applications"
+        SCREENING = "screening", "Closed: HRMPSB screening"
+        FILLED = "filled", "Filled"
+        CANCELLED = "cancelled", "Cancelled"
+
+    VISIBLE_STATUSES = [Status.OPEN, Status.SCREENING, Status.FILLED]
+
+    office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="vacancies",
+                               verbose_name="Place of assignment")
+    position_title = models.CharField(max_length=150, help_text="With the parenthetical title, if any.")
+    item_number = models.CharField("Plantilla item no.", max_length=50)
+    salary_grade = models.PositiveSmallIntegerField()
+    monthly_salary = models.DecimalField(max_digits=12, decimal_places=2)
+    education = models.TextField()
+    training = models.TextField(default="None required")
+    experience = models.TextField(default="None required")
+    eligibility = models.TextField()
+    competencies = models.TextField("Competency / area of specialization", blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    published_on = models.DateField("Published from", null=True, blank=True)
+    deadline = models.DateField("Applications until", null=True, blank=True)
+    csc_received_on = models.DateField("Received by CSC", null=True, blank=True)
+    posted_at = models.TextField(
+        "Posted at", blank=True,
+        help_text="Where the notice is posted, e.g. the HRMO bulletin board and the other boards.",
+    )
+    # HRMPSB deliberation (the resolution's heading and number).
+    board_met_on = models.DateField("HRMPSB met on", null=True, blank=True)
+    board_venue = models.CharField("HRMPSB venue", max_length=200, blank=True)
+    resolution_no = models.CharField("Resolution no.", max_length=50, blank=True)
+    filled_by = models.ForeignKey(
+        Engagement, null=True, blank=True, on_delete=models.SET_NULL, related_name="filled_vacancies",
+        help_text="The appointment that filled the item.",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "vacancies"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(salary_grade__range=(1, 33)),
+                name="vacancy_salary_grade_range",
+                violation_error_message="Salary grade must be 1 to 33.",
+            ),
+            models.CheckConstraint(
+                condition=Q(deadline__isnull=True) | Q(published_on__isnull=True) | Q(deadline__gte=F("published_on")),
+                name="vacancy_deadline_after_publication",
+                violation_error_message="The deadline cannot be before the publication date.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.position_title} ({self.item_number})"
+
+    def is_accepting(self, today):
+        return self.status == self.Status.OPEN and (self.deadline is None or today <= self.deadline)
+
+
+class Applicant(models.Model):
+    """Someone who signified interest in a vacancy, with the documents the notice asks for (V3)."""
+
+    REQUIREMENTS = [
+        ("has_pds", "Personal Data Sheet with work experience sheet and photo (CS Form No. 212)"),
+        ("has_rating", "Performance rating in the last rating period (if applicable)"),
+        ("has_eligibility", "Proof of eligibility / rating / license"),
+        ("has_tor", "Transcript of records"),
+    ]
+
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.PROTECT, related_name="applicants")
+    person = models.ForeignKey(
+        Person, null=True, blank=True, on_delete=models.PROTECT, related_name="applications",
+        help_text="Set when a current employee applies.",
+    )
+    last_name = models.CharField(max_length=100)
+    first_name = models.CharField(max_length=100)
+    middle_name = models.CharField(max_length=100, blank=True)
+    mobile = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    signified_on = models.DateField("Signified interest on")
+    applied_online = models.BooleanField(default=False)
+    has_pds = models.BooleanField("PDS", default=False)
+    has_rating = models.BooleanField("Performance rating", default=False)
+    has_eligibility = models.BooleanField("Eligibility", default=False)
+    has_tor = models.BooleanField("Transcript", default=False)
+    meets_qs = models.BooleanField("Meets the qualification standards", null=True, blank=True)
+    rank = models.PositiveSmallIntegerField(null=True, blank=True)
+    remarks = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vacancy", "rank", "last_name", "first_name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["vacancy", "person"], condition=Q(person__isnull=False),
+                name="applicant_once_per_employee",
+                violation_error_message="This employee already applied for this vacancy.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.full_name} for {self.vacancy}"
+
+    @property
+    def full_name(self):
+        middle = f" {self.middle_name[0]}." if self.middle_name else ""
+        return f"{self.last_name}, {self.first_name}{middle}"
+
+    @property
+    def display_name(self):
+        middle = f" {self.middle_name[0]}." if self.middle_name else ""
+        return f"{self.first_name}{middle} {self.last_name}"
+
+    @property
+    def complete(self):
+        return all(getattr(self, field) for field, _ in self.REQUIREMENTS)
+
+
+# --- Office memoranda with online acknowledgment (DECISIONS M1-M4) --------------------
+
+
+def memo_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    return f"memos/{date.today():%Y/%m}/{uuid.uuid4().hex}{ext}"
+
+
+class Memo(models.Model):
+    """An office memorandum or advisory and who has acknowledged reading it."""
+
+    Audience = MeetingSeries.Audience
+
+    number = models.CharField(max_length=100, help_text="e.g. HRMO Memorandum No. 010, series of 2026")
+    dated = models.DateField()
+    subject = models.CharField(max_length=255)
+    addressed_to = models.CharField(
+        max_length=255, help_text="As written on the memo, e.g. All appointive employees and JO/COS personnel."
+    )
+    audience = models.CharField(max_length=20, choices=Audience.choices, default=Audience.EVERYONE)
+    office = models.ForeignKey(
+        Office, null=True, blank=True, on_delete=models.PROTECT, related_name="memos",
+        help_text="Required when the audience is one office.",
+    )
+    members = models.ManyToManyField(Person, blank=True, related_name="memos_addressed")
+    body = models.TextField(help_text="The text of the memo, or a summary of it if a scan is attached.")
+    scan = models.FileField(
+        upload_to=memo_upload_path, blank=True,
+        validators=[FileExtensionValidator(["pdf", "jpg", "jpeg", "png"]), validate_file_size],
+        help_text="Optional scan of the signed memo (PDF, JPG or PNG).",
+    )
+    scan_name = models.CharField(max_length=255, blank=True)
+    signed_by = models.CharField(max_length=200, blank=True, help_text="Name and title of the signatory.")
+    released_on = models.DateField(null=True, blank=True, help_text="Date released by the Office of the Mayor.")
+    comply_by = models.DateField("Comply by", null=True, blank=True, help_text="Deadline the memo sets, if any.")
+    requires_ack = models.BooleanField("Ask everyone to acknowledge", default=True)
+    is_published = models.BooleanField("Published", default=True, help_text="Untick to keep it as a draft.")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-dated", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(audience="office") | Q(office__isnull=False),
+                name="memo_office_audience_has_office",
+                violation_error_message="Choose the office the memo is for.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.number}: {self.subject}"
+
+
+class MemoAcknowledgment(models.Model):
+    """An employee's "I have read and understood this memo", replacing the routing slip (M2)."""
+
+    memo = models.ForeignKey(Memo, on_delete=models.PROTECT, related_name="acknowledgments")
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="memo_acknowledgments")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    acknowledged_at = models.DateTimeField(auto_now_add=True)
+    # HRMO recorded a signature from the paper routing list.
+    from_paper = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-acknowledged_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["memo", "person"], name="memoack_once_per_person"),
+        ]
+
+    def __str__(self):
+        return f"{self.person} read {self.memo.number}"
+
+
+# --- Service records and certificates of employment (DECISIONS CR1-CR6) ----------------
+
+
+class CertificateRequest(models.Model):
+    """A request for a service record or certificate of employment, filed online by the person
+    or recorded by HRMO for a walk-in, letter or email, including from former employees and heirs."""
+
+    class Kind(models.TextChoices):
+        SERVICE_RECORD = "service_record", "Service record"
+        COE = "coe", "Certificate of employment"
+        COE_PAY = "coe_pay", "Certificate of employment with compensation"
+
+    class Via(models.TextChoices):
+        ONLINE = "online", "Online"
+        WALK_IN = "walk_in", "Walk-in"
+        LETTER = "letter", "Letter or email"
+
+    class Requester(models.TextChoices):
+        SELF = "self", "The person named"
+        REPRESENTATIVE = "representative", "A representative (with authorization letter)"
+        HEIR = "heir", "Heir or next of kin"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Being prepared"
+        READY = "ready", "Ready for release"
+        RELEASED = "released", "Released"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    OPEN_STATUSES = [Status.PENDING, Status.READY]
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="certificate_requests")
+    kind = models.CharField("Document", max_length=20, choices=Kind.choices)
+    purpose = models.CharField(
+        max_length=200, help_text="e.g. GSIS retirement claim, loan application, employment abroad."
+    )
+    copies = models.PositiveSmallIntegerField(default=1)
+    received_via = models.CharField(max_length=20, choices=Via.choices, default=Via.ONLINE)
+    requester = models.CharField("Requested by", max_length=20, choices=Requester.choices, default=Requester.SELF)
+    requester_name = models.CharField(
+        "Requester's name", max_length=200, blank=True, help_text="When someone else asks for the person."
+    )
+    contact = models.CharField(
+        "Contact for release", max_length=200, blank=True,
+        help_text="Mobile or email where HRMO can say it is ready.",
+    )
+    control_no = models.CharField("Control no.", max_length=20, unique=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    filed_at = models.DateTimeField(auto_now_add=True)
+    filed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    prepared_at = models.DateTimeField(null=True, blank=True)
+    prepared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_to = models.CharField(max_length=200, blank=True)
+    note = models.TextField(
+        blank=True, help_text="Release details (ID presented, authorization letter) or the reason for declining."
+    )
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-filed_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(copies__range=(1, 10)),
+                name="certificaterequest_copies_range",
+                violation_error_message="Copies must be 1 to 10.",
+            ),
+            models.CheckConstraint(
+                condition=Q(requester="self") | ~Q(requester_name=""),
+                name="certificaterequest_requester_named",
+                violation_error_message="Give the name of the representative or heir.",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="released") | (~Q(released_to="") & Q(released_at__isnull=False)),
+                name="certificaterequest_released_to",
+                violation_error_message="Record who received the document.",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="declined") | ~Q(note=""),
+                name="certificaterequest_declined_reason",
+                violation_error_message="Give the reason for declining.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.control_no} {self.get_kind_display()} for {self.person}"
+
+    @property
+    def is_open(self):
+        return self.status in self.OPEN_STATUSES
+
+
+# --- Personal Data Sheet, CS Form No. 212 Revised 2017 (DECISIONS PD1-PD7) --------------
+# Name, birthdate, sex, contact numbers and government IDs stay on Person (HRMO keeps them);
+# work in this LGU comes from Engagement. These tables hold the rest of the form.
+
+
+def _fake_only(model, field):
+    return models.CheckConstraint(
+        condition=Q(**{field: ""}) | Q(**{f"{field}__regex": FAKE_ID_REGEX}),
+        name=f"{model}_{field}_fake_only",
+        violation_error_message="Prototype accepts fake ID numbers only (must start with 00).",
+    )
+
+
+class PdsProfile(models.Model):
+    """Sections I, II, VIII and questions 34-42 of the PDS: one row per person."""
+
+    class CivilStatus(models.TextChoices):
+        SINGLE = "single", "Single"
+        MARRIED = "married", "Married"
+        WIDOWED = "widowed", "Widowed"
+        SEPARATED = "separated", "Separated"
+        OTHER = "other", "Other/s"
+
+    class Citizenship(models.TextChoices):
+        FILIPINO = "filipino", "Filipino"
+        DUAL = "dual", "Dual citizenship"
+
+    class DualBy(models.TextChoices):
+        BIRTH = "birth", "By birth"
+        NATURALIZATION = "naturalization", "By naturalization"
+
+    BLOOD_TYPES = [(t, t) for t in ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]]
+
+    person = models.OneToOneField(Person, on_delete=models.PROTECT, related_name="pds")
+    # I. Personal information
+    place_of_birth = models.CharField(max_length=150, blank=True)
+    civil_status = models.CharField(max_length=20, choices=CivilStatus.choices, blank=True)
+    civil_status_other = models.CharField("Other civil status", max_length=50, blank=True)
+    height_m = models.DecimalField("Height (m)", max_digits=3, decimal_places=2, null=True, blank=True)
+    weight_kg = models.DecimalField("Weight (kg)", max_digits=5, decimal_places=1, null=True, blank=True)
+    blood_type = models.CharField(max_length=3, choices=BLOOD_TYPES, blank=True)
+    citizenship = models.CharField(max_length=20, choices=Citizenship.choices, default=Citizenship.FILIPINO)
+    dual_by = models.CharField("Dual citizenship", max_length=20, choices=DualBy.choices, blank=True)
+    dual_country = models.CharField("Country (dual citizenship)", max_length=100, blank=True)
+    res_house = models.CharField("House/block/lot no.", max_length=100, blank=True)
+    res_street = models.CharField("Street", max_length=100, blank=True)
+    res_subdivision = models.CharField("Subdivision/village", max_length=100, blank=True)
+    res_barangay = models.CharField("Barangay", max_length=100, blank=True)
+    res_city = models.CharField("City/municipality", max_length=100, blank=True)
+    res_province = models.CharField("Province", max_length=100, blank=True)
+    res_zip = models.CharField("ZIP code", max_length=10, blank=True)
+    perm_same = models.BooleanField("Permanent address is the same as residential", default=True)
+    perm_house = models.CharField("House/block/lot no.", max_length=100, blank=True)
+    perm_street = models.CharField("Street", max_length=100, blank=True)
+    perm_subdivision = models.CharField("Subdivision/village", max_length=100, blank=True)
+    perm_barangay = models.CharField("Barangay", max_length=100, blank=True)
+    perm_city = models.CharField("City/municipality", max_length=100, blank=True)
+    perm_province = models.CharField("Province", max_length=100, blank=True)
+    perm_zip = models.CharField("ZIP code", max_length=10, blank=True)
+    telephone = models.CharField("Telephone no.", max_length=30, blank=True)
+    # II. Family background
+    spouse_surname = models.CharField("Spouse's surname", max_length=100, blank=True)
+    spouse_first_name = models.CharField("First name", max_length=100, blank=True)
+    spouse_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    spouse_extension = models.CharField("Name extension", max_length=10, blank=True)
+    spouse_occupation = models.CharField("Occupation", max_length=100, blank=True)
+    spouse_employer = models.CharField("Employer/business name", max_length=150, blank=True)
+    spouse_business_address = models.CharField("Business address", max_length=200, blank=True)
+    spouse_telephone = models.CharField("Telephone no.", max_length=30, blank=True)
+    father_surname = models.CharField("Father's surname", max_length=100, blank=True)
+    father_first_name = models.CharField("First name", max_length=100, blank=True)
+    father_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    father_extension = models.CharField("Name extension", max_length=10, blank=True)
+    mother_surname = models.CharField("Mother's maiden surname", max_length=100, blank=True)
+    mother_first_name = models.CharField("First name", max_length=100, blank=True)
+    mother_middle_name = models.CharField("Middle name", max_length=100, blank=True)
+    # VIII. Other information, one item per line
+    skills = models.TextField("Special skills and hobbies", blank=True)
+    distinctions = models.TextField("Non-academic distinctions / recognition", blank=True)
+    memberships = models.TextField("Membership in association/organization", blank=True)
+    # Questions 34-40: None means not yet answered.
+    q34a = models.BooleanField(null=True, blank=True)
+    q34b = models.BooleanField(null=True, blank=True)
+    q34_details = models.CharField(max_length=255, blank=True)
+    q35a = models.BooleanField(null=True, blank=True)
+    q35a_details = models.CharField(max_length=255, blank=True)
+    q35b = models.BooleanField(null=True, blank=True)
+    q35b_details = models.CharField(max_length=255, blank=True)
+    q35b_date_filed = models.DateField(null=True, blank=True)
+    q35b_status = models.CharField(max_length=100, blank=True)
+    q36 = models.BooleanField(null=True, blank=True)
+    q36_details = models.CharField(max_length=255, blank=True)
+    q37 = models.BooleanField(null=True, blank=True)
+    q37_details = models.CharField(max_length=255, blank=True)
+    q38a = models.BooleanField(null=True, blank=True)
+    q38a_details = models.CharField(max_length=255, blank=True)
+    q38b = models.BooleanField(null=True, blank=True)
+    q38b_details = models.CharField(max_length=255, blank=True)
+    q39 = models.BooleanField(null=True, blank=True)
+    q39_details = models.CharField(max_length=255, blank=True)
+    q40a = models.BooleanField(null=True, blank=True)
+    q40a_details = models.CharField(max_length=255, blank=True)
+    q40b = models.BooleanField(null=True, blank=True)
+    q40b_details = models.CharField(max_length=255, blank=True)
+    q40c = models.BooleanField(null=True, blank=True)
+    q40c_details = models.CharField(max_length=255, blank=True)
+    # 42. Government-issued ID shown when the PDS is sworn
+    gov_id_type = models.CharField("Government-issued ID", max_length=100, blank=True, help_text="e.g. Passport, UMID, driver's license")
+    gov_id_number = models.CharField("ID/license/passport no.", max_length=50, blank=True)
+    gov_id_issued = models.CharField("Date/place of issuance", max_length=150, blank=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        constraints = [_fake_only("pdsprofile", "gov_id_number")]
+
+    def __str__(self):
+        return f"PDS of {self.person}"
+
+
+class PdsChild(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_children")
+    full_name = models.CharField("Name of child", max_length=200)
+    birthdate = models.DateField("Date of birth", null=True, blank=True)
+
+    class Meta:
+        ordering = ["birthdate", "pk"]
+
+
+class PdsEducation(models.Model):
+    class Level(models.TextChoices):
+        ELEMENTARY = "elementary", "Elementary"
+        SECONDARY = "secondary", "Secondary"
+        VOCATIONAL = "vocational", "Vocational / trade course"
+        COLLEGE = "college", "College"
+        GRADUATE = "graduate", "Graduate studies"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_education")
+    level = models.CharField(max_length=20, choices=Level.choices)
+    school = models.CharField("Name of school", max_length=200)
+    degree = models.CharField("Basic education/degree/course", max_length=200, blank=True)
+    year_from = models.PositiveSmallIntegerField("From (year)", null=True, blank=True)
+    year_to = models.PositiveSmallIntegerField("To (year)", null=True, blank=True)
+    units_earned = models.CharField("Highest level/units earned", max_length=100, blank=True,
+                                    help_text="If not graduated.")
+    year_graduated = models.PositiveSmallIntegerField(null=True, blank=True)
+    honors = models.CharField("Scholarship/academic honors", max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["pk"]
+
+
+class PdsEligibility(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_eligibility")
+    name = models.CharField("Eligibility", max_length=200,
+                            help_text="Career service, RA 1080 (board/bar), special laws, CES/CSEE, barangay, driver's license")
+    rating = models.CharField(max_length=20, blank=True)
+    exam_date = models.DateField("Date of exam/conferment", null=True, blank=True)
+    exam_place = models.CharField("Place of exam/conferment", max_length=200, blank=True)
+    license_number = models.CharField("License no.", max_length=50, blank=True)
+    license_valid_until = models.DateField("Valid until", null=True, blank=True)
+
+    class Meta:
+        ordering = ["exam_date", "pk"]
+        constraints = [_fake_only("pdseligibility", "license_number")]
+
+
+class PdsWorkExperience(models.Model):
+    """Work before or outside this LGU. Appointments here come from Engagement (PD3)."""
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_work")
+    date_from = models.DateField("From")
+    date_to = models.DateField("To", null=True, blank=True, help_text="Blank for present.")
+    position = models.CharField("Position title", max_length=150)
+    employer = models.CharField("Department/agency/office/company", max_length=200)
+    monthly_salary = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    grade_step = models.CharField("Salary grade and step", max_length=20, blank=True, help_text="e.g. 11-2")
+    appointment_status = models.CharField("Status of appointment", max_length=50, blank=True)
+    government = models.BooleanField("Government service", default=False)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+        constraints = [
+            models.CheckConstraint(condition=Q(date_to__isnull=True) | Q(date_to__gte=F("date_from")),
+                                   name="pdswork_to_after_from",
+                                   violation_error_message="End date cannot be before start date."),
+        ]
+
+
+class PdsVoluntaryWork(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_voluntary")
+    organization = models.CharField("Name and address of organization", max_length=255)
+    date_from = models.DateField("From", null=True, blank=True)
+    date_to = models.DateField("To", null=True, blank=True)
+    hours = models.PositiveIntegerField("Number of hours", null=True, blank=True)
+    position = models.CharField("Position/nature of work", max_length=150, blank=True)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+
+
+class PdsTraining(models.Model):
+    class Kind(models.TextChoices):
+        MANAGERIAL = "managerial", "Managerial"
+        SUPERVISORY = "supervisory", "Supervisory"
+        TECHNICAL = "technical", "Technical"
+        FOUNDATION = "foundation", "Foundation"
+        OTHER = "other", "Other"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_training")
+    title = models.CharField("Title of learning and development intervention", max_length=255)
+    date_from = models.DateField("From")
+    date_to = models.DateField("To", null=True, blank=True)
+    hours = models.PositiveIntegerField("Number of hours", null=True, blank=True)
+    kind = models.CharField("Type of L&D", max_length=20, choices=Kind.choices, blank=True)
+    sponsor = models.CharField("Conducted/sponsored by", max_length=255, blank=True)
+    # Recorded by HRMO for everyone who attended (LD2): read-only to the employee, and not a change
+    # they must send for verification.
+    by_hrmo = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-date_from", "pk"]
+
+
+class PdsReference(models.Model):
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_references")
+    name = models.CharField(max_length=200)
+    address = models.CharField(max_length=255, blank=True)
+    telephone = models.CharField("Tel. no.", max_length=30, blank=True)
+
+    class Meta:
+        ordering = ["pk"]
+
+
+class PdsSubmission(models.Model):
+    """The PDS as submitted to HRMO, frozen, and what HRMO decided (PD4)."""
+
+    class Status(models.TextChoices):
+        SUBMITTED = "submitted", "Waiting for HRMO"
+        VERIFIED = "verified", "Verified by HRMO"
+        RETURNED = "returned", "Returned for correction"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pds_submissions")
+    snapshot = models.JSONField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SUBMITTED, db_index=True)
+    submitted_at = models.DateTimeField(default=timezone.now)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    note = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-submitted_at", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(status="returned") | ~Q(note=""),
+                name="pdssubmission_returned_reason",
+                violation_error_message="Say what to correct.",
+            ),
+            models.UniqueConstraint(fields=["person"], condition=Q(status="submitted"),
+                                    name="pdssubmission_one_waiting"),
+        ]
+
+    def __str__(self):
+        return f"PDS of {self.person} submitted {self.submitted_at:%Y-%m-%d}"
+
+
+# --- Performance ratings, SPMS (DECISIONS SP1-SP5) ------------------------------------------
+
+
+class PerformanceRating(models.Model):
+    """One person's final IPCR rating for one semester."""
+
+    class Semester(models.IntegerChoices):
+        FIRST = 1, "January to June"
+        SECOND = 2, "July to December"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="ratings")
+    year = models.PositiveSmallIntegerField()
+    semester = models.PositiveSmallIntegerField(choices=Semester.choices)
+    rating = models.DecimalField("Final rating", max_digits=4, decimal_places=3)
+    office = models.ForeignKey(Office, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+                               help_text="Where the person was rated.")
+    notes = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-year", "-semester"]
+        constraints = [
+            models.UniqueConstraint(fields=["person", "year", "semester"], name="rating_one_per_period"),
+            models.CheckConstraint(condition=Q(rating__gte=1) & Q(rating__lte=5), name="rating_1_to_5",
+                                   violation_error_message="A rating is from 1.000 to 5.000."),
+        ]
+
+    def __str__(self):
+        return f"{self.person} {self.year}-{self.semester}: {self.rating}"
+
+    @property
+    def adjectival(self):
+        from .spms import adjectival
+
+        return adjectival(self.rating)
+
+
+# --- SALN filing (DECISIONS SN1-SN4) ----------------------------------------------------------
+
+
+class SalnFiling(models.Model):
+    """Whether a person filed their Statement of Assets, Liabilities and Net Worth for a year.
+    Only the filing is tracked; the SALN itself stays on paper with HRMO."""
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="saln_filings")
+    year = models.PositiveSmallIntegerField(help_text="The year covered (assets as of December 31).")
+    reported_at = models.DateTimeField(null=True, blank=True, help_text="When the person said they submitted it.")
+    received_on = models.DateField(null=True, blank=True, help_text="When HRMO received it.")
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-year"]
+        constraints = [models.UniqueConstraint(fields=["person", "year"], name="saln_one_per_year")]
+
+    def __str__(self):
+        return f"SALN {self.year} of {self.person}"
+
+
+# --- Compensatory overtime credits (DECISIONS CT1-CT5) ----------------------------------------
+
+
+class CocEntry(models.Model):
+    """Hours of compensatory overtime credit earned (positive) or used as CTO (negative)."""
+
+    class Kind(models.TextChoices):
+        EARNED = "earned", "Earned"
+        USED = "used", "Used as CTO"
+
+    class DayKind(models.TextChoices):
+        WORKDAY = "workday", "Working day (after office hours)"
+        RESTDAY = "restday", "Weekend, holiday or day off"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="coc_entries")
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    date = models.DateField(help_text="Day worked, or first day of the CTO.")
+    hours_worked = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    day_kind = models.CharField(max_length=10, choices=DayKind.choices, blank=True)
+    hours = models.DecimalField("COC hours", max_digits=6, decimal_places=2)
+    expires_on = models.DateField(null=True, blank=True)
+    reference = models.CharField(max_length=100, blank=True, help_text="Office order or certificate of COC no.")
+    leave_request = models.ForeignKey(LeaveRequest, null=True, blank=True, on_delete=models.PROTECT,
+                                      related_name="coc_entries")
+    void = models.BooleanField(default=False, help_text="CTO cancelled: the hours count again.")
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(kind="earned", hours__gt=0, expires_on__isnull=False)
+                           | Q(kind="used", hours__lt=0, leave_request__isnull=False)),
+                name="coc_entry_shape",
+                violation_error_message="Earned hours are positive with an expiry; used hours are negative with a CTO.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} {self.hours} h, {self.person}"
 
 
 # --- User Profile -----------------------------------------------------------

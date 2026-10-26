@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Personal Data Sheet · {{ person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{% if is_self %}{% url 'home' %}{% else %}{% url 'person_detail' person.pk %}{% endif %}" class="btn btn-sm btn-outline-secondary">← {% if is_self %}Home{% else %}Back to {{ person.full_name }}{% endif %}</a>
+</div>
+
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Personal Data Sheet</h1>
+    <div class="text-muted small">{{ person.full_name }} · {{ person.employee_no }} · CS Form No. 212 (Revised 2017)</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'pds_print' person.pk %}?autoprint=1" title="CS Form No. 212 filled in, to sign, thumbmark and swear to">Print CS Form 212</a>
+</div>
+
+{% if st.returned %}
+  <div class="alert alert-warning"><span class="mk mk-warn" aria-hidden="true"></span><b>Returned by HRMO on {{ st.returned.reviewed_at|date:"M d, Y" }}:</b> {{ st.returned.note }}{% if can_edit %} Correct it, then send it again.{% endif %}</div>
+{% elif st.waiting %}
+  <div class="alert alert-info"><span class="mk mk-clock" aria-hidden="true"></span>Sent to HRMO on {{ st.waiting.submitted_at|date:"M d, Y" }} and waiting for verification.{% if changed %} You changed {{ changed|length }} section{{ changed|length|pluralize }} since; send again to replace the copy HRMO has.{% endif %}</div>
+{% elif st.verified %}
+  <div class="alert {% if changed %}alert-warning{% else %}alert-success{% endif %}"><span class="mk {% if changed %}mk-warn{% else %}mk-check{% endif %}" aria-hidden="true"></span>Verified by HRMO on {{ st.verified.reviewed_at|date:"M d, Y" }}.{% if changed %} You changed {{ changed|length }} section{{ changed|length|pluralize }} since (outlined below); send it again so HRMO can verify the changes.{% endif %}</div>
+{% elif is_self %}
+  <div class="alert alert-light border small mb-3">Fill in each section once and keep it up to date here, instead of writing a new form every time. HRMO checks it against the documents in your 201 file.</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold">Sections</span>
+        <span class="small text-muted">{{ progress.done }} of {{ progress.total }} required done</span>
+      </div>
+      <div class="card-body pb-2">
+        <div class="progress" role="progressbar" aria-label="Required sections filled in" aria-valuenow="{{ progress.pct }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
+          <div class="progress-bar {% if progress.pct == 100 %}bg-success{% endif %}" style="width: {{ progress.pct }}%"></div>
+        </div>
+      </div>
+      <div class="list-group list-group-flush small">
+        {% for s in sections %}
+          {% if can_edit %}
+            <a href="{% url 'pds_section' person.pk s.key %}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2">{% include "hr/_pds_section_row.html" %}</a>
+          {% else %}
+            <div class="list-group-item d-flex justify-content-between align-items-center gap-2">{% include "hr/_pds_section_row.html" %}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% if can_edit %}
+      <div class="card-footer bg-white py-3">
+        {% if st.missing %}
+          <a class="btn btn-primary w-100" href="{% url 'pds_section' person.pk st.missing.0.key %}">Continue: {{ st.missing.0.title }}</a>
+          <div class="form-text text-center mt-2">Fill in every required section to send it to HRMO.</div>
+        {% else %}
+          <form method="post" action="{% url 'pds_submit' person.pk %}" class="d-grid gap-2">{% csrf_token %}
+            {% if st.waiting %}<button class="btn btn-primary"{% if not changed %} disabled{% endif %}>Send changes to HRMO</button>
+            {% elif st.verified and not changed %}<button class="btn btn-outline-success" disabled><span class="mk mk-check" aria-hidden="true"></span>Verified and up to date</button>
+            {% else %}<button class="btn btn-primary">Send to HRMO for verification</button>{% endif %}
+            {% if can_verify and not is_self %}<button class="btn btn-outline-secondary" name="verify" value="1" title="For a paper PDS you encoded and checked">Save as verified (encoded from paper)</button>{% endif %}
+          </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {% if history %}
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">History</div>
+      <div class="list-group list-group-flush small">
+        {% for h in history %}
+          <a class="list-group-item list-group-item-action d-flex justify-content-between" href="{% url 'pds_review' h.pk %}">
+            <span>Sent {{ h.submitted_at|date:"M d, Y" }}</span>
+            {% if h.status == "verified" %}<span class="badge text-bg-success">Verified</span>{% elif h.status == "returned" %}<span class="badge text-bg-warning">Returned</span>{% else %}<span class="badge text-bg-info">Waiting</span>{% endif %}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-12 col-lg-8">
+    {% if can_edit %}{% include "hr/_pds_view.html" with edit_pk=person.pk %}{% else %}{% include "hr/_pds_view.html" %}{% endif %}
+  </div>
+</div>
+{% endblock %}

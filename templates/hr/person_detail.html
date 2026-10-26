@@ -14,7 +14,22 @@
         <h1 class="h3 mb-1">{{ person.full_name }}</h1>
         <div class="text-muted font-monospace">Employee No: {{ person.employee_no }}</div>
       </div>
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        {% if pds %}<a href="{% url 'pds_overview' person.pk %}" class="btn btn-sm btn-outline-primary">PDS</a>{% endif %}
+        {% if certificates %}
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Service record / COE</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              {% if certificates.manage %}<li><a class="dropdown-item" href="{% url 'certificate_record' person.pk %}">Record a request…</a></li><li><hr class="dropdown-divider"></li>{% endif %}
+              <li><h6 class="dropdown-header">Preview (not for release)</h6></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'service_record' %}">Service record</a></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'coe' %}">Certificate of employment</a></li>
+              <li><a class="dropdown-item" href="{% url 'person_document_preview' person.pk 'coe_pay' %}">Certificate with compensation</a></li>
+              {% if certificates.recent %}<li><hr class="dropdown-divider"></li><li><h6 class="dropdown-header">Recent requests</h6></li>
+              {% for req in certificates.recent %}<li><a class="dropdown-item small" href="{% url 'certificate_detail' req.pk %}">{{ req.control_no }} · {{ req.get_kind_display }} · {{ req.get_status_display|lower }}</a></li>{% endfor %}{% endif %}
+            </ul>
+          </div>
+        {% endif %}
         {% if can_manage_records %}
           <a href="{% url 'person_edit' person.pk %}" class="btn btn-sm btn-outline-primary">
             Edit Details
@@ -64,7 +79,7 @@
         {% endif %}
         {% if not can_view_personal %}
           <div class="text-muted small {% if can_view_contacts %}mt-2{% else %}py-2{% endif %}">
-            🔒 Birthdate and home address are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+            <span class="mk mk-lock" aria-hidden="true"></span>Birthdate and home address are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
           </div>
         {% endif %}
       </div>
@@ -98,7 +113,7 @@
           </dl>
         {% else %}
           <div class="text-muted small py-2">
-            🔒 Government ID numbers are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
+            <span class="mk mk-lock" aria-hidden="true"></span>Government ID numbers are restricted to HRMO, Auditor, and employee self-service (DECISIONS R4).
           </div>
         {% endif %}
       </div>
@@ -107,7 +122,7 @@
     <!-- Leave Balances -->
     {% if leave_balances %}
     <div class="card shadow-sm border-0">
-      <div class="card-header bg-white fw-bold py-2">Leave Balances (Days)</div>
+      <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between"><span>Leave Balances (Days)</span><a class="small fw-normal" href="{% url 'leave_card' person.pk %}">Leave card</a></div>
       <div class="card-body p-3">
         <div class="d-flex flex-wrap gap-2">
           {% for label, balance in leave_balances.items %}
@@ -153,6 +168,18 @@
       </div>
     {% endif %}
   </div>
+</div>
+{% endif %}
+
+{% if ratings is not None %}
+<!-- Performance ratings: the person, HRMO, Auditor, Executive and their Office Head (DECISIONS SP5) -->
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Performance ratings (IPCR)</div>
+  {% if ratings %}
+  <ul class="list-group list-group-flush small">
+    {% for r in ratings %}<li class="list-group-item d-flex justify-content-between"><span>{% if r.semester == 1 %}Jan–Jun{% else %}Jul–Dec{% endif %} {{ r.year }}</span><span><b>{{ r.rating }}</b> · {{ r.adjectival }}</span></li>{% endfor %}
+  </ul>
+  {% else %}<div class="card-body small text-muted">No ratings on file yet.</div>{% endif %}
 </div>
 {% endif %}
 
@@ -253,7 +280,7 @@
   </div>
   {% if not can_view_rates %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Pay rates are restricted to HRMO and Auditor roles, and so are salary grades and steps (DECISIONS R6).
+      <span class="mk mk-lock" aria-hidden="true"></span>Pay rates are restricted to HRMO and Auditor roles, and so are salary grades and steps (DECISIONS R6).
     </div>
   {% endif %}
 </div>
@@ -306,7 +333,7 @@
             </td>
             <td>
               {% if doc.physical_location %}
-                <span class="badge bg-light text-dark border">📁 {{ doc.physical_location }}</span>
+                <span class="badge bg-light text-dark border">{{ doc.physical_location }}</span>
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}
@@ -318,7 +345,7 @@
                 {% if can_view_doc_content and doc.file %}
                   <a href="{% url 'document_download' doc.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Download</a>
                 {% elif not can_view_doc_content %}
-                  <span class="text-muted small">🔒 Restricted</span>
+                  <span class="text-muted small"><span class="mk mk-lock" aria-hidden="true"></span>Restricted</span>
                 {% else %}
                   <span class="text-muted small">Paper only</span>
                 {% endif %}
@@ -341,7 +368,7 @@
   </div>
   {% if not can_view_doc_content %}
     <div class="card-footer bg-light small text-muted">
-      🔒 Document files, file names and notes are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
+      <span class="mk mk-lock" aria-hidden="true"></span>Document files, file names and notes are restricted to HRMO, Auditor, and employee self-service. Physical archive locations and statuses are visible to office heads (DECISIONS R4).
     </div>
   {% endif %}
 </div>

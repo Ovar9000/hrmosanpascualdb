@@ -1,0 +1,28 @@
+{% comment %}A PDS table (children, education, trainings...) as a form section: one row per entry.{% endcomment %}
+{{ formset.management_form }}
+<fieldset class="form-section">
+  <legend class="form-section-title">{{ rows_title }}{% if rows_hint %} <span class="form-section-hint">{{ rows_hint }}</span>{% endif %}</legend>
+  <div class="table-responsive bg-white border rounded">
+    <table class="table table-sm align-top mb-0">
+      <thead class="table-light small"><tr>
+        {% for field in formset.empty_form.visible_fields %}{% if field.name != "DELETE" %}<th class="fw-semibold text-nowrap">{{ field.label }}</th>{% endif %}{% endfor %}
+        <th class="fw-semibold text-center">Remove</th>
+      </tr></thead>
+      <tbody id="rows">
+        {% for f in formset %}
+          <tr>
+            {% for hidden in f.hidden_fields %}{{ hidden }}{% endfor %}
+            {% for field in f.visible_fields %}{% if field.name != "DELETE" %}
+              <td class="{% if field.widget_type == 'checkbox' %}text-center{% endif %}" style="min-width: {% if field.widget_type == 'number' or field.widget_type == 'checkbox' %}5rem{% elif field.widget_type == 'date' %}9rem{% else %}10rem{% endif %};">{{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</td>
+            {% endif %}{% endfor %}
+            <td class="text-center align-middle">{% if f.instance.pk %}<input type="checkbox" class="form-check-input" name="{{ f.DELETE.html_name }}" aria-label="Remove this row" onchange="this.closest('tr').classList.toggle('opacity-50', this.checked)">{% endif %}{% for error in f.non_field_errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if section != "references" %}
+    <button type="button" class="btn btn-sm btn-outline-primary mt-3" id="add-row">+ Add a row</button>
+    <template id="row-template"><tr>{% for field in formset.empty_form.visible_fields %}{% if field.name != "DELETE" %}<td class="{% if field.widget_type == 'checkbox' %}text-center{% endif %}">{{ field }}</td>{% endif %}{% endfor %}{% for hidden in formset.empty_form.hidden_fields %}{{ hidden }}{% endfor %}<td></td></tr></template>
+  {% endif %}
+</fieldset>

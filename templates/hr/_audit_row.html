@@ -1,0 +1,50 @@
+<tr>
+  <td class="text-nowrap font-monospace text-muted">
+    {{ log.timestamp|date:"Y-m-d H:i:s" }}
+  </td>
+  {% if not hide_user %}
+  <td>
+    <div class="fw-bold">{{ log.username|default:"System / Anonymous" }}</div>
+    {% if log.office_name %}
+      <div class="text-muted small">{{ log.office_name }}</div>
+    {% endif %}
+  </td>
+  {% endif %}
+  <td>
+    <span class="badge
+      {% if log.action == 'create' %}bg-success
+      {% elif log.action == 'update' %}bg-primary
+      {% elif log.action == 'delete' %}bg-danger
+      {% elif log.action == 'view' %}bg-info text-dark
+      {% elif log.action == 'export' %}bg-warning text-dark
+      {% elif log.action == 'login' %}bg-success
+      {% elif log.action == 'logout' %}bg-secondary
+      {% elif log.action == 'failed_login' or log.action == 'lockout' or log.action == 'permission_denied' %}bg-danger
+      {% elif log.action == 'group_change' or log.action == 'password_reset' %}bg-dark
+      {% else %}bg-secondary{% endif %}">
+      {{ log.get_action_display }}
+    </span>
+  </td>
+  <td>
+    {% if log.model_name %}
+      <span class="badge bg-light text-dark border">{{ log.model_name }}</span>
+    {% endif %}
+    <span class="ms-1">{{ log.object_repr|default:"—" }}</span>
+  </td>
+  <td class="font-monospace" style="max-width: 320px; word-break: break-all;">
+    {% if log.changes %}
+      <details>
+        <summary class="text-primary small" role="button">View details</summary>
+        <pre class="bg-light p-2 rounded mb-0 mt-1 small" style="white-space: pre-wrap;">{{ log.changes|pprint }}</pre>
+      </details>
+    {% else %}
+      <span class="text-muted">—</span>
+    {% endif %}
+  </td>
+  <td class="text-nowrap font-monospace text-muted">
+    <div>{{ log.ip_address|default:"—" }}</div>
+    {% if log.request_id %}
+      <div class="small text-muted" title="Request ID: {{ log.request_id }}">req: {{ log.request_id|slice:":8" }}...</div>
+    {% endif %}
+  </td>
+</tr>

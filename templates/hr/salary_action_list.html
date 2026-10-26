@@ -70,7 +70,7 @@
             <td>
               {% if case.kind == "step" %}Salary increase · step {{ case.from_step }} → {{ case.to_step }}
               {% else %}Loyalty award · {{ case.years }} years{% endif %}
-              {% if case.warnings %}<div class="text-warning-emphasis">⚠ {{ case.warnings|length }} thing{{ case.warnings|length|pluralize }} to check</div>{% endif %}
+              {% if case.warnings %}<div class="text-warning-emphasis"><span class="mk mk-warn" aria-hidden="true"></span>{{ case.warnings|length }} thing{{ case.warnings|length|pluralize }} to check</div>{% endif %}
             </td>
             <td>
               {{ case.due_date|date:"M d, Y" }}

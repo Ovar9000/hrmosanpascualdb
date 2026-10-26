@@ -40,6 +40,20 @@ PROTECTED_ROLES = [
 ]
 
 
+def hr_access_accounts(users):
+    """The accounts in `users` that reach HR records: superusers, members of a protected role, and
+    accounts with no role that still get in: linked to a person (employee self-service), holding a
+    current or future delegation (R7), or given an HR permission directly. Only the emergency
+    superuser may edit them or reset their passwords in /admin/ (DECISIONS R3)."""
+    return users.filter(
+        Q(is_superuser=True)
+        | Q(groups__name__in=PROTECTED_ROLES)
+        | Q(profile__person__isnull=False)
+        | Q(delegations_received__valid_to__gte=timezone.localdate())
+        | Q(user_permissions__content_type__app_label="hr")
+    ).distinct()
+
+
 def is_in_group(user, group_name):
     if not user or not user.is_authenticated:
         return False
@@ -210,6 +224,13 @@ def can_manage_hr_records(user):
     return user.has_perm("hr.manage_hr_records") or is_hrmo(user)
 
 
+def can_manage_record_of(user, person):
+    """Change one person's HR record: HRMO, except on their own (DECISIONS R10). Appointments and
+    pay, documents, leave and overtime credits, ratings, trainings, SALN receipts, salary actions
+    and PDS verification of an HRMO staff member are entered by another HRMO staff member."""
+    return can_manage_hr_records(user) and not is_self(user, person)
+
+
 def can_manage_projects(user):
     """Create and edit LGU projects: Project Maintainer role only (DECISIONS P1).
 
@@ -343,3 +364,158 @@ def can_view_trackers(user):
     """Contract renewals, retirement and year-end bonus lists (DECISIONS RM4): they use birthdates
     and pay eligibility, so the same audience as salary actions: HRMO and Auditor."""
     return can_view_salary_actions(user)
+
+
+# --- Leave, Plantilla report, vacancies and memos (DECISIONS L1-L9, RP1, V1-V5, M1-M4) --------
+
+
+def _no_hr_access(user):
+    return not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser)
+
+
+def can_view_leave_of(user, person):
+    """A person's leave card and applications (R4 leave balances): HRMO, Auditor and self, plus
+    leave approvers for the people they can already see."""
+    if _no_hr_access(user):
+        return False
+    if can_view_personal_details(user, person):
+        return True
+    return can_approve_leave(user) and get_visible_people(user).filter(pk=person.pk).exists()
+
+
+def can_view_leave_register(user):
+    """Every application, the balances board and the ledger tools: HRMO (edits) and Auditor (reads)."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user)
+
+
+def can_view_plantilla_report(user):
+    """The Plantilla of Personnel shows salaries and birthdates (R4, R6): HRMO and Auditor."""
+    return can_view_pay(user) and can_view_leave_register(user)
+
+
+def can_view_vacancies(user):
+    """Published vacancies are public notices (posted on the bulletin boards): every signed-in user."""
+    return not _no_hr_access(user)
+
+
+def can_view_applicants(user):
+    """Applicant names and documents: HRMO, Auditor and the Executive (the HRMPSB chair)."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user) or is_executive(user)
+
+
+def memo_is_for(memo, person):
+    """Whether a memo is addressed to this person (everyone in service, one office, or chosen)."""
+    if person is None:
+        return False
+    if memo.audience == memo.Audience.CHOSEN:
+        return memo.members.filter(pk=person.pk).exists()
+    active = person.engagements.filter(status=Engagement.Status.ACTIVE)
+    if memo.audience == memo.Audience.OFFICE:
+        active = active.filter(office_id=memo.office_id)
+    return active.exists()
+
+
+def can_view_memo(user, memo):
+    """Published memos: their addressees and all-office roles. Drafts: HRMO only."""
+    if _no_hr_access(user):
+        return False
+    if not memo.is_published:
+        return can_manage_hr_records(user)
+    if has_all_office_scope(user):
+        return True
+    if memo.audience == memo.Audience.OFFICE and memo.office_id:
+        own = get_user_office(user)
+        if own and own.pk == memo.office_id:
+            return True
+    person = getattr(getattr(user, "profile", None), "person", None)
+    return memo_is_for(memo, person)
+
+
+def memo_ack_scope(user):
+    """Whose acknowledgments the user may see: None for everyone (all-office roles), an office for
+    an Office Head (own office only), or False."""
+    if _no_hr_access(user):
+        return False
+    if has_all_office_scope(user):
+        return None
+    if is_office_head(user):
+        return get_user_office(user) or False
+    return False
+
+
+# --- Service records and certificates of employment (DECISIONS CR5) --------------------------
+
+
+def can_view_certificate_requests(user):
+    """Every request and the printed documents (they show salaries, R6): HRMO and Auditor."""
+    if _no_hr_access(user):
+        return False
+    return user.is_superuser or is_hrmo(user) or is_auditor(user)
+
+
+def can_manage_certificate_requests(user):
+    """Record requests for walk-ins and letters, prepare, release and decline: HRMO."""
+    return can_manage_hr_records(user) and can_view_certificate_requests(user)
+
+
+# --- Personal Data Sheet (DECISIONS PD5) ------------------------------------------------------
+
+
+def can_view_pds(user, person):
+    """The PDS holds family, health, offense and disability answers (sensitive personal information
+    under RA 10173): the person, HRMO and Auditor only."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    if is_self(user, person):
+        return True
+    return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))
+
+
+def can_edit_pds(user, person):
+    """The person fills in their own; HRMO encodes paper PDS for people without an account."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    return is_self(user, person) or can_manage_hr_records(user)
+
+
+def can_verify_pds(user):
+    return can_manage_hr_records(user) and not _no_hr_access(user)
+
+
+def can_view_pds_queue(user):
+    return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))
+
+
+# --- Performance ratings and SALN filing (DECISIONS SP5, SN3) ---------------------------------
+
+
+def can_view_ratings(user, person):
+    """A person's SPMS ratings: the person, HRMO, Auditor, the Executive (who approves the office
+    ratings) and the Office Head of their office, who rated them."""
+    if not user or not user.is_authenticated or person is None:
+        return False
+    if is_self(user, person):
+        return True
+    if _no_hr_access(user):
+        return False
+    if user.is_superuser or is_hrmo(user) or is_auditor(user) or is_executive(user):
+        return True
+    office = get_user_office(user)
+    return bool(is_office_head(user) and office and person.engagements.filter(
+        office=office, status=Engagement.Status.ACTIVE).exists())
+
+
+def saln_scope(user):
+    """Whose SALN filing the user may see: None for everyone (HRMO, Auditor), an office for an
+    Office Head (own office only), or False. Only whether it was filed, never the SALN itself."""
+    if _no_hr_access(user):
+        return False
+    if user.is_superuser or is_hrmo(user) or is_auditor(user):
+        return None
+    if is_office_head(user):
+        return get_user_office(user) or False
+    return False

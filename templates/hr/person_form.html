@@ -43,13 +43,14 @@
       </div>
     {% endif %}
 
-    <form method="post" novalidate>
+    <form method="post" novalidate class="sp-form">
       {% csrf_token %}
       {{ form.version }}
 
       <!-- Section: Personal Information -->
-      <h5 class="border-bottom pb-2 mb-3 text-secondary">1. Personal Information</h5>
-      <div class="row g-3 mb-4">
+      <fieldset class="form-section">
+        <legend class="form-section-title">Personal Information</legend>
+      <div class="row g-3">
         <div class="col-12 col-md-4">
           <label for="{{ form.last_name.id_for_label }}" class="form-label fw-semibold">Last Name <span class="text-danger">*</span></label>
           {{ form.last_name }}
@@ -95,10 +96,12 @@
           {% endif %}
         </div>
       </div>
+      </fieldset>
 
       <!-- Section: Contact Details -->
-      <h5 class="border-bottom pb-2 mb-3 text-secondary">2. Contact Details</h5>
-      <div class="row g-3 mb-4">
+      <fieldset class="form-section">
+        <legend class="form-section-title">Contact Details</legend>
+      <div class="row g-3">
         <div class="col-12 col-md-6">
           <label for="{{ form.mobile.id_for_label }}" class="form-label fw-semibold">Mobile Number</label>
           {{ form.mobile }}
@@ -121,11 +124,13 @@
           {% endif %}
         </div>
       </div>
+      </fieldset>
 
       <!-- Section: Government IDs (Gated: only rendered if field-level permission granted) -->
       {% if form.tin or form.gsis_no or form.philhealth_no or form.pagibig_no or form.sss_no %}
-        <h5 class="border-bottom pb-2 mb-3 text-secondary">3. Government Identification Numbers (Fake Data Only)</h5>
-        <div class="row g-3 mb-4">
+        <fieldset class="form-section">
+          <legend class="form-section-title">Government Identification Numbers <span class="form-section-hint">fake data only</span></legend>
+        <div class="row g-3">
           {% if form.tin %}
             <div class="col-12 col-md-4">
               <label for="{{ form.tin.id_for_label }}" class="form-label fw-semibold">TIN</label>
@@ -162,9 +167,10 @@
             </div>
           {% endif %}
         </div>
+        </fieldset>
       {% endif %}
 
-      <div class="d-flex justify-content-end gap-2 pt-3 border-top">
+      <div class="form-actions">
         {% if is_edit %}
           <a href="{% url 'person_detail' person.pk %}" class="btn btn-outline-secondary">Cancel</a>
         {% else %}

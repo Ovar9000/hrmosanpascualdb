@@ -61,7 +61,180 @@ The init script in `docker/db-init/` only runs on an **empty** database volume.
 If you change `APP_DB_USER` / `APP_DB_PASSWORD` after the first start, run
 `docker compose down -v` to recreate the database.
 
+## Run it on a DigitalOcean droplet (review demo)
+
+A public copy for the HRMO officer to try during the review period (until
+**2026-11-13**, see `DECISIONS.md` H3 and H7). **Fake data and demo accounts only.**
+One small Linux server ("droplet") runs everything with `docker-compose.prod.yml`:
+
+| Service | What it is | Holds |
+|---|---|---|
+| `db` | PostgreSQL, not reachable from outside the server | All data |
+| `migrate` | Runs at first start and on every update: creates/updates the `hr_app` login, migrates, then stops | The database owner password |
+| `web` | The website (gunicorn), reachable only through Caddy | Only the limited `hr_app` password, plus the uploads volume |
+| `caddy` | The only public part: HTTPS certificate and forwarding to `web` | Its certificate |
+
+Cost: the **$12/month** droplet (2 GB RAM). DigitalOcean bills by the hour up to that
+amount; a sign-up credit covers the first days. Droplet backups add 20%.
+
+### 1. Project
+
+In the DigitalOcean control panel, **New Project**:
+
+- **Project name:** `San Pascual HR review`
+- **Environment type:** Staging (or Development)
+- **What it's for:** a web application / trying it out (any choice is fine)
+
+Skip "Assign resources" for now; the droplet is added to the project in step 3.
+
+### 2. An SSH key on your PC
+
+The key is how you log in to the server; it replaces a password. In PowerShell:
+
+```powershell
+ssh-keygen -t ed25519 -C "sanpascual-hr"
+```
+
+Press Enter to accept the file name, and set a passphrase. Then show the public half
+(the part that is safe to paste into DigitalOcean):
+
+```powershell
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub
+```
+
+### 3. Create the droplet
+
+**Create → Droplets**, then:
+
+1. **Region:** Singapore (closest to the Philippines).
+2. **Image:** Ubuntu 24.04 (LTS) x64.
+3. **Size:** Basic → Regular (SSD) → **$12/mo, 2 GB / 1 CPU / 50 GB**.
+4. **Authentication:** SSH Key → **New SSH Key**, paste the line from step 2, name it.
+5. Optional: **Enable automated backups** (adds 20%; recommended).
+6. **Hostname:** `sanpascual-hr`. **Project:** the one from step 1.
+7. **Create Droplet.** Copy its **IPv4 address** when it is ready, e.g. `203.0.113.10`.
+
+### 4. A web address
+
+HTTPS certificates need a name, not a bare IP. Either:
+
+- **Free, no setup:** use the IP with dashes plus `.sslip.io`, e.g. `203-0-113-10.sslip.io`.
+  It already points at your droplet.
+- **Your own domain:** add a DNS **A record**, e.g. `hr.example.com` → the droplet IP.
+
+### 5. Install and start
+
+Log in from PowerShell (answer `yes` the first time):
+
+```powershell
+ssh root@203.0.113.10
+```
+
+Everything from here runs **on the server**. Get the code (if the repository is
+private, git asks for your GitHub username and a
+[fine-grained token](https://github.com/settings/personal-access-tokens) with read-only
+"Contents" access as the password):
+
+```bash
+git clone https://github.com/Ovar9000/hrmosanpascualdb.git /root/sanpascual-hr
+```
+
+```bash
+cd /root/sanpascual-hr
+```
+
+If these server files are not on `main` yet, switch to the branch that has them, e.g.
+`git checkout railway-deploy`. Then prepare the server (Docker, firewall, swap,
+automatic security updates, key-only SSH):
+
+```bash
+sh scripts/vps_setup.sh
+```
+
+Write the settings file with fresh random passwords (use your address from step 4):
+
+```bash
+sh scripts/vps_make_env.sh 203-0-113-10.sslip.io
+```
+
+Build and start (the first build takes a few minutes):
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+```bash
+docker compose -f docker-compose.prod.yml logs migrate
+```
+
+The log must end with `Database ready.` Then open `https://<your address>/healthz/`:
+it should show `ok`. If the page does not load, `docker compose -f
+docker-compose.prod.yml logs caddy` shows certificate problems (usually the address
+does not point at the droplet yet).
+
+### 6. Load the fake data and demo accounts
+
+```bash
+docker compose -f docker-compose.prod.yml exec -u app web sh scripts/railway_demo_setup.sh
+```
+
+Same script and output as on Railway (step 6 there): copy the `demo_*` usernames and
+**one-time passwords, shown once**. Add `--new-passwords` to reissue them.
+
+### 7. Nightly backup and morning salary check
+
+The server clock is UTC, so 21:30 and 22:00 are 05:30 and 06:00 in the Philippines:
+
+```bash
+cat > /etc/cron.d/sanpascual-hr <<'EOF'
+30 21 * * * root sh /root/sanpascual-hr/scripts/vps_backup.sh >> /var/log/hr-backup.log 2>&1
+0 22 * * * root cd /root/sanpascual-hr && docker compose -f docker-compose.prod.yml exec -T web python manage.py check_salary_actions >> /var/log/hr-salary.log 2>&1
+EOF
+```
+
+Run the backup once by hand to check it works: `sh scripts/vps_backup.sh`. Backups go
+to `/root/hr-backups` (14 days kept) on the same droplet, so they do not survive losing
+the droplet: that is what DigitalOcean's droplet backups are for.
+
+### 8. Check the client IP and give access
+
+Same as Railway steps 7 and 8 below: log in as `demo_auditor`, and in **Audit log** your
+login must show your public IP. A `172.30.0.x` address means the proxy setting is
+wrong (`DECISIONS.md` H8): stop and fix it before inviting anyone. Then send each
+account and its one-time password **privately**.
+
+### During the review
+
+- **Code updates:** push to the branch, then on the server `sh scripts/vps_update.sh`
+  (pulls, rebuilds, migrates, restarts the website).
+- **Locked out after 5 wrong passwords:**
+  `docker compose -f docker-compose.prod.yml exec -u app web python manage.py axes_reset`
+- **Logs:** `docker compose -f docker-compose.prod.yml logs --tail 100 web`
+- **Status:** `docker compose -f docker-compose.prod.yml ps`
+
+### Restore a backup
+
+Replaces the current data with a backup (`<stamp>` is the date in the file names):
+
+```bash
+docker compose -f docker-compose.prod.yml stop web
+docker compose -f docker-compose.prod.yml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < /root/hr-backups/db_<stamp>.dump
+docker compose -f docker-compose.prod.yml run --rm -T --no-deps --entrypoint "" web tar xzf - -C /data/media < /root/hr-backups/media_<stamp>.tar.gz
+docker compose -f docker-compose.prod.yml run --rm migrate
+docker compose -f docker-compose.prod.yml up -d
+```
+
+`migrate` re-applies the `hr_app` grants and the audit-log restriction to the restored data.
+
+### After the review: stop the costs (2026-11-13)
+
+**Droplet → Destroy → Destroy this Droplet** (also delete its backups and snapshots if
+offered). A droplet that is only powered off is still billed. Then check **Billing**
+shows nothing running.
+
 ## Run it on Railway (review demo)
+
+The earlier option, if Railway accepts your payment method. Use one host, not both.
 
 A public copy for the HRMO officer to try during the review period (until
 **2026-11-13**, see `DECISIONS.md` H1–H6). **Fake data and demo accounts only.**

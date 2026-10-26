@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Acknowledgments · {{ memo.number }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'memo_detail' memo.pk %}" class="btn btn-sm btn-outline-secondary">← {{ memo.number }}</a></div>
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Who has read it</h1>
+    <div class="text-muted small">{{ memo.subject }} · {{ done }} of {{ total }} acknowledged{% if office %} in {{ office.name }}{% endif %}.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="?{{ export_qs }}">Excel</a>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  {% if offices %}<div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>{% endif %}
+  <div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="pending" name="pending" value="1"{% if pending_only %} checked{% endif %}><label class="form-check-label" for="pending">Not yet acknowledged only</label></div>
+  <button class="btn btn-sm btn-outline-primary">Show</button>
+</form>
+<form method="post">{% csrf_token %}
+<div class="table-responsive card border-0 shadow-sm">
+  <table class="table table-sm mb-0 small align-middle">
+    <thead class="table-light"><tr>{% if can_manage %}<th></th>{% endif %}<th>Office</th><th>Name</th><th>Position</th><th>Acknowledged</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          {% if can_manage %}<td>{% if not r.ack %}<input class="form-check-input" type="checkbox" name="person" value="{{ r.person.pk }}" aria-label="Signed the paper list: {{ r.person.full_name }}">{% endif %}</td>{% endif %}
+          <td>{% if r.office %}{{ r.office.acronym|default:r.office.name }}{% endif %}</td>
+          <td>{{ r.person.full_name }}</td>
+          <td>{{ r.eng.position_title|default:"" }} {% if r.eng %}<span class="text-muted">({{ r.eng.get_type_display }})</span>{% endif %}</td>
+          <td>{% if r.ack %}<span class="text-success"><span class="mk mk-check" aria-hidden="true"></span>{{ r.ack.acknowledged_at|date:"M d, g:i A" }}</span>{% if r.ack.from_paper %} <span class="text-muted">paper</span>{% endif %}{% else %}<span class="text-danger">Not yet</span>{% endif %}</td>
+        </tr>
+      {% empty %}<tr><td colspan="5" class="text-muted">Nobody to show.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if can_manage %}<button class="btn btn-sm btn-outline-primary mt-2">Record the ticked people as signed on the paper list</button>{% endif %}
+</form>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}File leave{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if for_hrmo %}{% url 'leave_register' %}{% else %}{% url 'my_leave' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<h1 class="h3 mb-1">{% if for_hrmo %}Enter a paper leave form{% else %}Application for leave{% endif %}</h1>
+<p class="text-muted small">CS Form No. 6, Revised 2020. {% if for_hrmo %}For an employee who filed on paper: it then follows the same signatures.{% else %}Fill it in here and print it filled in for signing. It also goes to your office head, then HRMO, then the Mayor, and you can follow each step.
+  Prefer to write it by hand? <a href="{% url 'leave_print_blank' %}">Print a blank form with your name, office and position</a>.{% endif %}</p>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <form method="post" class="card shadow-sm border-0" novalidate>{% csrf_token %}
+      <div class="card-body">
+        {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+        <div class="row g-3">
+          {% if for_hrmo %}
+          <div class="col-12">
+            <label class="form-label fw-semibold" for="{{ form.person.id_for_label }}">Employee</label>
+            {{ form.person }}
+            {% for e in form.person.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          {% endif %}
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold" for="{{ form.leave_type.id_for_label }}">6.A Type of leave</label>
+            {{ form.leave_type }}
+            {% for e in form.leave_type.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-12 col-md-6" id="other-wrap">
+            <label class="form-label fw-semibold" for="{{ form.leave_type_other.id_for_label }}">Others (specify)</label>
+            {{ form.leave_type_other }}
+            {% for e in form.leave_type_other.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-12"><div id="guidance" class="alert alert-info small py-2 mb-0" role="status"></div></div>
+          <div class="col-12 col-md-6" id="detail-wrap">
+            <label class="form-label fw-semibold" for="{{ form.detail.id_for_label }}">6.B Details of leave</label>
+            {{ form.detail }}
+            {% for e in form.detail.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-12 col-md-6" id="specify-wrap">
+            <label class="form-label fw-semibold" for="{{ form.detail_text.id_for_label }}">Specify</label>
+            {{ form.detail_text }}
+            {% for e in form.detail_text.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label fw-semibold" for="{{ form.start_date.id_for_label }}">First day</label>
+            {{ form.start_date }}
+            {% for e in form.start_date.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label fw-semibold" for="{{ form.end_date.id_for_label }}">Last day</label>
+            {{ form.end_date }}
+            {% for e in form.end_date.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold" for="{{ form.days.id_for_label }}">6.C Working days</label>
+            {{ form.days }}
+            <div class="form-text" id="days-help">{{ form.days.help_text }}</div>
+            {% for e in form.days.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="col-12">
+            <div class="form-check">{{ form.commutation_requested }} <label class="form-check-label" for="{{ form.commutation_requested.id_for_label }}">6.D Commutation requested</label></div>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold" for="{{ form.reason.id_for_label }}">Note to approvers</label>
+            {{ form.reason }}
+          </div>
+        </div>
+      </div>
+      <div class="card-footer bg-white d-flex flex-wrap gap-2 align-items-center">
+        <button class="btn btn-primary" type="submit" name="then" value="print">File and print the form</button>
+        <button class="btn btn-outline-primary" type="submit">File only</button>
+        <span class="small text-muted">Prints CS Form No. 6 filled in, ready to sign. Nothing is deducted until the Mayor approves it.</span>
+      </div>
+    </form>
+  </div>
+  {% if summary %}
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">Your credits now</div>
+      <div class="card-body small">
+        {% if summary.eligible %}
+        <dl class="row mb-0">
+          <dt class="col-7 fw-normal text-muted">Vacation leave available</dt><dd class="col-5 text-end fw-semibold" id="vl-avail" data-value="{{ summary.vl_available }}">{{ summary.vl_available|floatformat:3 }}</dd>
+          <dt class="col-7 fw-normal text-muted">Sick leave available</dt><dd class="col-5 text-end fw-semibold" id="sl-avail" data-value="{{ summary.sl_available }}">{{ summary.sl_available|floatformat:3 }}</dd>
+          <dt class="col-7 fw-normal text-muted">Special privilege left</dt><dd class="col-5 text-end fw-semibold" id="spl-avail" data-value="{{ summary.spl_left }}">{{ summary.spl_left|floatformat:"-1" }}</dd>
+          <dt class="col-7 fw-normal text-muted">Forced leave still to take</dt><dd class="col-5 text-end">{{ summary.forced_left|floatformat:"-1" }}</dd>
+        </dl>
+        <div id="after" class="mt-2 fw-semibold"></div>
+        {% else %}
+        <p class="mb-0 text-muted">No vacation or sick leave credits on this appointment.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{{ leave_rules|json_script:"leave-rules" }}
+<script>
+(function () {
+  const rules = JSON.parse(document.getElementById("leave-rules").textContent);
+  const $ = (id) => document.getElementById(id);
+  const type = $("id_leave_type"), detail = $("id_detail"), start = $("id_start_date"), end = $("id_end_date"), days = $("id_days");
+  const allDetails = Array.from(detail.options).map((o) => [o.value, o.text]);
+  let userEditedDays = days.value !== "";
+  days.addEventListener("input", () => { userEditedDays = true; showAfter(); });
+
+  function refreshType() {
+    const t = type.value;
+    $("guidance").textContent = rules.guidance[t] || "";
+    $("other-wrap").hidden = t !== "other";
+    const allowed = rules.details[t] || [];
+    const keep = detail.value;
+    detail.innerHTML = "";
+    detail.add(new Option("—", ""));
+    allDetails.forEach(([v, label]) => { if (v && allowed.includes(v)) detail.add(new Option(label, v)); });
+    detail.value = allowed.includes(keep) ? keep : (allowed.length && t !== "other" ? allowed[0] : "");
+    $("detail-wrap").hidden = allowed.length === 0;
+    refreshDetail();
+    showAfter();
+  }
+  function refreshDetail() { $("specify-wrap").hidden = !rules.specify.includes(detail.value); }
+  async function count() {
+    if (!start.value || !end.value) return;
+    if (end.value < start.value) { end.value = start.value; }
+    try {
+      const r = await fetch(`{% url 'leave_days' %}?start=${start.value}&end=${end.value}`, { credentials: "same-origin" });
+      const data = await r.json();
+      if (!userEditedDays) days.value = data.days;
+      $("days-help").textContent = `${data.days} working day(s) in these dates` + (data.holidays.length ? `, not counting ${data.holidays.length} holiday(s)` : "") + ". Change it for half days.";
+      showAfter();
+    } catch (e) { /* the server counts the days anyway */ }
+  }
+  function showAfter() {
+    const out = $("after"); if (!out) return;
+    const n = parseFloat(days.value || "0"), t = type.value;
+    const pick = { vl: "vl-avail", fl: "vl-avail", sl: "sl-avail", spl: "spl-avail" }[t];
+    if (!pick || !n) { out.textContent = ""; return; }
+    let left = parseFloat($(pick).dataset.value) - n;
+    if (t === "sl" && left < 0) left += parseFloat($("vl-avail").dataset.value);
+    out.className = "mt-2 fw-semibold " + (left < 0 ? "text-danger" : "text-success");
+    out.textContent = left < 0 ? `About ${(-left).toFixed(1)} day(s) would be without pay.` : `After this leave: ${left.toFixed(3)} day(s) left.`;
+  }
+  type.addEventListener("change", refreshType);
+  detail.addEventListener("change", refreshDetail);
+  start.addEventListener("change", () => { if (!end.value || end.value < start.value) end.value = start.value; userEditedDays = false; count(); });
+  end.addEventListener("change", () => { userEditedDays = false; count(); });
+  refreshType();
+  if (!userEditedDays) count();
+})();
+</script>
+{% endblock %}

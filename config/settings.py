@@ -83,6 +83,8 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "hr.context_processors.org_chart_nav",
+                "hr.context_processors.board_nav",
+                "hr.context_processors.app_version",
             ],
         },
     },
@@ -130,6 +132,60 @@ SALARY_TRACKING_START = os.environ.get("SALARY_TRACKING_START", "2026-10-01")
 SALARY_LOOKAHEAD_DAYS = int(os.environ.get("SALARY_LOOKAHEAD_DAYS", "90"))
 # Contract renewals list (DECISIONS RM1): appointments ending within this many days.
 RENEWAL_LOOKAHEAD_DAYS = int(os.environ.get("RENEWAL_LOOKAHEAD_DAYS", "45"))
+# Leave approval order (DECISIONS L1): the signature boxes of CS Form No. 6, section 7, in the order
+# they are signed. Any order of recommend, certify and approve; approve must be one of them.
+LEAVE_APPROVAL_STEPS = [
+    s.strip() for s in os.environ.get("LEAVE_APPROVAL_STEPS", "recommend,certify,approve").split(",") if s.strip()
+]
+# Names printed under the signature lines of CS Form No. 6 (DECISIONS L6), as on the LGU's paper form.
+# Blank prints an empty line for the name.
+LEAVE_FORM_CERTIFIER = os.environ.get("LEAVE_FORM_CERTIFIER", "")
+LEAVE_FORM_CERTIFIER_TITLE = os.environ.get("LEAVE_FORM_CERTIFIER_TITLE", "Administrative Officer V")
+LEAVE_FORM_MAYOR = os.environ.get("LEAVE_FORM_MAYOR", "")
+# Service records and certificates of employment (DECISIONS CR1, CR4). Job order and contract of service
+# are not government service, so they are left off the service record (the COE still lists them).
+SERVICE_RECORD_EXCLUDED_TYPES = [
+    s.strip() for s in os.environ.get("SERVICE_RECORD_EXCLUDED_TYPES", "jo,cos").split(",") if s.strip()
+]
+# Name and title printed under the "Certified correct" line. Blank prints an empty line for the name.
+CERTIFICATE_SIGNATORY = os.environ.get("CERTIFICATE_SIGNATORY", "")
+CERTIFICATE_SIGNATORY_TITLE = os.environ.get("CERTIFICATE_SIGNATORY_TITLE", "Municipal Human Resource Management Officer")
+
+
+def _read_file(name):
+    try:
+        return (BASE_DIR / name).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+# The release shown in every page footer (DECISIONS H9): MAJOR.MINOR.PATCH from the committed VERSION
+# file, and the exact commit as BUILD, written by scripts/vps_update.sh when it deploys.
+APP_VERSION = os.environ.get("APP_VERSION", "").strip() or _read_file("VERSION") or "development"
+APP_BUILD = os.environ.get("APP_BUILD", "").strip() or _read_file("BUILD")
+
+
+def _types(name, default):
+    return [s.strip() for s in os.environ.get(name, default).split(",") if s.strip()]
+
+
+# Licences from the PDS that expire within this many days are listed (DECISIONS EL1).
+LICENCE_LOOKAHEAD_DAYS = int(os.environ.get("LICENCE_LOOKAHEAD_DAYS", "90"))
+# Learning and development hours each person should reach in a year; 0 shows hours without a target (LD3).
+LD_TARGET_HOURS = int(os.environ.get("LD_TARGET_HOURS", "0"))
+# Appointment types rated every semester under SPMS (SP1); JO and COS are not employees.
+SPMS_RATED_TYPES = _types("SPMS_RATED_TYPES", "plantilla,casual,contractual")
+# Appointment types that file a SALN every year (SN1). RA 6713 exempts casual and temporary workers.
+SALN_COVERED_TYPES = _types("SALN_COVERED_TYPES", "plantilla,elected")
+# The first year whose SALN is tracked here (earlier ones were filed on paper): no reminders before it.
+SALN_FIRST_YEAR = int(os.environ.get("SALN_FIRST_YEAR", "2026"))
+# Compensatory overtime credits (CT1-CT3): hours credited per hour worked, caps, and how long they last.
+COC_EXCLUDED_TYPES = _types("COC_EXCLUDED_TYPES", "jo,cos")
+COC_WORKDAY_RATE = os.environ.get("COC_WORKDAY_RATE", "1.0")
+COC_RESTDAY_RATE = os.environ.get("COC_RESTDAY_RATE", "1.5")
+COC_MONTHLY_CAP = int(os.environ.get("COC_MONTHLY_CAP", "40"))
+COC_BALANCE_CAP = int(os.environ.get("COC_BALANCE_CAP", "120"))
+COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

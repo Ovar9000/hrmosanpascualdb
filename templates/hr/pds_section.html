@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Personal Data Sheet{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <a href="{% url 'pds_overview' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to Personal Data Sheet</a>
+  <label class="d-flex align-items-center gap-2 small text-muted mb-0">Go to
+    <select class="form-select form-select-sm w-auto" onchange="location.href=this.value">
+      {% for key, label in steps %}<option value="{% url 'pds_section' person.pk key %}"{% if key == section %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-baseline gap-2">
+    <h1 class="h4 mb-0">{{ title }}</h1>
+    <span class="text-muted small">Section {{ number }} of {{ steps|length }}{% if not is_self %} · {{ person.full_name }}{% endif %}</span>
+  </div>
+  <div class="card-body p-4">
+    <p class="text-muted small mb-4">{{ intro }}</p>
+
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      {% if form %}{{ form.version }}{% endif %}
+      {% if form.non_field_errors %}<div class="alert alert-danger shadow-sm mb-4">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% if formset.non_form_errors %}<div class="alert alert-danger shadow-sm mb-4">{{ formset.non_form_errors|join:" " }}</div>{% endif %}
+
+      {% if section == "personal" %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">On file with HRMO <span class="form-section-hint">Ask HRMO to correct these</span></legend>
+        <dl class="row mb-0 small">
+          <dt class="col-sm-3 text-muted fw-normal">Name</dt><dd class="col-sm-9">{{ person.last_name }}, {{ person.first_name }} {{ person.middle_name }} {{ person.suffix }}</dd>
+          <dt class="col-sm-3 text-muted fw-normal">Date of birth · sex</dt><dd class="col-sm-9">{{ person.birthdate|date:"F d, Y" }} · {{ person.get_sex_display|default:"not recorded" }}</dd>
+          <dt class="col-sm-3 text-muted fw-normal">Mobile · email</dt><dd class="col-sm-9">{{ person.mobile|default:"—" }} · {{ person.email|default:"—" }}</dd>
+          <dt class="col-sm-3 text-muted fw-normal">GSIS, Pag-IBIG, PhilHealth, SSS, TIN</dt><dd class="col-sm-9 mb-0">On file; printed on the form</dd>
+        </dl>
+      </fieldset>
+      {% endif %}
+
+      {% if formset and formset_first %}{% include "hr/_pds_rows.html" %}{% endif %}
+
+      {% for heading, fields in groups %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">{{ heading }}</legend>
+        <div class="row g-3">
+          {% for field in fields %}
+            {% if field.widget_type == "checkbox" %}
+              <div class="col-12"><div class="form-check">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div></div>
+            {% else %}
+              <div class="col-12 {% if field.widget_type == 'textarea' %}col-lg-4{% elif field.name == 'spouse_business_address' or field.name == 'spouse_employer' or field.name == 'place_of_birth' %}col-md-6{% else %}col-sm-6 col-md-4{% endif %}" data-field="{{ field.name }}">
+                <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {{ field }}
+                {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+                {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+
+      {% if qrows %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">Answer each question <span class="form-section-hint">If Yes, give the details</span></legend>
+        <div class="list-group">
+          {% for q in qrows %}
+            <div class="list-group-item py-3">
+              {% if q.intro %}<p class="small mb-2"><b>{{ q.number }}.</b> {{ q.intro }}</p>{% endif %}
+              {% for line in q.lines %}
+                <div class="{% if not forloop.last %}mb-3{% endif %}">
+                  <div class="d-flex flex-wrap flex-md-nowrap justify-content-between gap-3">
+                    <span class="small">{% if not q.intro and forloop.first %}<b>{{ q.number }}.</b> {% endif %}{{ line.text }}</span>
+                    <span class="text-nowrap" role="radiogroup" aria-label="{{ line.text }}">{% for radio in line.field %}<span class="form-check form-check-inline me-3">{{ radio.tag }} <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label></span>{% endfor %}</span>
+                  </div>
+                  {% for error in line.field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                  {% if line.details %}
+                    <div class="mt-2" data-details-for="{{ line.answer }}">
+                      <input type="text" name="{{ line.details.html_name }}" id="{{ line.details.id_for_label }}" value="{{ line.details.value|default:'' }}" class="form-control" placeholder="{{ line.details_label }}" aria-label="{{ line.details_label }}">
+                      {% for error in line.details.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                    </div>
+                  {% endif %}
+                  {% if line.extra %}
+                    <div class="row g-2 mt-1" data-details-for="{{ line.answer }}">
+                      {% for f in line.extra %}<div class="col-sm-6"><label class="form-label small mb-1" for="{{ f.id_for_label }}">{% if forloop.first %}Date filed{% else %}Status of case/s{% endif %}</label>{{ f }}</div>{% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endif %}
+
+      {% if lgu_work %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">In this Municipality <span class="form-section-hint">From HRMO's records, added for you</span></legend>
+        <div class="list-group small">
+          {% for w in lgu_work %}<div class="list-group-item d-flex flex-wrap justify-content-between gap-2"><span>{{ w.position }} · {{ w.employer }}</span><span class="text-muted">{{ w.date_from|date:"M Y" }} – {% if w.date_to %}{{ w.date_to|date:"M Y" }}{% else %}present{% endif %}</span></div>{% endfor %}
+        </div>
+      </fieldset>
+      {% endif %}
+
+      {% if hrmo_trainings %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">Recorded by HRMO <span class="form-section-hint">Trainings the LGU ran or sent you to; ask HRMO to correct them</span></legend>
+        <div class="list-group small">
+          {% for t in hrmo_trainings %}<div class="list-group-item d-flex flex-wrap justify-content-between gap-2"><span>{{ t.title }}{% if t.sponsor %} · {{ t.sponsor }}{% endif %}</span><span class="text-muted">{{ t.date_from|date:"M d, Y" }}{% if t.hours %} · {{ t.hours }} h{% endif %}</span></div>{% endfor %}
+        </div>
+      </fieldset>
+      {% endif %}
+
+      {% if formset and not formset_first %}{% include "hr/_pds_rows.html" %}{% endif %}
+
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'pds_overview' person.pk %}">Cancel</a>
+        <button class="btn {% if next_title %}btn-outline-primary{% else %}btn-primary{% endif %}">Save</button>
+        {% if next_title %}<button class="btn btn-primary" name="next" value="1">Save and continue</button>{% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var add = document.getElementById("add-row");
+  if (add) {
+    var total = document.getElementById("id_{{ section }}-TOTAL_FORMS");
+    var max = parseInt(document.getElementById("id_{{ section }}-MAX_NUM_FORMS").value, 10);
+    add.addEventListener("click", function () {
+      var n = parseInt(total.value, 10);
+      if (n >= max) { add.disabled = true; return; }
+      var html = document.getElementById("row-template").innerHTML.replace(/__prefix__/g, n);
+      document.getElementById("rows").insertAdjacentHTML("beforeend", html);
+      total.value = n + 1;
+      var first = document.getElementById("rows").lastElementChild.querySelector("input, select");
+      if (first) first.focus();
+    });
+  }
+  // Details boxes show only after a Yes (questions 34-40).
+  document.querySelectorAll("[data-details-for]").forEach(function (box) {
+    var name = box.getAttribute("data-details-for");
+    function sync() {
+      var yes = document.querySelector('input[name="' + name + '"][value="True"]');
+      var q34 = name === "q34b" && document.querySelector('input[name="q34a"][value="True"]');
+      box.hidden = !((yes && yes.checked) || (q34 && q34.checked));
+    }
+    document.querySelectorAll('input[name="' + name + '"], input[name="q34a"]').forEach(function (r) { r.addEventListener("change", sync); });
+    sync();
+  });
+  // Fields that only apply after a choice above them.
+  function follow(control, fields, show) {
+    var el = document.getElementById(control);
+    if (!el) return;
+    function sync() { fields.forEach(function (f) { var c = document.querySelector('[data-field="' + f + '"]'); if (c) c.hidden = !show(el); }); }
+    el.addEventListener("change", sync); sync();
+  }
+  follow("id_civil_status", ["civil_status_other"], function (el) { return el.value === "other"; });
+  follow("id_citizenship", ["dual_by", "dual_country"], function (el) { return el.value === "dual"; });
+  follow("id_perm_same", ["perm_house", "perm_street", "perm_subdivision", "perm_barangay", "perm_city", "perm_province", "perm_zip"], function (el) { return !el.checked; });
+})();
+</script>
+{% endblock %}

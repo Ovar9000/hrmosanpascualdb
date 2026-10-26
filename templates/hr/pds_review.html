@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}PDS of {{ person.full_name }} · {{ sub.submitted_at|date:"M d, Y" }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  {% if can_verify %}<a href="{% url 'pds_queue' %}" class="btn btn-sm btn-outline-secondary">← Back to PDS to verify</a>
+  {% else %}<a href="{% url 'pds_overview' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to Personal Data Sheet</a>{% endif %}
+</div>
+
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Personal Data Sheet as sent</h1>
+    <div class="text-muted small">{{ person.full_name }} · {{ person.employee_no }} · sent {{ sub.submitted_at|date:"M d, Y g:i A" }}{% if sub.submitted_by %} by {{ sub.submitted_by.get_username }}{% endif %}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'pds_overview' person.pk %}">Current PDS</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold">Status</span>
+        {% if sub.status == "verified" %}<span class="badge text-bg-success">Verified</span>{% elif sub.status == "returned" %}<span class="badge text-bg-warning">Returned</span>{% else %}<span class="badge text-bg-info">Waiting for HRMO</span>{% endif %}
+      </div>
+      <div class="card-body small">
+        {% if sub.reviewed_at %}<p class="mb-2">{{ sub.get_status_display }} on {{ sub.reviewed_at|date:"M d, Y" }}{% if sub.reviewed_by %} by {{ sub.reviewed_by.get_username }}{% endif %}.</p>{% endif %}
+        {% if sub.note %}<p class="mb-2"><span class="text-muted">{% if sub.status == "returned" %}What to correct:{% else %}Note:{% endif %}</span> {{ sub.note }}</p>{% endif %}
+        <p class="mb-0">{% if previous %}Compared with the copy verified {{ previous.reviewed_at|date:"M d, Y" }}: <b>{{ changed|length }} section{{ changed|length|pluralize }} changed</b>{% if changed %}, outlined on the right{% endif %}.{% else %}First PDS on record for this person: check every section.{% endif %}</p>
+      </div>
+      {% if can_verify %}
+      <div class="card-footer bg-white py-3">
+        <p class="form-text mt-0 mb-2">Check it against the documents in the 201 file: diploma, eligibility certificate, marriage and birth certificates.</p>
+        <form method="post" class="d-grid mb-3">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ sub.version }}"><input type="hidden" name="action" value="verify">
+          <button class="btn btn-success"><span class="mk mk-check" aria-hidden="true"></span>Verified against the documents</button>
+        </form>
+        <form method="post">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ sub.version }}"><input type="hidden" name="action" value="return">
+          <label class="form-label fw-semibold small" for="return-note">Or return it for correction</label>
+          <textarea class="form-control mb-2" id="return-note" name="note" rows="3" required placeholder="What to correct, e.g. the year graduated does not match the diploma"></textarea>
+          <button class="btn btn-outline-warning w-100">Return for correction</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-12 col-lg-8">
+    {% include "hr/_pds_view.html" %}
+  </div>
+</div>
+{% endblock %}

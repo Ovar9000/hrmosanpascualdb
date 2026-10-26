@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Performance ratings · {{ label }}{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">Performance ratings, {{ label }}</h1>
+    <div class="text-muted small">Final IPCR ratings under SPMS, by office. Plantilla, casual and contractual staff are rated each semester. The ratings fill in the step increment and loyalty checklists and the applicant lists.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-primary" href="?year={{ year }}&semester={{ semester }}&export=xlsx">Export to Excel</a>
+</div>
+
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3">
+  <div>
+    <label class="form-label small mb-0" for="period">Semester</label>
+    <select class="form-select form-select-sm" id="period" onchange="var v=this.value.split('-'); location.search='?year='+v[0]+'&semester='+v[1];">
+      {% for p, plabel in periods %}<option value="{{ p.0 }}-{{ p.1 }}"{% if p.0 == year and p.1 == semester %} selected{% endif %}>{{ plabel }}</option>{% endfor %}
+    </select>
+  </div>
+</form>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold">Offices</span><span class="small text-muted">{{ rated }} of {{ total }} people rated</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 small">
+          <thead class="table-light"><tr><th>Office</th><th style="width: 40%">Rated</th><th></th></tr></thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.office.name }}</td>
+                <td><div class="d-flex align-items-center gap-2">
+                  <div class="progress flex-grow-1" style="height: .5rem;" role="progressbar" aria-label="{{ r.office.name }} rated" aria-valuenow="{{ r.pct }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar {% if r.pct == 100 %}bg-success{% endif %}" style="width: {{ r.pct }}%"></div></div>
+                  <span class="text-nowrap">{{ r.rated }} / {{ r.total }}</span></div></td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary py-0" href="{% url 'ratings_office' r.office.pk %}?year={{ year }}&semester={{ semester }}">{% if can_manage %}Enter ratings{% else %}View{% endif %}</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3" class="text-center text-muted py-4">No rated staff in active service.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white fw-bold py-2">Rating scale</div>
+      <ul class="list-group list-group-flush small">
+        {% for floor, name in bands %}<li class="list-group-item d-flex justify-content-between"><span>{{ name }}</span><span class="text-muted">{{ floor }} and up</span></li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

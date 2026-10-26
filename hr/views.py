@@ -12,7 +12,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, Max, Min, Q, Sum, When
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views.decorators.http import require_POST
-from . import meetings, orgchart, reminders, salary_actions
+from . import meetings, orgchart, reminders, salary_actions, spms
 from .audit import log_audit_event, run_and_record_verification
 from .forms import (
     CalendarEventForm,
@@ -46,15 +46,22 @@ from .models import (
     LeaveType,
     Meeting,
     MeetingSeries,
+    Memo,
     Office,
     Person,
     Project,
     SalaryAction,
     UserProfile,
+    Vacancy,
 )
 from .permissions import (
+    can_manage_certificate_requests,
+    can_view_certificate_requests,
+    can_view_pds,
+    can_view_ratings,
     can_manage_hr_records,
     can_manage_projects,
+    can_manage_record_of,
     can_manage_salary_actions,
     can_view_contacts,
     can_view_document_content,
@@ -79,6 +86,7 @@ from .permissions import (
     is_hrmo,
     is_office_head,
     is_office_staff,
+    is_self,
     is_sysadmin,
 )
 from .sequences import get_next_employee_no
@@ -99,10 +107,15 @@ class PasswordChangeView(auth_views.PasswordChangeView):
 
 @login_required
 def home(request):
-    """Landing page: Project Maintainers with no personnel access go to Projects."""
+    """Landing page: Project Maintainers with no personnel access go to Projects; everyone else gets
+    the My HR dashboard (DECISIONS L8)."""
     if can_manage_projects(request.user) and not get_visible_people(request.user).exists():
         return redirect("project_list")
-    return redirect("person_list")
+    if is_sysadmin(request.user) and not request.user.is_superuser:
+        return redirect("person_list")
+    from .board_views import dashboard
+
+    return dashboard(request)
 
 
 @login_required
@@ -236,22 +249,43 @@ def _office_tree_scope(user):
     return ids
 
 
+def _tree_view(request):
+    """Which office tree to draw (DECISIONS O6): ?office=<pk> makes that office the head,
+    ?all=1 draws everything, otherwise the municipality and its top offices.
+    Returns (focus office or None, whole, query string for the export links)."""
+    if request.GET.get("all"):
+        return None, True, "?all=1"
+    value = request.GET.get("office", "")
+    focus = Office.objects.filter(pk=value).first() if value.isdigit() else None
+    return focus, False, (f"?office={focus.pk}" if focus else "")
+
+
 @login_required
 def office_tree(request):
     """The municipal office tree, from Office.parent."""
     if not can_view_office_tree(request.user):
         raise PermissionDenied("You do not have access to the office tree.")
     scope = _office_tree_scope(request.user)
-    chart = orgchart.build_office_tree(detail_office_ids=scope, linked_office_ids=scope)
+    focus, whole, query = _tree_view(request)
+    chart = orgchart.build_office_tree(
+        detail_office_ids=scope, linked_office_ids=scope, focus=focus and focus.pk, whole=whole
+    )
+    heading = focus.name if focus else "Municipal office tree"
     return render(
         request,
         "hr/org_chart.html",
         {
-            "heading": "Municipal office tree",
-            "svg": orgchart.render_svg(chart, "Municipal office tree"),
-            "export_urls": {f: reverse("office_tree_export", args=[f]) for f in orgchart.EXPORTS},
+            "heading": heading,
+            "focus": focus,
+            "whole": whole,
+            "trail": chart.trail,
+            "legend": [(label, orgchart.STYLES[s], orgchart.FILLS.get(s, "#fff")) for label, s in chart.legend],
+            "svg": orgchart.render_svg(chart, f"Office tree: {heading}"),
+            "export_urls": {f: reverse("office_tree_export", args=[f]) + query for f in orgchart.EXPORTS},
             "is_tree": True,
             "own_office": get_user_office(request.user),
+            "focus_can_open": focus is not None and focus.pk in scope,
+            "whole_url": orgchart.tree_url(whole=True),
         },
     )
 
@@ -289,6 +323,7 @@ def office_chart(request, pk):
             "coworkers": coworkers,
             "can_edit": can_manage_hr_records(request.user),
             "can_view_tree": can_view_office_tree(request.user),
+            "tree_url": orgchart.tree_url(office.parent_id),  # this office among its siblings
         },
     )
 
@@ -325,10 +360,15 @@ def _export_response(request, fmt, chart, heading, note, filename, object_id):
 def office_tree_export(request, fmt):
     if not can_view_office_tree(request.user):
         raise PermissionDenied("You do not have access to the office tree.")
-    chart = orgchart.build_office_tree(detail_office_ids=_office_tree_scope(request.user))
+    focus, whole, _query = _tree_view(request)
+    chart = orgchart.build_office_tree(
+        detail_office_ids=_office_tree_scope(request.user), focus=focus and focus.pk, whole=whole
+    )
+    heading = focus.name if focus else "Municipal Government of San Pascual"
+    name = slugify(focus.acronym or focus.name) if focus else "san-pascual"
     return _export_response(
-        request, fmt, chart, "San Pascual municipal office tree", orgchart.export_note(),
-        f"san-pascual-office-tree-{timezone.localdate():%Y-%m-%d}", "",
+        request, fmt, chart, heading, orgchart.export_note("Organizational structure. "),
+        f"office-tree-{name}-{timezone.localdate():%Y-%m-%d}", focus.pk if focus else "",
     )
 
 
@@ -560,11 +600,24 @@ def person_detail(request, pk):
             "can_view_contacts": can_view_contacts(request.user, person),
             "can_view_notes": can_view_hr_notes(request.user),
             "leave_balances": leave_balances,
-            "can_manage_records": can_manage_hr_records(request.user),
+            "can_manage_records": can_manage_record_of(request.user, person),
             "salary": _person_salary_summary(request.user, person),
+            "pds": can_view_pds(request.user, person),
+            "ratings": person.ratings.all()[:6] if can_view_ratings(request.user, person) else None,
+            "certificates": {
+                "view": True,
+                "manage": can_manage_certificate_requests(request.user),
+                "recent": person.certificate_requests.order_by("-filed_at")[:3],
+            } if can_view_certificate_requests(request.user) else None,
         },
     )
 
+
+
+def _require_record_of(request, person):
+    """HRMO changes the record, but never their own: another HRMO staff member does (R10)."""
+    if person is not None and not can_manage_record_of(request.user, person):
+        raise PermissionDenied("Another HRMO staff member changes your own record (R10).")
 
 
 def _person_salary_summary(user, person):
@@ -618,6 +671,7 @@ def person_edit(request, pk):
         raise PermissionDenied("You do not have permission to edit personnel records.")
 
     person = get_object_or_404(Person, pk=pk)
+    _require_record_of(request, person)
 
     if request.method == "POST":
         form = PersonForm(request.POST, instance=person, user=request.user)
@@ -671,6 +725,7 @@ def engagement_create(request, person_pk):
         raise PermissionDenied("You do not have permission to manage appointments.")
 
     person = get_object_or_404(Person, pk=person_pk)
+    _require_record_of(request, person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, user=request.user, person=person)
@@ -707,6 +762,7 @@ def engagement_edit(request, pk):
         raise PermissionDenied("You do not have permission to edit appointments.")
 
     eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, eng.person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, instance=eng, user=request.user, person=eng.person)
@@ -764,6 +820,7 @@ def engagement_end(request, pk):
         raise PermissionDenied("You do not have permission to end appointments.")
 
     eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, eng.person)
 
     if request.method == "POST":
         form = EndEngagementForm(request.POST, engagement=eng)
@@ -818,6 +875,7 @@ def engagement_renew(request, pk):
         raise PermissionDenied("You do not have permission to renew appointments.")
 
     old_eng = get_object_or_404(Engagement.objects.select_related("person", "office"), pk=pk)
+    _require_record_of(request, old_eng.person)
 
     if request.method == "POST":
         form = EngagementForm(request.POST, user=request.user, person=old_eng.person)
@@ -874,6 +932,7 @@ def document_create_person(request, person_pk):
         raise PermissionDenied("You do not have permission to upload or manage HR documents.")
 
     person = get_object_or_404(Person, pk=person_pk)
+    _require_record_of(request, person)
     if request.method == "POST":
         form = DocumentForm(request.POST, request.FILES, person=person)
         if form.is_valid():
@@ -906,6 +965,7 @@ def document_create_engagement(request, engagement_pk):
         raise PermissionDenied("You do not have permission to upload or manage HR documents.")
 
     engagement = get_object_or_404(Engagement, pk=engagement_pk)
+    _require_record_of(request, engagement.person)
     if request.method == "POST":
         form = DocumentForm(request.POST, request.FILES, engagement=engagement)
         if form.is_valid():
@@ -940,6 +1000,7 @@ def document_edit(request, pk):
 
     doc = get_object_or_404(Document, pk=pk)
     target_person = doc.person or (doc.engagement.person if doc.engagement else None)
+    _require_record_of(request, target_person)
 
     if request.method == "POST":
         form = DocumentEditForm(request.POST, instance=doc)
@@ -983,6 +1044,7 @@ def document_replace(request, pk):
 
     old_doc = get_object_or_404(Document, pk=pk)
     target_person = old_doc.person or (old_doc.engagement.person if old_doc.engagement else None)
+    _require_record_of(request, target_person)
 
     # Only the current scan can be replaced; replacing a superseded one would fork the
     # replacement history into two "current" documents.
@@ -1279,12 +1341,13 @@ def salary_action_detail(request, pk):
     """One case: the counted service, warnings, HRMO's checklist and the next step."""
     _require_salary_view(request)
     case = get_object_or_404(SalaryAction.objects.select_related("person", "engagement__office", "issued_by"), pk=pk)
-    can_manage = can_manage_salary_actions(request.user)
+    can_manage = can_manage_salary_actions(request.user) and not is_self(request.user, case.person)
     today = timezone.localdate()
 
     if request.method == "POST":
         if not can_manage:
-            raise PermissionDenied("Only HRMO can work on salary actions.")
+            raise PermissionDenied("Only HRMO can work on salary actions, and another HRMO staff member "
+                                   "works on your own (R10).")
         action = request.POST.get("action", "")
         try:
             with transaction.atomic():
@@ -1296,6 +1359,7 @@ def salary_action_detail(request, pk):
                 note = request.POST.get("note", "").strip()
                 if action == "start_review":
                     salary_actions.start_review(locked)
+                    spms.prefill_checklist(locked, today)  # SP3
                 elif action == "checklist":
                     salary_actions.save_checklist(locked, set(request.POST.getlist("check")))
                 elif action == "signature":
@@ -1335,6 +1399,7 @@ def salary_action_detail(request, pk):
             "case": case,
             "can_manage": can_manage,
             "checklist": salary_actions.checklist_items(case),
+            "ratings": spms.case_coverage(case, today),
             "engagements": case.person.engagements.select_related("office").order_by("-start_date"),
             "interruptions": case.person.service_interruptions.all(),
             "interruption_form": ServiceInterruptionForm(),
@@ -1352,6 +1417,8 @@ def salary_interruption_create(request, pk):
     if not can_manage_salary_actions(request.user):
         raise PermissionDenied("Only HRMO can record service interruptions.")
     case = get_object_or_404(SalaryAction.objects.select_related("person"), pk=pk)
+    if is_self(request.user, case.person):
+        raise PermissionDenied("Another HRMO staff member records your own service interruptions (R10).")
     form = ServiceInterruptionForm(request.POST)
     if form.is_valid():
         with transaction.atomic():
@@ -1377,7 +1444,7 @@ def _require_tracker_view(request):
         raise PermissionDenied("These lists are for HRMO and Auditor only.")
 
 
-def _xlsx_response(request, filename, sheet, headers, rows, audit_repr):
+def _xlsx_response(request, filename, sheet, headers, rows, audit_repr, model_name="Engagement"):
     """An Excel file of a reminder list. Text that looks like a formula is written as text (U1)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
@@ -1396,7 +1463,7 @@ def _xlsx_response(request, filename, sheet, headers, rows, audit_repr):
     ws.freeze_panes = "A2"
     buf = BytesIO()
     book.save(buf)
-    log_audit_event(action=AuditLog.Action.EXPORT, model_name="Engagement", object_repr=audit_repr[:255], request=request)
+    log_audit_event(action=AuditLog.Action.EXPORT, model_name=model_name, object_repr=audit_repr[:255], request=request)
     response = HttpResponse(
         buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
@@ -1676,6 +1743,8 @@ CALENDAR_KINDS = {
     "loyalty": ("Loyalty", "cal-loyalty", "loyalty awards"),
     "retirement": ("Retires", "cal-retire", "retirements"),
     "required_meeting": ("Required", "cal-required", "required meetings"),
+    "vacancy": ("Apply by", "cal-deadline", "application deadlines"),
+    "memo": ("Comply", "cal-deadline", "memo deadlines"),
 }
 CALENDAR_KIND_ORDER = list(CALENDAR_KINDS)
 
@@ -1689,6 +1758,7 @@ CALENDAR_FILTERS = [
     ("salary", "Salary increases and loyalty"),
     ("retirement", "Retirements (age 65)"),
     ("required_meeting", "Required meetings"),
+    ("bulletin", "Vacancy and memo deadlines"),
 ]
 CALENDAR_LEGEND = [
     (label, CALENDAR_KINDS[value][0], CALENDAR_KINDS[value][1]) for value, label in CalendarEvent.Kind.choices
@@ -1701,6 +1771,8 @@ CALENDAR_LEGEND = [
     ("Loyalty award due (HRMO, Auditor)", "Loyalty", "cal-loyalty"),
     ("Compulsory retirement at 65 (HRMO, Auditor)", "Retires", "cal-retire"),
     ("Required meeting (date, or the last day to hold it)", "Required", "cal-required"),
+    ("Last day to apply for a vacancy", "Apply by", "cal-deadline"),
+    ("Deadline set by a memo addressed to you", "Comply", "cal-deadline"),
 ]
 
 # A day shows at most this many entries; a kind with more items than this collapses into
@@ -1800,7 +1872,7 @@ def _calendar_items(user, first, last, shown, office=None):
         for leave in leaves:
             pending = " (pending)" if leave.status == LeaveRequest.Status.PENDING else ""
             full = f"{leave.person.full_name} · {leave.get_leave_type_display()}{pending}"
-            url = reverse("person_detail", args=[leave.person_id])
+            url = reverse("leave_detail", args=[leave.pk])
             for day in span(leave.start_date, leave.end_date):
                 add(day, "leave", _short_name(leave.person) + pending, full, url)
 
@@ -1882,6 +1954,25 @@ def _calendar_items(user, first, last, shown, office=None):
             elif not item.not_held_reason:
                 add(item.period_end, "required_meeting", f"Hold by today: {item.series.name}",
                     f"Last day to hold {label} (not scheduled yet)", url)
+
+    # Vacancy deadlines are public notices; memo deadlines show to the memo's addressees and
+    # all-office roles (V2, M4).
+    if "bulletin" in shown:
+        from . import board
+
+        vacancies = Vacancy.objects.filter(status=Vacancy.Status.OPEN, deadline__range=(first, last))
+        if office:
+            vacancies = vacancies.filter(office=office)
+        for vac in vacancies.select_related("office"):
+            add(vac.deadline, "vacancy", vac.position_title, f"Last day to apply: {vac.position_title} ({vac.office.name})",
+                reverse("vacancy_detail", args=[vac.pk]), office_name=vac.office.name)
+        memos = Memo.objects.filter(is_published=True, comply_by__range=(first, last))
+        if not has_all_office_scope(user):
+            person = getattr(getattr(user, "profile", None), "person", None)
+            memos = board.memos_for_person(person).filter(comply_by__range=(first, last))
+        for memo in memos:
+            add(memo.comply_by, "memo", memo.subject, f"Comply by today: {memo.number}, {memo.subject}",
+                reverse("memo_detail", args=[memo.pk]))
 
     # 65th birthdays of active GSIS members: birthdates are personal details, so HRMO and Auditor (RM2).
     if "retirement" in shown and can_view_trackers(user):
@@ -2057,6 +2148,32 @@ def _parse_date_param(value):
         return None
 
 
+def _audit_groups(rows, qs):
+    """Splits a page of audit rows into runs by username, each with its totals over the filtered set `qs`.
+
+    A person's events can continue on the next page, so the count and time range in each group
+    header come from the whole filtered set, not just the rows shown.
+    """
+    groups = []
+    for row in rows:
+        if not groups or groups[-1]["username"] != row.username:
+            groups.append({"username": row.username, "office_name": "", "rows": []})
+        groups[-1]["rows"].append(row)
+        # Rows are newest first, so this is the office of the person's latest event that has one.
+        groups[-1]["office_name"] = groups[-1]["office_name"] or row.office_name
+
+    totals = (
+        qs.order_by()
+        .filter(username__in=[g["username"] for g in groups])
+        .values("username")
+        .annotate(total=Count("id"), earliest=Min("timestamp"), latest=Max("timestamp"))
+    )
+    by_username = {t["username"]: t for t in totals}
+    for group in groups:
+        group.update(by_username.get(group["username"], {}))
+    return groups
+
+
 @login_required
 def audit_list(request):
     """Auditor-only searchable audit trail (DECISIONS U1-U6)."""
@@ -2089,9 +2206,22 @@ def audit_list(request):
     if end:
         qs = qs.filter(timestamp__date__lte=end)
 
+    grouped = request.GET.get("view") == "grouped"
+    if grouped:
+        # The whole filtered set is ordered by who acted, so a person's events stay together across
+        # pages instead of being split by whoever else worked at the same time. System / Anonymous last.
+        qs = qs.order_by(Case(When(username="", then=1), default=0), "username", "-timestamp", "-id")
+
     paginator = Paginator(qs, 50)
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
+
+    # Paging links keep the filters and the mode; the mode toggle keeps the filters and starts at page 1.
+    params = request.GET.copy()
+    params.pop("page", None)
+    page_query = params.urlencode()
+    params.pop("view", None)
+    filter_query = params.urlencode()
 
     # Show the stored result of the last full scan; never verify the chain on page load.
     verification = AuditChainStatus.objects.filter(pk=1).first()
@@ -2104,6 +2234,10 @@ def audit_list(request):
         "hr/audit_list.html",
         {
             "page_obj": page_obj,
+            "grouped": grouped,
+            "groups": _audit_groups(page_obj, qs) if grouped else [],
+            "page_query": page_query,
+            "filter_query": filter_query,
             "query": query,
             "selected_action": action,
             "selected_user": user_filter,

@@ -8,7 +8,9 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, CalendarEvent, Document, Engagement, MeetingSeries, Person, Project, ServiceInterruption,
+    FAKE_ID_FIELDS, Applicant, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
+    MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
+    PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
 )
 from .permissions import can_view_ids, can_view_pay
 
@@ -174,6 +176,7 @@ class EngagementForm(forms.ModelForm):
             "salary_grade",
             "step",
             "item_number",
+            "appointment_status",
             "project",
             "notes",
         ]
@@ -191,6 +194,7 @@ class EngagementForm(forms.ModelForm):
             "salary_grade": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "33"}),
             "step": forms.NumberInput(attrs={"class": "form-control", "min": "1", "max": "8"}),
             "item_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. SP-MO-001"}),
+            "appointment_status": forms.Select(attrs={"class": "form-select"}),
             "project": forms.Select(attrs={"class": "form-select"}),
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
         }
@@ -271,6 +275,7 @@ class EngagementForm(forms.ModelForm):
         else:
             if salary_grade or step or item_number:
                 raise ValidationError("Salary grade, step, and item number must be empty for non-Plantilla engagements.")
+            cleaned_data["appointment_status"] = ""
 
         # Project-based validations
         if eng_type == Engagement.Type.PROJECT_BASED:
@@ -691,3 +696,490 @@ class MeetingSeriesForm(forms.ModelForm):
         if audience != MeetingSeries.Audience.CHOSEN:
             cleaned["members"] = Person.objects.none()
         return cleaned
+
+
+# --- Leave (DECISIONS L4-L7) -----------------------------------------------------------
+
+
+class LeaveRequestForm(forms.ModelForm):
+    """CS Form No. 6, sections 6.A to 6.D. The employee files their own; HRMO may enter a paper
+    form for anyone in active service (`for_hrmo`)."""
+
+    person = forms.ModelChoiceField(
+        queryset=Person.objects.none(), required=False, label="Employee",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta:
+        model = LeaveRequest
+        fields = ["leave_type", "leave_type_other", "detail", "detail_text", "start_date", "end_date", "days",
+                  "reason", "commutation_requested"]
+        widgets = {
+            "leave_type": forms.Select(attrs={"class": "form-select"}),
+            "leave_type_other": forms.TextInput(attrs={"class": "form-control"}),
+            "detail": forms.Select(attrs={"class": "form-select"}),
+            "detail_text": forms.TextInput(attrs={"class": "form-control", "placeholder": "Country, or the illness"}),
+            "start_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "end_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "days": forms.NumberInput(attrs={"class": "form-control", "step": "0.5", "min": "0.5"}),
+            "reason": forms.Textarea(attrs={"class": "form-control", "rows": 2,
+                                            "placeholder": "Optional. Not printed on the form."}),
+            "commutation_requested": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        }
+
+    def __init__(self, *args, person=None, for_hrmo=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.person_obj = person
+        self.for_hrmo = for_hrmo
+        self.fields["days"].required = False
+        self.fields["days"].help_text = "Filled in from the dates (weekdays less holidays). Change it for half days."
+        self.fields["detail"].required = False
+        if for_hrmo:
+            active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+            self.fields["person"].queryset = Person.objects.filter(pk__in=active).order_by("last_name", "first_name")
+            self.fields["person"].required = True
+        else:
+            del self.fields["person"]
+
+    def clean(self):
+        from . import leave
+
+        cleaned = super().clean()
+        person = cleaned.get("person") if self.for_hrmo else self.person_obj
+        self.person_obj = person
+        leave_type = cleaned.get("leave_type")
+        start, end = cleaned.get("start_date"), cleaned.get("end_date")
+        if start and end and end < start:
+            self.add_error("end_date", "The last day cannot be before the first day.")
+            return cleaned
+        if leave_type == LeaveType.OTHER and not cleaned.get("leave_type_other", "").strip():
+            self.add_error("leave_type_other", "Say what leave this is.")
+        if leave_type != LeaveType.OTHER:
+            cleaned["leave_type_other"] = ""
+        detail = cleaned.get("detail", "")
+        allowed = leave.DETAILS.get(leave_type, [])
+        if detail and detail not in allowed:
+            self.add_error("detail", "That detail does not apply to this leave type.")
+        elif allowed and not detail and leave_type != LeaveType.OTHER:
+            self.add_error("detail", "Choose one (section 6.B of the form).")
+        if detail in leave.DETAILS_TO_SPECIFY and not cleaned.get("detail_text", "").strip():
+            self.add_error("detail_text", "Please specify (the country, or the illness).")
+        if not detail:
+            cleaned["detail_text"] = ""
+        if (person and leave_type in (*leave.CHARGED_TO, LeaveType.SPECIAL_PRIVILEGE)
+                and not person.earns_leave_credits()):
+            self.add_error("leave_type", "No leave credits: this appointment does not earn leave. Ask HRMO.")
+        if person and leave_type == LeaveType.CTO:
+            from . import coc
+
+            if not coc.earns_coc(person):
+                self.add_error("leave_type", "Job order and contract of service do not earn overtime credits.")
+        if start and end:
+            days = cleaned.get("days")
+            span = (end - start).days + 1
+            if days is None:
+                days = leave.working_days(start, end)
+                if not days:
+                    self.add_error("end_date", "There are no working days in these dates.")
+                    return cleaned
+                cleaned["days"] = days
+            elif days <= 0 or days > span or (days * 2) % 1:
+                self.add_error("days", f"Enter whole or half days, up to {span}.")
+        return cleaned
+
+
+class LeaveCreditForm(forms.ModelForm):
+    """HRMO's manual ledger entry: beginning balance, correction, or credits earned (L2)."""
+
+    class Meta:
+        model = LeaveCredit
+        fields = ["leave_type", "days", "as_of", "note"]
+        widgets = {
+            "leave_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "days": forms.NumberInput(attrs={"class": "form-control form-control-sm", "step": "0.001"}),
+            "as_of": forms.DateInput(attrs={"type": "date", "class": "form-control form-control-sm"}),
+            "note": forms.TextInput(attrs={"class": "form-control form-control-sm",
+                                           "placeholder": "e.g. Beginning balance per leave card"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["leave_type"].choices = [(LeaveType.VACATION, "Vacation leave"), (LeaveType.SICK, "Sick leave")]
+        self.fields["note"].required = True
+        self.fields["days"].help_text = "Negative to deduct."
+
+    def clean_days(self):
+        days = self.cleaned_data.get("days")
+        if not days:
+            raise ValidationError("Enter the number of days (negative to deduct).")
+        return days
+
+
+# --- Vacancies and HRMPSB (DECISIONS V1-V5) ----------------------------------------------
+
+
+def _bootstrap(form):
+    """Bootstrap classes on every visible widget, for the longer HRMO forms."""
+    for field in form.fields.values():
+        widget = field.widget
+        if isinstance(widget, forms.HiddenInput):
+            continue
+        if isinstance(widget, forms.CheckboxInput):
+            widget.attrs.setdefault("class", "form-check-input")
+        elif isinstance(widget, (forms.Select, forms.SelectMultiple)):
+            widget.attrs.setdefault("class", "form-select")
+        else:
+            widget.attrs.setdefault("class", "form-control")
+        if isinstance(widget, forms.Textarea):
+            widget.attrs.setdefault("rows", 2)
+
+
+class VacancyForm(forms.ModelForm):
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Vacancy
+        fields = ["office", "position_title", "item_number", "salary_grade", "monthly_salary", "education",
+                  "training", "experience", "eligibility", "competencies", "status", "published_on", "deadline",
+                  "csc_received_on", "posted_at", "board_met_on", "board_venue", "resolution_no", "notes"]
+        widgets = {name: forms.DateInput(attrs={"type": "date"}) for name in
+                   ("published_on", "deadline", "csc_received_on", "board_met_on")}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        _bootstrap(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("status") == Vacancy.Status.OPEN and not cleaned.get("deadline"):
+            self.add_error("deadline", "An open vacancy needs the last day to apply.")
+        return cleaned
+
+
+class ApplicantForm(forms.ModelForm):
+    class Meta:
+        model = Applicant
+        fields = ["last_name", "first_name", "middle_name", "mobile", "email", "signified_on", "has_pds",
+                  "has_rating", "has_eligibility", "has_tor", "meets_qs", "rank", "remarks"]
+        widgets = {
+            "signified_on": forms.DateInput(attrs={"type": "date"}),
+            "meets_qs": forms.NullBooleanSelect(),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _bootstrap(self)
+
+
+# --- Memos (DECISIONS M1-M4) ---------------------------------------------------------------
+
+
+class MemoForm(forms.ModelForm):
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Memo
+        fields = ["number", "dated", "subject", "addressed_to", "audience", "office", "members", "body", "scan",
+                  "signed_by", "released_on", "comply_by", "requires_ack", "is_published"]
+        widgets = {
+            "dated": forms.DateInput(attrs={"type": "date"}),
+            "released_on": forms.DateInput(attrs={"type": "date"}),
+            "comply_by": forms.DateInput(attrs={"type": "date"}),
+            "body": forms.Textarea(attrs={"rows": 10}),
+            "members": forms.SelectMultiple(attrs={"size": 10}),
+            "scan": forms.FileInput(attrs={"accept": ".pdf,.jpg,.jpeg,.png"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields["version"].initial = self.instance.version
+        active = Engagement.objects.filter(status=Engagement.Status.ACTIVE).values("person_id")
+        chosen = Q(pk__in=self.instance.members.values("pk")) if self.instance.pk else Q(pk__in=[])
+        self.fields["members"].queryset = Person.objects.filter(Q(pk__in=active) | chosen).order_by("last_name", "first_name")
+        self.fields["members"].help_text = "Only used for chosen people. Hold Ctrl (Cmd on a Mac) to choose several."
+        _bootstrap(self)
+
+    def clean_scan(self):
+        f = self.cleaned_data.get("scan")
+        if f and hasattr(f, "content_type"):  # a new upload, not the stored file
+            validate_uploaded_document_file(f)
+        return f
+
+    def clean(self):
+        cleaned = super().clean()
+        audience = cleaned.get("audience")
+        if audience == Memo.Audience.OFFICE and not cleaned.get("office"):
+            self.add_error("office", "Choose the office the memo is for.")
+        if audience == Memo.Audience.CHOSEN and not cleaned.get("members"):
+            self.add_error("members", "Choose at least one person.")
+        if audience != Memo.Audience.OFFICE:
+            cleaned["office"] = None
+        if audience != Memo.Audience.CHOSEN:
+            cleaned["members"] = Person.objects.none()
+        return cleaned
+
+
+class CertificateRequestForm(forms.ModelForm):
+    """A request filed online by the person (CR2). HRMO's version adds how it came in and who asked."""
+
+    class Meta:
+        model = CertificateRequest
+        fields = ["kind", "purpose", "copies", "contact"]
+        widgets = {"kind": forms.RadioSelect}
+
+    def __init__(self, *args, person=None, **kwargs):
+        self.person = person
+        super().__init__(*args, **kwargs)
+        _bootstrap(self)
+        self.fields["kind"].choices = CertificateRequest.Kind.choices
+        self.fields["kind"].widget.attrs["class"] = "form-check-input"
+        self.fields["copies"].widget.attrs.update({"min": 1, "max": 10})
+
+    def clean_copies(self):
+        copies = self.cleaned_data["copies"]
+        if not 1 <= copies <= 10:
+            raise ValidationError("Copies must be 1 to 10.")
+        return copies
+
+    def clean(self):
+        from .certificates import has_service_record
+
+        cleaned = super().clean()
+        if (cleaned.get("kind") == CertificateRequest.Kind.SERVICE_RECORD and self.person is not None
+                and not has_service_record(self.person)):
+            self.add_error("kind", "The record has only job order or contract of service work, which is not "
+                                   "government service and has no service record. Ask for a certificate instead.")
+        return cleaned
+
+
+class CertificateRecordForm(CertificateRequestForm):
+    """HRMO records a walk-in, letter or email request, including from former employees and heirs."""
+
+    class Meta(CertificateRequestForm.Meta):
+        fields = ["kind", "purpose", "copies", "received_via", "requester", "requester_name", "contact"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["received_via"].choices = [
+            c for c in CertificateRequest.Via.choices if c[0] != CertificateRequest.Via.ONLINE
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("requester") != CertificateRequest.Requester.SELF and not cleaned.get("requester_name", "").strip():
+            self.add_error("requester_name", "Give the name of the representative or heir.")
+        if cleaned.get("requester") == CertificateRequest.Requester.SELF:
+            cleaned["requester_name"] = ""
+        return cleaned
+
+
+# --- Personal Data Sheet (DECISIONS PD1-PD7) ------------------------------------------------
+
+
+def _fake_id_check(form, field):
+    value = form.cleaned_data.get(field)
+    if value and getattr(settings, "PROTOTYPE_FAKE_DATA_ONLY", True) and not re.match(r"^00", value):
+        form.add_error(field, "Prototype accepts fake ID numbers only (must start with 00).")
+
+
+def _dates(form):
+    for field in form.fields.values():
+        if isinstance(field, forms.DateField):
+            field.widget = forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d")
+
+
+class PdsProfileSectionForm(forms.ModelForm):
+    """One part of PdsProfile, edited on its own section page, with the S2 version check."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _dates(self)
+        _bootstrap(self)
+        # An unsaved profile starts at version 1, the version its first save will find.
+        self.fields["version"].initial = self.instance.version
+
+
+class PdsPersonalForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "place_of_birth", "civil_status", "civil_status_other", "height_m", "weight_kg", "blood_type",
+            "citizenship", "dual_by", "dual_country", "res_house", "res_street", "res_subdivision", "res_barangay",
+            "res_city", "res_province", "res_zip", "perm_same", "perm_house", "perm_street", "perm_subdivision",
+            "perm_barangay", "perm_city", "perm_province", "perm_zip", "telephone",
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("civil_status") == PdsProfile.CivilStatus.OTHER and not cleaned.get("civil_status_other"):
+            self.add_error("civil_status_other", "Say what the civil status is.")
+        if cleaned.get("citizenship") == PdsProfile.Citizenship.DUAL:
+            if not cleaned.get("dual_by"):
+                self.add_error("dual_by", "By birth or by naturalization?")
+            if not cleaned.get("dual_country"):
+                self.add_error("dual_country", "Give the other country.")
+        else:
+            cleaned["dual_by"], cleaned["dual_country"] = "", ""
+        if cleaned.get("perm_same"):
+            for part in ["house", "street", "subdivision", "barangay", "city", "province", "zip"]:
+                cleaned[f"perm_{part}"] = ""
+        height, weight = cleaned.get("height_m"), cleaned.get("weight_kg")
+        if height is not None and not 0.5 <= height <= 2.5:
+            self.add_error("height_m", "Height is in meters, e.g. 1.62.")
+        if weight is not None and not 2 <= weight <= 400:
+            self.add_error("weight_kg", "Weight is in kilograms, e.g. 58.")
+        return cleaned
+
+
+class PdsFamilyForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "spouse_surname", "spouse_first_name", "spouse_middle_name", "spouse_extension", "spouse_occupation",
+            "spouse_employer", "spouse_business_address", "spouse_telephone", "father_surname", "father_first_name",
+            "father_middle_name", "father_extension", "mother_surname", "mother_first_name", "mother_middle_name",
+        ]
+
+
+class PdsOtherForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = ["skills", "distinctions", "memberships"]
+        help_texts = {f: "One per line." for f in fields}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            if isinstance(field.widget, forms.Textarea):
+                field.widget.attrs["rows"] = 4
+
+
+YES_NO = [("True", "Yes"), ("False", "No")]
+
+
+class PdsQuestionsForm(PdsProfileSectionForm):
+    """Questions 34-40, Yes or No, with details when Yes (PD2)."""
+
+    class Meta:
+        model = PdsProfile
+        fields = [
+            "q34a", "q34b", "q34_details", "q35a", "q35a_details", "q35b", "q35b_details", "q35b_date_filed",
+            "q35b_status", "q36", "q36_details", "q37", "q37_details", "q38a", "q38a_details", "q38b", "q38b_details",
+            "q39", "q39_details", "q40a", "q40a_details", "q40b", "q40b_details", "q40c", "q40c_details",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        from .pds import QUESTION_ANSWERS
+
+        super().__init__(*args, **kwargs)
+        for name in QUESTION_ANSWERS:
+            self.fields[name] = forms.NullBooleanField(
+                required=False, widget=forms.RadioSelect(choices=YES_NO, attrs={"class": "form-check-input"}),
+            )
+
+    def clean(self):
+        from .pds import QUESTIONS
+
+        cleaned = super().clean()
+        needs = {}  # details field -> answered Yes to any question it explains (34a and 34b share one)
+        for _number, _intro, items in QUESTIONS:
+            for answer, _text, details in items:
+                details = details or "q34_details"
+                needs[details] = needs.get(details, False) or cleaned.get(answer) is True
+        for details, yes in needs.items():
+            if yes and not (cleaned.get(details) or "").strip():
+                self.add_error(details, "You answered Yes: give the details.")
+        return cleaned
+
+
+class PdsGovIdForm(PdsProfileSectionForm):
+    class Meta:
+        model = PdsProfile
+        fields = ["gov_id_type", "gov_id_number", "gov_id_issued"]
+
+    def clean(self):
+        cleaned = super().clean()
+        _fake_id_check(self, "gov_id_number")
+        return cleaned
+
+
+class PdsRowForm(forms.ModelForm):
+    """One row of a PDS table; the person is set by the view."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _dates(self)
+        _bootstrap(self)
+        for field in self.fields.values():
+            if isinstance(field.widget, forms.Textarea):
+                field.widget = forms.TextInput(attrs={"class": "form-control"})
+
+
+class PdsChildForm(PdsRowForm):
+    class Meta:
+        model = PdsChild
+        fields = ["full_name", "birthdate"]
+
+
+class PdsEducationForm(PdsRowForm):
+    class Meta:
+        model = PdsEducation
+        fields = ["level", "school", "degree", "year_from", "year_to", "units_earned", "year_graduated", "honors"]
+
+    def clean(self):
+        cleaned = super().clean()
+        this_year = date.today().year
+        for name in ["year_from", "year_to", "year_graduated"]:
+            year = cleaned.get(name)
+            if year is not None and not 1940 <= year <= this_year + 6:
+                self.add_error(name, "Use a four-digit year.")
+        if cleaned.get("year_from") and cleaned.get("year_to") and cleaned["year_to"] < cleaned["year_from"]:
+            self.add_error("year_to", "Cannot be before the start year.")
+        return cleaned
+
+
+class PdsEligibilityForm(PdsRowForm):
+    class Meta:
+        model = PdsEligibility
+        fields = ["name", "rating", "exam_date", "exam_place", "license_number", "license_valid_until"]
+
+    def clean(self):
+        cleaned = super().clean()
+        _fake_id_check(self, "license_number")
+        return cleaned
+
+
+class PdsWorkForm(PdsRowForm):
+    class Meta:
+        model = PdsWorkExperience
+        fields = ["date_from", "date_to", "position", "employer", "monthly_salary", "grade_step",
+                  "appointment_status", "government"]
+
+
+class PdsVoluntaryForm(PdsRowForm):
+    class Meta:
+        model = PdsVoluntaryWork
+        fields = ["organization", "date_from", "date_to", "hours", "position"]
+
+
+class PdsTrainingForm(PdsRowForm):
+    class Meta:
+        model = PdsTraining
+        fields = ["title", "date_from", "date_to", "hours", "kind", "sponsor"]
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("date_from") and cleaned.get("date_to") and cleaned["date_to"] < cleaned["date_from"]:
+            self.add_error("date_to", "Cannot be before the start date.")
+        return cleaned
+
+
+class PdsReferenceForm(PdsRowForm):
+    class Meta:
+        model = PdsReference
+        fields = ["name", "address", "telephone"]

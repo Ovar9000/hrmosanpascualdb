@@ -1,0 +1,37 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}{{ year }} Plantilla of Personnel{% endblock %}
+{% block back %}{% url 'plantilla_report' %}?{{ qs }}{% endblock %}
+{% block page_size %}size: legal landscape;{% endblock %}
+{% block style %}
+  .pl { font-size: 8pt; }
+  .pl th { text-align: center; background: #e2efda; }
+  .pl td.office { background: #fff2cc; font-weight: bold; }
+  .pl td, .pl th { padding: 1px 3px !important; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet landscape pl">
+  <div class="text-center">Republic of the Philippines<br><strong>LOCAL GOVERNMENT UNIT OF SAN PASCUAL</strong><br>{{ year }} PLANTILLA OF PERSONNEL<br>For Fiscal Year {{ year }} · as of {{ as_of|date:"F d, Y" }}</div>
+  <table class="form-table mt-2">
+    <thead>
+      <tr><th rowspan="2">Item No.</th><th rowspan="2">Position Title</th><th rowspan="2">SG</th><th rowspan="2">Annual Salary (Actual)</th><th rowspan="2">Step</th><th colspan="3">Name of Incumbent</th><th rowspan="2">Date of Birth</th><th rowspan="2">Date of Original Appointment</th><th rowspan="2">Date of Last Promotion</th><th rowspan="2">Status</th></tr>
+      <tr><th>Last Name</th><th>First Name</th><th>Middle Name</th></tr>
+    </thead>
+    <tbody>
+      {% for off, rows, t in groups %}
+        <tr><td colspan="12" class="office">{{ off.name|upper }}</td></tr>
+        {% for r in rows %}
+          <tr>
+            <td class="text-nowrap">{{ r.item }}</td><td>{{ r.position }}</td><td class="text-center">{{ r.sg }}</td>
+            <td class="text-end">{{ r.annual|floatformat:"2g"|default:"" }}</td><td class="text-center">{{ r.step }}</td>
+            {% if r.vacant %}<td colspan="3" class="text-center fw-bold">(Vacant)</td><td></td><td></td><td></td><td></td>
+            {% else %}<td>{{ r.person.last_name }}</td><td>{{ r.person.first_name }}</td><td>{{ r.person.middle_name }}</td>
+              <td class="text-center">{{ r.person.birthdate|date:"m/d/Y" }}</td><td class="text-center">{{ r.original|date:"m/d/Y" }}</td>
+              <td class="text-center">{{ r.promoted|date:"m/d/Y"|default:"N/A" }}</td><td class="text-center">{{ r.status }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="small-print mt-1">{{ totals.filled }} filled, {{ totals.vacant }} vacant. Status: P permanent, T temporary, CO coterminous.</p>
+</div>
+{% endblock %}

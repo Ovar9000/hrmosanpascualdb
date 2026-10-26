@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}SALN {{ year }}{% endblock %}
+
+{% block content %}
+{% if not scoped %}{% include "hr/_tracker_nav.html" %}{% endif %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">SALN filing for {{ year }}{% if scoped %} · {{ office.name }}{% endif %}</h1>
+    <div class="text-muted small">Statements of Assets, Liabilities and Net Worth as of December 31, {{ year }}, due {{ deadline|date:"F j, Y" }}{% if not open %} (filing opens January 1, {{ year|add:1 }}){% endif %}. Only whether each person filed is tracked here; the SALN stays on paper with HRMO.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-primary" href="?{{ export_qs }}">Export to Excel</a>
+</div>
+
+<div class="row g-2 text-center mb-3">
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Must file</div><div class="h4 mb-0">{{ total }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Received by HRMO</div><div class="h4 mb-0 text-success">{{ counts.received }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Said they submitted</div><div class="h4 mb-0">{{ counts.reported }}</div></div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2"><div class="small text-muted">Not yet filed</div><div class="h4 mb-0 {% if counts.missing and today > deadline %}text-danger{% endif %}">{{ counts.missing }}</div></div></div></div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-6 col-md-2">
+    <label class="form-label small mb-0" for="year">Year covered</label>
+    <select class="form-select form-select-sm" name="year" id="year">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select>
+  </div>
+  {% if not scoped %}
+  <div class="col-12 col-md-5">
+    <label class="form-label small mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" name="office" id="office">
+      <option value="">All offices</option>
+      {% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  {% endif %}
+  <div class="col-6 col-md-2">
+    <label class="form-label small mb-0" for="show">Show</label>
+    <select class="form-select form-select-sm" name="show" id="show"><option value="">Everyone</option><option value="missing"{% if show == 'missing' %} selected{% endif %}>Not yet received</option></select>
+  </div>
+  <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+</form>
+
+<form method="post">{% csrf_token %}
+  <div class="card shadow-sm border-0 mb-3">
+    {% if can_manage %}
+    <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2 py-2">
+      <span class="small fw-semibold me-auto">Tick the SALNs you received</span>
+      <label class="small text-muted" for="received_on">Received on</label>
+      <input type="date" class="form-control form-control-sm w-auto" id="received_on" name="received_on" value="{{ today|date:'Y-m-d' }}">
+      <button class="btn btn-sm btn-primary">Mark received</button>
+    </div>
+    {% endif %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 small">
+        <thead class="table-light"><tr>{% if can_manage %}<th style="width: 2rem"><input type="checkbox" class="form-check-input" aria-label="Tick all shown" onclick="document.querySelectorAll('input[name=person]').forEach(function (c) { c.checked = this.checked; }, this)"></th>{% endif %}<th>Person</th><th>Office</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              {% if can_manage %}<td>{% if r.state != 'received' and r.person.pk != own_pk %}<input type="checkbox" class="form-check-input" name="person" value="{{ r.person.pk }}" aria-label="Received from {{ r.person.full_name }}">{% endif %}</td>{% endif %}
+              <td>{{ r.person.full_name }}<div class="text-muted font-monospace">{{ r.person.employee_no }}</div></td>
+              <td>{{ r.office.acronym|default:r.office.name }}</td>
+              <td>{% if r.state == 'received' %}<span class="badge text-bg-success"><span class="mk mk-check" aria-hidden="true"></span>Received {{ r.filing.received_on|date:"M d, Y" }}</span>{% if r.late %} <span class="badge text-bg-warning">Late</span>{% endif %}
+                {% elif r.state == 'reported' %}<span class="badge text-bg-info"><span class="mk mk-clock" aria-hidden="true"></span>Says submitted {{ r.filing.reported_at|date:"M d" }}</span>
+                {% else %}<span class="badge {% if today > deadline %}text-bg-danger{% else %}text-bg-light border text-muted{% endif %}">Not yet filed</span>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-center text-muted py-4">Nobody here must file.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+{% endblock %}

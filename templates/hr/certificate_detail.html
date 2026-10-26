@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ req.control_no }} · {{ req.get_kind_display }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if can_print %}{% url 'certificate_list' %}{% else %}{% url 'my_certificates' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ req.get_kind_display }}</h1>
+    <div class="text-muted small font-monospace">{{ req.control_no }}</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    {% include "hr/_certificate_status.html" %}
+    {% if can_print %}<a class="btn btn-sm btn-outline-primary" href="{% url 'certificate_print' req.pk %}?autoprint=1">Print</a>{% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4 text-muted">For</dt>
+          <dd class="col-sm-8">{% if can_print %}<a href="{% url 'person_detail' req.person.pk %}">{{ req.person.full_name }}</a>{% else %}{{ req.person.full_name }}{% endif %} <span class="text-muted font-monospace">{{ req.person.employee_no }}</span></dd>
+          <dt class="col-sm-4 text-muted">Purpose</dt><dd class="col-sm-8">{{ req.purpose }}</dd>
+          <dt class="col-sm-4 text-muted">Copies</dt><dd class="col-sm-8">{{ req.copies }}</dd>
+          <dt class="col-sm-4 text-muted">Requested by</dt>
+          <dd class="col-sm-8">{% if req.requester == "self" %}{{ req.person.full_name }}{% else %}{{ req.requester_name }} · {{ req.get_requester_display|lower }}{% endif %} · {{ req.get_received_via_display|lower }}</dd>
+          {% if req.contact %}<dt class="col-sm-4 text-muted">Contact</dt><dd class="col-sm-8">{{ req.contact }}</dd>{% endif %}
+          {% if req.note %}<dt class="col-sm-4 text-muted">{% if req.status == "declined" %}Reason{% else %}Note{% endif %}</dt><dd class="col-sm-8">{{ req.note|linebreaksbr }}</dd>{% endif %}
+        </dl>
+        {% if req.kind == "service_record" and not has_service_record and req.is_open %}
+          <div class="alert alert-warning small mt-3 mb-0">This record has no appointment that counts as government service (job order and contract of service are left off). Consider a certificate of employment instead.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if can_manage and req.is_open %}
+    <div class="card border-0 shadow-sm mt-3">
+      <div class="card-body">
+        {% if req.status == "pending" %}
+          <p class="small text-muted mb-2">Print it, check it against the 201 file, sign and seal it, then mark it ready.{% if req.contact %} Tell the requester at {{ req.contact }}.{% endif %}</p>
+          <form method="post" class="d-inline">{% csrf_token %}<input type="hidden" name="version" value="{{ req.version }}"><input type="hidden" name="action" value="ready"><button class="btn btn-success">Signed and ready for release</button></form>
+        {% else %}
+          <form method="post" class="row g-2 align-items-end">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ req.version }}"><input type="hidden" name="action" value="release">
+            <div class="col-12 col-md-5"><label class="form-label small fw-semibold" for="released_to">Received by</label>
+              <input class="form-control" id="released_to" name="released_to" maxlength="200" required value="{% if req.requester == 'self' %}{{ req.person.full_name }}{% else %}{{ req.requester_name }}{% endif %}"></div>
+            <div class="col-12 col-md-5"><label class="form-label small fw-semibold" for="release_note">ID presented / authorization letter</label>
+              <input class="form-control" id="release_note" name="note" maxlength="500" placeholder="e.g. UMID; authorization letter on file"></div>
+            <div class="col-12 col-md-2"><button class="btn btn-primary w-100">Released</button></div>
+          </form>
+          <form method="post" class="mt-2">{% csrf_token %}<input type="hidden" name="version" value="{{ req.version }}"><input type="hidden" name="action" value="reopen"><button class="btn btn-sm btn-link px-0">Not ready after all</button></form>
+        {% endif %}
+        <details class="mt-3">
+          <summary class="small text-danger">Decline this request</summary>
+          <form method="post" class="mt-2">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ req.version }}"><input type="hidden" name="action" value="decline">
+            <textarea class="form-control mb-2" name="note" rows="2" required placeholder="What the requester should do, e.g. bring an authorization letter, or ask the previous employer for that period"></textarea>
+            <button class="btn btn-sm btn-outline-danger">Decline</button>
+          </form>
+        </details>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_cancel %}
+      <form method="post" class="mt-3">{% csrf_token %}<input type="hidden" name="version" value="{{ req.version }}"><input type="hidden" name="action" value="cancel">
+        <button class="btn btn-sm btn-outline-secondary" onclick="return confirm('Cancel this request?')">Cancel request</button></form>
+    {% endif %}
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">Progress</div>
+      <ul class="list-group list-group-flush small">
+        <li class="list-group-item"><span class="mk mk-check" aria-hidden="true"></span>Asked {{ req.filed_at|date:"M d, Y g:i A" }}{% if req.filed_by and req.received_via != "online" %} <span class="text-muted">· recorded by {{ req.filed_by.get_username }}</span>{% endif %}</li>
+        <li class="list-group-item {% if not req.prepared_at %}text-muted{% endif %}">{% if req.prepared_at %}<span class="mk mk-check" aria-hidden="true"></span>Signed and ready {{ req.prepared_at|date:"M d, Y" }}{% if can_print and req.prepared_by %} <span class="text-muted">· {{ req.prepared_by.get_username }}</span>{% endif %}{% else %}<span class="mk mk-ring" aria-hidden="true"></span>Signed and ready for release{% endif %}</li>
+        <li class="list-group-item {% if not req.released_at %}text-muted{% endif %}">{% if req.released_at %}<span class="mk mk-check" aria-hidden="true"></span>Released to {{ req.released_to }} on {{ req.released_at|date:"M d, Y" }}{% else %}<span class="mk mk-ring" aria-hidden="true"></span>Released{% endif %}</li>
+      </ul>
+    </div>
+    {% if not can_print and req.status == "ready" %}
+      <div class="alert alert-success small mt-3">Ready. Pick it up at the HRMO with a valid ID, or send someone with your authorization letter and their ID.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

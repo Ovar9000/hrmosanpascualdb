@@ -48,11 +48,21 @@ def current_meetings(today):
     ).select_related("series", "series__office")
 
 
-def needs_attention(today):
-    """True when a current-period meeting is neither held nor excused and its period ends soon."""
+def _overdue_soon(today):
+    """Current-period meetings neither held nor excused whose period ends soon."""
     ensure_meetings(today)
     return Meeting.objects.filter(
         series__is_active=True, period_start__lte=today, period_end__gte=today,
         period_end__lte=today + timedelta(days=ATTENTION_DAYS),
         held_on__isnull=True, not_held_reason="",
-    ).exists()
+    )
+
+
+def needs_attention(today):
+    """True when a current-period meeting is neither held nor excused and its period ends soon."""
+    return _overdue_soon(today).exists()
+
+
+def attention_count(today):
+    """How many meetings needs_attention() is about, for the home page."""
+    return _overdue_soon(today).count()

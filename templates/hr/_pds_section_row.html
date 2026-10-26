@@ -1,0 +1,8 @@
+<span>{{ s.title }}</span>
+<span class="d-flex gap-1 flex-shrink-0">
+  {% if s.key in changed %}<span class="badge text-bg-warning">Changed</span>{% endif %}
+  {% if s.required and s.done %}<span class="badge text-bg-success"><span class="mk mk-check" aria-hidden="true"></span>Done</span>
+  {% elif s.required %}<span class="badge text-bg-danger">To fill in</span>
+  {% elif s.count %}<span class="badge text-bg-light border">{{ s.count }} entr{{ s.count|pluralize:"y,ies" }}</span>
+  {% else %}<span class="badge text-bg-light border text-muted">If any</span>{% endif %}
+</span>

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Licences and eligibility{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-0">Licences and eligibility</h1>
+    <div class="text-muted small">From the eligibility section of each Personal Data Sheet, for people in active service. Licences that expired or expire within {{ window }} days are listed first; search to find who holds an eligibility.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-primary" href="?{{ export_qs }}">Export to Excel</a>
+</div>
+
+{% if expired %}<div class="alert alert-warning py-2 small"><span class="mk mk-warn" aria-hidden="true"></span>{{ expired }} licence{{ expired|pluralize }} expired. Ask the employee to renew and update their PDS.</div>{% endif %}
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-12 col-md-4">
+    <label class="form-label small mb-0" for="q">Eligibility or license no.</label>
+    <input class="form-control form-control-sm" type="search" name="q" id="q" value="{{ query }}" placeholder="e.g. Professional, Nurse, RA 1080">
+  </div>
+  <div class="col-12 col-md-4">
+    <label class="form-label small mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" name="office" id="office">
+      <option value="">All offices</option>
+      {% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <label class="form-label small mb-0" for="show">Show</label>
+    <select class="form-select form-select-sm" name="show" id="show"{% if query %} disabled{% endif %}>
+      <option value="">Needs attention</option>
+      <option value="all"{% if show == 'all' %} selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+  {% if office or query or show == 'all' %}<div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="?">Clear</a></div>{% endif %}
+</form>
+
+<div class="card shadow-sm border-0 mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 small">
+      <thead class="table-light"><tr><th>Person</th><th>Office</th><th>Eligibility</th><th>License no.</th><th>Valid until</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr{% if r.state == 'expired' %} class="table-danger"{% elif r.state == 'soon' %} class="table-warning"{% endif %}>
+            <td><a href="{% url 'pds_overview' r.person.pk %}" class="fw-semibold text-decoration-none">{{ r.person.full_name }}</a>
+              <div class="text-muted">{% if r.verified %}<span class="mk mk-check" aria-hidden="true"></span>PDS verified{% else %}PDS not yet verified{% endif %}</div></td>
+            <td>{{ r.office.acronym|default:r.office.name|default:"—" }}</td>
+            <td>{{ r.elig.name }}{% if r.elig.rating %}<div class="text-muted">Rating {{ r.elig.rating }}</div>{% endif %}</td>
+            <td class="font-monospace">{{ r.elig.license_number|default:"—" }}</td>
+            <td>{% if r.elig.license_valid_until %}{{ r.elig.license_valid_until|date:"M d, Y" }}
+              {% if r.state == 'expired' %}<div class="fw-semibold">Expired {{ r.ago }} day{{ r.ago|pluralize }} ago</div>
+              {% elif r.state == 'soon' %}<div>in {{ r.days }} day{{ r.days|pluralize }}</div>{% endif %}
+            {% else %}<span class="text-muted">No expiry</span>{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">{% if query %}Nobody in active service lists that eligibility.{% else %}No licence expires in the next {{ window }} days.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

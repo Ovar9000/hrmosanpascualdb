@@ -3,6 +3,7 @@
 Idempotent: safe to run repeatedly.
 """
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from hr.audit import disable_audit
 from hr.models import Office
@@ -59,6 +60,7 @@ OFFICES_DATA = [
         "location": "Municipal Hall, 2nd Floor",
         "contact": "admin@sanpascual.gov.ph",
         "parent_name": "Office of the Municipal Mayor",
+        "coterminous": True,
     },
     {
         "name": "Office of the Municipal Human Resources and Management Officer (HRMO)",
@@ -68,7 +70,7 @@ OFFICES_DATA = [
         "head_title": "Municipal HRMO",
         "location": "Municipal Hall, Ground Floor",
         "contact": "hrmo@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Municipal Civil Registrar",
@@ -78,7 +80,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Civil Registrar",
         "location": "Municipal Hall, Ground Floor",
         "contact": "mcr@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Treasurer",
@@ -88,7 +90,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Treasurer",
         "location": "Municipal Hall, Ground Floor, Treasury Wing",
         "contact": "treasury@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Business Permits and Licensing Office",
@@ -98,7 +100,7 @@ OFFICES_DATA = [
         "head_title": "BPLO Head",
         "location": "Municipal Hall, Ground Floor",
         "contact": "bplo@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Budget Officer",
@@ -108,7 +110,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Budget Officer",
         "location": "Municipal Hall, 2nd Floor",
         "contact": "budget@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Accountant",
@@ -118,7 +120,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Accountant",
         "location": "Municipal Hall, 2nd Floor",
         "contact": "accounting@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Assessor",
@@ -128,7 +130,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Assessor",
         "location": "Municipal Hall, Ground Floor",
         "contact": "assessor@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Planning and Development Coordinator",
@@ -138,7 +140,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Planning and Development Coordinator",
         "location": "Municipal Hall, 2nd Floor",
         "contact": "mpdc@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Engineer",
@@ -148,7 +150,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Engineer",
         "location": "Engineering Building, Ground Floor",
         "contact": "engineering@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Agriculturist",
@@ -158,7 +160,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Agriculturist",
         "location": "Agriculture & Livelihood Center",
         "contact": "agriculture@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Environment and Natural Resources Officer",
@@ -168,7 +170,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Environment and Natural Resources Officer",
         "location": "Municipal Compound, MENRO Building",
         "contact": "menro@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Municipal Tourism Office",
@@ -178,7 +180,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Tourism Officer",
         "location": "Municipal Hall, Ground Floor",
         "contact": "tourism@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Municipal Disaster Risk Reduction and Management Office (MDRRMO)",
@@ -188,7 +190,7 @@ OFFICES_DATA = [
         "head_title": "MDRRM Officer",
         "location": "MDRRMO Operations Center, Poblacion",
         "contact": "mdrrmo@sanpascual.gov.ph / 911-SANPASCUAL",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Municipal Social Welfare and Development Office (MSWDO)",
@@ -198,7 +200,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Social Welfare and Development Officer",
         "location": "Social Services Center, Ground Floor",
         "contact": "mswdo@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Health Officer",
@@ -208,7 +210,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Health Officer",
         "location": "Rural Health Unit (RHU) Main Building",
         "contact": "mho@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     # Special offices
     {
@@ -219,7 +221,7 @@ OFFICES_DATA = [
         "head_title": "PDAO Officer",
         "location": "Social Services Center, 1st Floor",
         "contact": "pdao@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Public Employment Service Manager",
@@ -229,7 +231,7 @@ OFFICES_DATA = [
         "head_title": "PESO Manager",
         "location": "Municipal Hall, Ground Floor",
         "contact": "peso@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Youth Development Officer",
@@ -239,7 +241,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Youth Development Officer",
         "location": "Municipal Hall, 2nd Floor",
         "contact": "youth@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     {
         "name": "Office of the Municipal Population Officer",
@@ -249,7 +251,7 @@ OFFICES_DATA = [
         "head_title": "Municipal Population Officer",
         "location": "Municipal Hall, Ground Floor",
         "contact": "population@sanpascual.gov.ph",
-        "parent_name": "Office of the Municipal Mayor",
+        "parent_name": None,  # department: under the municipality, beside the Mayor's Office (O7)
     },
     # Institution
     {
@@ -283,6 +285,7 @@ class Command(BaseCommand):
                         "branch": item["branch"],
                         "type": item["type"],
                         "head_title": item["head_title"],
+                        "coterminous": item.get("coterminous", False),
                         "location": item["location"],
                         "contact": item["contact"],
                     },
@@ -292,16 +295,17 @@ class Command(BaseCommand):
                 else:
                     updated_count += 1
 
-            # Second pass: wire up parent foreign keys
+            # Second pass: wire up parent foreign keys (and clear them for top-level offices)
             for item in OFFICES_DATA:
-                if item["parent_name"]:
-                    parent = Office.objects.filter(name=item["parent_name"]).first()
-                    if parent:
-                        child_office = Office.objects.filter(name=item["name"]).first()
-                        if child_office and child_office.parent != parent:
-                            child_office.parent = parent
-                            child_office.save()
+                parent = Office.objects.filter(name=item["parent_name"]).first() if item["parent_name"] else None
+                if item["parent_name"] and parent is None:
+                    continue
+                child_office = Office.objects.filter(name=item["name"]).first()
+                if child_office and child_office.parent != parent:
+                    child_office.parent = parent
+                    child_office.save()
 
+            call_command("seed_structure", stdout=self.stdout)
             total = Office.objects.count()
             self.stdout.write(
                 self.style.SUCCESS(

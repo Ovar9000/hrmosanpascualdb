@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Leave approvals{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-1">Leave waiting for you</h1>
+<p class="text-muted small">Applications whose next signature is yours, earliest leave first. Open one to recommend, certify or approve it.</p>
+
+<div class="card shadow-sm border-0">
+  <div class="list-group list-group-flush">
+    {% for req, step, clashes in rows %}
+      <a href="{% url 'leave_detail' req.pk %}" class="list-group-item list-group-item-action">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+          <div>
+            <div class="fw-semibold">{{ req.person.full_name }} · {{ req.type_label }}, {{ req.days|floatformat:"-1" }} day{{ req.days|pluralize }}</div>
+            <div class="small text-muted">{{ req.start_date|date:"D, M d" }}{% if req.end_date != req.start_date %} – {{ req.end_date|date:"D, M d" }}{% endif %} · {{ req.office.name|default:"" }} · filed {{ req.filed_at|date:"M d" }}</div>
+            {% if clashes %}<div class="small text-warning-emphasis">Also away from this office then: {% for c in clashes %}{{ c.person.last_name }}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+          </div>
+          <div class="text-end">
+            <span class="badge text-bg-warning">{{ step.get_kind_display }}</span>
+            {% if req.start_date <= today %}<div class="small text-danger">starts {% if req.start_date == today %}today{% else %}already{% endif %}</div>{% endif %}
+          </div>
+        </div>
+      </a>
+    {% empty %}
+      <div class="list-group-item text-muted">Nothing is waiting for you.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

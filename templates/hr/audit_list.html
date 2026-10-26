@@ -13,16 +13,16 @@
       {% elif verification.is_valid %}
         {% if verification.anchor_status == "verified" %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Anchor verified ({{ verification.record_count }} records intact, tamper-evident)
+            <span class="mk mk-check" aria-hidden="true"></span>Anchor verified ({{ verification.record_count }} records intact, tamper-evident)
           </span>
         {% else %}
           <span class="badge bg-success-subtle text-success border border-success-subtle">
-            ✓ Chain consistent ({{ verification.record_count }} records intact)
+            <span class="mk mk-check" aria-hidden="true"></span>Chain consistent ({{ verification.record_count }} records intact)
           </span>
         {% endif %}
       {% else %}
         <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-          ⚠ Chain verification unconfirmed (failed at record #{{ verification.broken_id|default:"?" }})
+          <span class="mk mk-warn" aria-hidden="true"></span>Chain verification unconfirmed (failed at record #{{ verification.broken_id|default:"?" }})
         </span>
       {% endif %}
       <span class="text-muted small">Immutable append-only audit trail (DECISIONS U1-U6).</span>
@@ -47,11 +47,11 @@
              placeholder="Anchor ID:HASH (optional)" aria-label="Anchor ID:HASH (optional)">
       <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap"
               title="Full scan of the hash chain from the first record. At most once per minute.">
-        🔄 Re-verify all
+        Re-verify all
       </button>
     </form>
     <a href="{% url 'audit_export_csv' %}" class="btn btn-outline-success btn-sm">
-      📥 Export Audit Log (CSV)
+      Export audit log (CSV)
     </a>
   </div>
 </div>
@@ -60,6 +60,7 @@
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-body p-3">
     <form method="get" class="row g-2 align-items-end">
+      {% if grouped %}<input type="hidden" name="view" value="grouped">{% endif %}
       <div class="col-12 col-md-3">
         <label class="form-label small text-muted mb-1">Search Keywords</label>
         <input type="text" name="q" value="{{ query }}" class="form-control form-control-sm" placeholder="User, description, target...">
@@ -93,7 +94,7 @@
       <div class="col-12 col-md-1 d-flex gap-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
         {% if query or selected_action or selected_user or start_date or end_date %}
-          <a href="{% url 'audit_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">✕</a>
+          <a href="{% url 'audit_list' %}{% if grouped %}?view=grouped{% endif %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">Clear</a>
         {% endif %}
       </div>
     </form>
@@ -101,11 +102,67 @@
 </div>
 
 <!-- Audit Log Table -->
+<style>
+  .audit-group-toggle .when-closed { display: none; }
+  .audit-group-toggle.collapsed .when-closed { display: inline; }
+  .audit-group-toggle.collapsed .when-open { display: none; }
+</style>
 <div class="card shadow-sm border-0 mb-3">
-  <div class="card-header bg-white fw-bold py-2 d-flex justify-content-between align-items-center">
+  <div class="card-header bg-white fw-bold py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
     <span>Audit Records</span>
-    <span class="small text-muted">{{ page_obj.paginator.count }} event(s) logged</span>
+    <div class="d-flex align-items-center gap-3">
+      <div class="btn-group btn-group-sm" role="group" aria-label="Arrange records">
+        <a href="?{{ filter_query }}" class="btn btn-outline-secondary{% if not grouped %} active{% endif %}"
+           {% if not grouped %}aria-current="true"{% endif %}>Chronological</a>
+        <a href="?view=grouped{% if filter_query %}&{{ filter_query }}{% endif %}"
+           class="btn btn-outline-secondary{% if grouped %} active{% endif %}"
+           {% if grouped %}aria-current="true"{% endif %}>Grouped by user</a>
+      </div>
+      <span class="small text-muted fw-normal">{{ page_obj.paginator.count }} event(s) logged</span>
+    </div>
   </div>
+
+  {% if grouped %}
+    {% for group in groups %}
+      <div class="border-bottom">
+        <button type="button" class="audit-group-toggle btn w-100 text-start rounded-0 bg-light px-3 py-2 d-flex flex-wrap align-items-center gap-2"
+                data-bs-toggle="collapse" data-bs-target="#audit-group-{{ forloop.counter }}"
+                aria-expanded="true" aria-controls="audit-group-{{ forloop.counter }}">
+          <span class="fw-bold">{{ group.username|default:"System / Anonymous" }}</span>
+          {% if group.office_name %}<span class="text-muted small">{{ group.office_name }}</span>{% endif %}
+          <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">
+            {{ group.total }} event{{ group.total|pluralize }}{% if group.rows|length != group.total %}, {{ group.rows|length }} on this page{% endif %}
+          </span>
+          <span class="font-monospace text-muted small ms-md-auto">
+            {{ group.earliest|date:"Y-m-d H:i:s" }}{% if group.earliest != group.latest %} – {{ group.latest|date:"Y-m-d H:i:s" }}{% endif %}
+          </span>
+          <span class="small text-primary"><span class="when-open">Hide</span><span class="when-closed">Show</span></span>
+        </button>
+        <div class="collapse show" id="audit-group-{{ forloop.counter }}">
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+              <thead class="table-light">
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Action</th>
+                  <th>Target Entity</th>
+                  <th>Changes / Diffs</th>
+                  <th>IP Address</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for log in group.rows %}
+                  {% include "hr/_audit_row.html" with hide_user=True %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    {% empty %}
+      <div class="text-center py-4 text-muted small">No audit records found matching criteria.</div>
+    {% endfor %}
+  {% else %}
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 small">
       <thead class="table-light">
@@ -120,54 +177,7 @@
       </thead>
       <tbody>
         {% for log in page_obj %}
-          <tr>
-            <td class="text-nowrap font-monospace text-muted">
-              {{ log.timestamp|date:"Y-m-d H:i:s" }}
-            </td>
-            <td>
-              <div class="fw-bold">{{ log.username|default:"System / Anonymous" }}</div>
-              {% if log.office_name %}
-                <div class="text-muted small">{{ log.office_name }}</div>
-              {% endif %}
-            </td>
-            <td>
-              <span class="badge 
-                {% if log.action == 'create' %}bg-success
-                {% elif log.action == 'update' %}bg-primary
-                {% elif log.action == 'delete' %}bg-danger
-                {% elif log.action == 'view' %}bg-info text-dark
-                {% elif log.action == 'export' %}bg-warning text-dark
-                {% elif log.action == 'login' %}bg-success
-                {% elif log.action == 'logout' %}bg-secondary
-                {% elif log.action == 'failed_login' or log.action == 'lockout' or log.action == 'permission_denied' %}bg-danger
-                {% elif log.action == 'group_change' or log.action == 'password_reset' %}bg-dark
-                {% else %}bg-secondary{% endif %}">
-                {{ log.get_action_display }}
-              </span>
-            </td>
-            <td>
-              {% if log.model_name %}
-                <span class="badge bg-light text-dark border">{{ log.model_name }}</span>
-              {% endif %}
-              <span class="ms-1">{{ log.object_repr|default:"—" }}</span>
-            </td>
-            <td class="font-monospace" style="max-width: 320px; word-break: break-all;">
-              {% if log.changes %}
-                <details>
-                  <summary class="text-primary small" role="button">View details</summary>
-                  <pre class="bg-light p-2 rounded mb-0 mt-1 small" style="white-space: pre-wrap;">{{ log.changes|pprint }}</pre>
-                </details>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-            <td class="text-nowrap font-monospace text-muted">
-              <div>{{ log.ip_address|default:"—" }}</div>
-              {% if log.request_id %}
-                <div class="small text-muted" title="Request ID: {{ log.request_id }}">req: {{ log.request_id|slice:":8" }}...</div>
-              {% endif %}
-            </td>
-          </tr>
+          {% include "hr/_audit_row.html" %}
         {% empty %}
           <tr>
             <td colspan="6" class="text-center py-4 text-muted">
@@ -178,6 +188,7 @@
       </tbody>
     </table>
   </div>
+  {% endif %}
 
   <!-- Pagination -->
   {% if page_obj.has_other_pages %}
@@ -188,7 +199,7 @@
     <ul class="pagination pagination-sm mb-0">
       {% if page_obj.has_previous %}
         <li class="page-item">
-          <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if selected_action %}&action={{ selected_action }}{% endif %}{% if selected_user %}&user={{ selected_user }}{% endif %}">Previous</a>
+          <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if page_query %}&{{ page_query }}{% endif %}">Previous</a>
         </li>
       {% else %}
         <li class="page-item disabled"><span class="page-link">Previous</span></li>
@@ -198,7 +209,7 @@
 
       {% if page_obj.has_next %}
         <li class="page-item">
-          <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if selected_action %}&action={{ selected_action }}{% endif %}{% if selected_user %}&user={{ selected_user }}{% endif %}">Next</a>
+          <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if page_query %}&{{ page_query }}{% endif %}">Next</a>
         </li>
       {% else %}
         <li class="page-item disabled"><span class="page-link">Next</span></li>

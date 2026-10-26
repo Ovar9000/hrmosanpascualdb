@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Post monthly leave credits{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'leave_register' %}" class="btn btn-sm btn-outline-secondary">← Leave register</a></div>
+<h1 class="h3 mb-1">Post monthly leave credits</h1>
+<p class="text-muted small">Adds {{ earning }} days of vacation leave and {{ earning }} days of sick leave for the month to everyone with an active leave-eligible appointment. Each person gets each month once, so pressing it twice changes nothing. Adjust a person's month on their leave card (for example leave without pay).</p>
+
+<form method="get" class="d-flex gap-2 align-items-end mb-3">
+  <div><label class="form-label small mb-0" for="month">Month</label>
+    <select class="form-select form-select-sm" id="month" name="month" onchange="this.form.submit()">
+      {% for m in choices %}<option value="{{ m|date:'Y-m' }}"{% if m == month %} selected{% endif %}>{{ m|date:"F Y" }}</option>{% endfor %}
+    </select></div>
+  <noscript><button class="btn btn-sm btn-outline-secondary">Show</button></noscript>
+</form>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body">
+    {% if count %}
+      <p><strong>{{ count }}</strong> people still need {{ month|date:"F Y" }}{% if already %} ({{ already }} already have it){% endif %}.</p>
+      <ul class="small" style="columns: 2">{% for p in preview %}<li>{{ p.full_name }}</li>{% endfor %}{% if count > preview|length %}<li class="text-muted">and {{ count|add:"-30" }} more</li>{% endif %}</ul>
+      <form method="post">{% csrf_token %}<input type="hidden" name="month" value="{{ month|date:'Y-m' }}">
+        <button class="btn btn-primary" onclick="return confirm('Post {{ month|date:"F Y" }} credits to {{ count }} people?')">Post {{ month|date:"F Y" }}</button></form>
+    {% else %}
+      <p class="mb-0 text-success">Everyone already has {{ month|date:"F Y" }}.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

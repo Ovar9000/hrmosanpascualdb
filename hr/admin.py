@@ -3,26 +3,36 @@ from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin, UserAdmin as
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import PermissionDenied
 from .models import (
+    Applicant,
     AuditLog,
     Delegate,
     Document,
     Engagement,
+    LeaveApprovalStep,
     LeaveCredit,
     LeaveRequest,
+    Memo,
+    MemoAcknowledgment,
     Office,
+    OrgUnit,
+    StructurePosition,
     Person,
     Project,
     UserProfile,
+    Vacancy,
 )
 
 from .accounts import require_password_change
-from .permissions import PROTECTED_ROLES
+from .permissions import PROTECTED_ROLES, hr_access_accounts
 
 
 class CustomUserAdmin(BaseUserAdmin):
     """Custom User admin preventing privilege escalation by System Admin (DECISIONS R2/R5).
 
-    - Non-superusers cannot view, edit, or delete emergency superusers or users in protected roles.
+    - Non-superusers cannot view, edit, delete or reset the password of any account that reaches
+      HR records (hr_access_accounts): superusers, protected roles, employee self-service accounts,
+      delegates and accounts with direct HR permissions. Otherwise a password reset would let
+      System Admin log in as that person.
     - Non-superusers cannot assign protected roles (groups) or direct HR permissions.
     - Non-superusers cannot escalate privileges via is_superuser.
     - A password set by an admin for someone else is one-time: the user must change it at
@@ -32,24 +42,25 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if not request.user.is_superuser:
-            # Hide superusers and members of protected roles from non-superusers
-            qs = qs.filter(is_superuser=False).exclude(groups__name__in=PROTECTED_ROLES)
+            qs = qs.exclude(pk__in=hr_access_accounts(User.objects.all()).values("pk"))
         return qs
+
+    @staticmethod
+    def _reaches_hr(obj):
+        return hr_access_accounts(User.objects.filter(pk=obj.pk)).exists()
 
     def has_change_permission(self, request, obj=None):
         if not super().has_change_permission(request, obj):
             return False
-        if obj and not request.user.is_superuser:
-            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
-                return False
+        if obj and not request.user.is_superuser and self._reaches_hr(obj):
+            return False
         return True
 
     def has_delete_permission(self, request, obj=None):
         if not super().has_delete_permission(request, obj):
             return False
-        if obj and not request.user.is_superuser:
-            if obj.is_superuser or obj.groups.filter(name__in=PROTECTED_ROLES).exists():
-                return False
+        if obj and not request.user.is_superuser and self._reaches_hr(obj):
+            return False
         return True
 
     def formfield_for_manytomany(self, db_field, request, **kwargs):
@@ -138,9 +149,22 @@ class SuperuserOnlyAdmin(admin.ModelAdmin):
 
 @admin.register(Office)
 class OfficeAdmin(SuperuserOnlyAdmin):
-    list_display = ("name", "acronym", "branch", "type", "parent", "head_title")
-    list_filter = ("branch", "type")
+    list_display = ("name", "acronym", "branch", "type", "parent", "coterminous", "head_title")
+    list_filter = ("branch", "type", "coterminous")
     search_fields = ("name", "acronym", "head_title")
+
+
+@admin.register(OrgUnit)
+class OrgUnitAdmin(SuperuserOnlyAdmin):
+    list_display = ("name", "office", "kind", "parent", "beside_head", "order")
+    list_filter = ("office", "kind")
+
+
+@admin.register(StructurePosition)
+class StructurePositionAdmin(SuperuserOnlyAdmin):
+    list_display = ("title", "salary_grade", "status", "office", "unit", "beside_head", "coterminous", "order")
+    list_filter = ("office", "status")
+    search_fields = ("title",)
 
 
 class EngagementInline(admin.TabularInline):
@@ -189,6 +213,33 @@ class LeaveRequestAdmin(SuperuserOnlyAdmin):
     list_display = ("person", "leave_type", "start_date", "end_date", "days", "status", "approver")
     list_filter = ("leave_type", "status")
     search_fields = ("person__last_name", "person__first_name")
+
+
+@admin.register(LeaveApprovalStep)
+class LeaveApprovalStepAdmin(SuperuserOnlyAdmin):
+    list_display = ("request", "order", "kind", "status", "acted_by", "acted_at", "from_paper")
+    list_filter = ("kind", "status")
+
+
+@admin.register(Vacancy)
+class VacancyAdmin(SuperuserOnlyAdmin):
+    list_display = ("position_title", "item_number", "office", "status", "deadline")
+    list_filter = ("status", "office")
+
+
+@admin.register(Applicant)
+class ApplicantAdmin(SuperuserOnlyAdmin):
+    list_display = ("last_name", "first_name", "vacancy", "signified_on", "meets_qs", "rank")
+
+
+@admin.register(Memo)
+class MemoAdmin(SuperuserOnlyAdmin):
+    list_display = ("number", "subject", "dated", "audience", "is_published")
+
+
+@admin.register(MemoAcknowledgment)
+class MemoAcknowledgmentAdmin(SuperuserOnlyAdmin):
+    list_display = ("memo", "person", "acknowledged_at", "from_paper")
 
 
 @admin.register(LeaveCredit)

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Plantilla of Personnel {{ year }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ year }} Plantilla of Personnel</h1>
+    <div class="text-muted small">Active plantilla appointments by item number, with vacant items from Vacancies. As of {{ as_of|date:"F d, Y" }}. Salaries are the actual rates recorded on each appointment.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}{% if qs %}&{% endif %}export=xlsx">Excel</a>
+    <a class="btn btn-sm btn-primary" href="?{{ qs }}{% if qs %}&{% endif %}print=1">Print</a>
+  </div>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+</form>
+
+<div class="row g-2 mb-3 text-center small">
+  <div class="col-4 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ totals.filled }}</div>filled items</div></div></div>
+  <div class="col-4 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0 {% if totals.vacant %}text-danger{% endif %}">{{ totals.vacant }}</div>vacant items</div></div></div>
+  <div class="col-4 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">₱{{ totals.annual|floatformat:"2g" }}</div>annual salaries</div></div></div>
+</div>
+
+{% for off, rows, t in groups %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-warning-subtle fw-bold py-2 d-flex justify-content-between"><span>{{ off.name|upper }}</span><span class="small fw-normal">{{ t.filled }} filled{% if t.vacant %} · <span class="text-danger">{{ t.vacant }} vacant</span>{% endif %}</span></div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 small align-middle">
+      <thead class="table-light"><tr><th>Item no.</th><th>Position title</th><th class="text-center">SG</th><th class="text-end">Annual salary</th><th class="text-center">Step</th><th>Name of incumbent</th><th>Date of birth</th><th>Original appointment</th><th>Last promotion</th><th class="text-center">Status</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr{% if r.vacant %} class="table-danger"{% endif %}>
+            <td class="text-nowrap font-monospace">{{ r.item }}</td>
+            <td>{{ r.position }}</td>
+            <td class="text-center">{{ r.sg }}</td>
+            <td class="text-end font-monospace">{% if r.annual %}{{ r.annual|floatformat:"2g" }}{% else %}—{% endif %}</td>
+            <td class="text-center">{{ r.step }}</td>
+            {% if r.vacant %}
+              <td colspan="4"><a href="{% url 'vacancy_detail' r.vacancy.pk %}">(Vacant)</a> <span class="text-muted">· {{ r.vacancy.get_status_display }}</span></td><td></td>
+            {% else %}
+              <td><a href="{% url 'person_detail' r.person.pk %}" class="text-decoration-none">{{ r.person.last_name }}, {{ r.person.first_name }} {{ r.person.middle_name }}</a></td>
+              <td class="text-nowrap">{{ r.person.birthdate|date:"m/d/Y" }}</td>
+              <td class="text-nowrap">{{ r.original|date:"m/d/Y" }}</td>
+              <td class="text-nowrap">{{ r.promoted|date:"m/d/Y"|default:"N/A" }}</td>
+              <td class="text-center">{% if r.status %}<span title="{{ r.status_label }}">{{ r.status }}</span>{% else %}<span class="text-muted" title="Set the appointment status on the appointment">?</span>{% endif %}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% empty %}
+<div class="card card-body border-0 shadow-sm text-muted">No plantilla appointments.</div>
+{% endfor %}
+{% endblock %}
