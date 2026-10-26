@@ -12,7 +12,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, Max, Min, Q, Sum, When
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -2148,6 +2148,32 @@ def _parse_date_param(value):
         return None
 
 
+def _audit_groups(rows, qs):
+    """Splits a page of audit rows into runs by username, each with its totals over the filtered set `qs`.
+
+    A person's events can continue on the next page, so the count and time range in each group
+    header come from the whole filtered set, not just the rows shown.
+    """
+    groups = []
+    for row in rows:
+        if not groups or groups[-1]["username"] != row.username:
+            groups.append({"username": row.username, "office_name": "", "rows": []})
+        groups[-1]["rows"].append(row)
+        # Rows are newest first, so this is the office of the person's latest event that has one.
+        groups[-1]["office_name"] = groups[-1]["office_name"] or row.office_name
+
+    totals = (
+        qs.order_by()
+        .filter(username__in=[g["username"] for g in groups])
+        .values("username")
+        .annotate(total=Count("id"), earliest=Min("timestamp"), latest=Max("timestamp"))
+    )
+    by_username = {t["username"]: t for t in totals}
+    for group in groups:
+        group.update(by_username.get(group["username"], {}))
+    return groups
+
+
 @login_required
 def audit_list(request):
     """Auditor-only searchable audit trail (DECISIONS U1-U6)."""
@@ -2180,9 +2206,22 @@ def audit_list(request):
     if end:
         qs = qs.filter(timestamp__date__lte=end)
 
+    grouped = request.GET.get("view") == "grouped"
+    if grouped:
+        # The whole filtered set is ordered by who acted, so a person's events stay together across
+        # pages instead of being split by whoever else worked at the same time. System / Anonymous last.
+        qs = qs.order_by(Case(When(username="", then=1), default=0), "username", "-timestamp", "-id")
+
     paginator = Paginator(qs, 50)
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
+
+    # Paging links keep the filters and the mode; the mode toggle keeps the filters and starts at page 1.
+    params = request.GET.copy()
+    params.pop("page", None)
+    page_query = params.urlencode()
+    params.pop("view", None)
+    filter_query = params.urlencode()
 
     # Show the stored result of the last full scan; never verify the chain on page load.
     verification = AuditChainStatus.objects.filter(pk=1).first()
@@ -2195,6 +2234,10 @@ def audit_list(request):
         "hr/audit_list.html",
         {
             "page_obj": page_obj,
+            "grouped": grouped,
+            "groups": _audit_groups(page_obj, qs) if grouped else [],
+            "page_query": page_query,
+            "filter_query": filter_query,
             "query": query,
             "selected_action": action,
             "selected_user": user_filter,

@@ -9,6 +9,16 @@ The version in every page footer is `MAJOR.MINOR.PATCH` from the `VERSION` file 
 Bump `VERSION`, add a section here, and tag the commit (`git tag v1.2.0`) in the same release. Hover over the
 version in the footer to see the exact commit that is running.
 
+## Unreleased (next minor, 1.2.0)
+
+Added:
+- The audit trail can be grouped by the person who acted (`/audit/?view=grouped`): one collapsible section
+  per user, with their office, event count and time range, so events from people working at the same time
+  no longer interleave. Filters and paging work in both views; the CSV export stays chronological (U1-U6).
+
+Fixed:
+- Paging through the audit trail dropped the From/To date filters.
+
 ## 1.1.1 (October 2026)
 
 Fixed:

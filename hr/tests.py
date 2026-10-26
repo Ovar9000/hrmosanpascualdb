@@ -5997,3 +5997,111 @@ class HrmoOwnRecordTestCase(TestCase):
         self.client.post(f"/pds/review/{sub.pk}/", {"action": "verify", "version": sub.version})
         sub.refresh_from_db()
         self.assertEqual((sub.status, sub.reviewed_by), ("verified", self.hrmo2))
+
+
+class AuditGroupedViewTestCase(TestCase):
+    """/audit/?view=grouped groups the filtered records by who acted; the flat list stays the default."""
+
+    def setUp(self):
+        call_command("seed_offices")
+        call_command("setup_roles")
+        User = get_user_model()
+        self.auditor = User.objects.create_user("aud_grp", password="Password123!")
+        self.auditor.groups.add(Group.objects.get(name=ROLE_AUDITOR))
+        self.hrmo = User.objects.create_user("hrmo_grp", password="Password123!")
+        self.hrmo.groups.add(Group.objects.get(name=ROLE_HRMO))
+        self.office = Office.objects.get(name="Office of the Municipal Mayor")
+
+    def _log(self, username, n, action=AuditLog.Action.VIEW):
+        return log_audit_event(action=action, model_name="Person", object_repr=f"GRP-{n}",
+                               username=username, office=self.office if username else None)
+
+    def _interleave(self, count):
+        # Two people working at once, plus an unattributed system event.
+        for n in range(count):
+            self._log("zeta", n)
+            self._log("alpha", n)
+        self._log(None, "sys")
+
+    def test_flat_mode_is_default_and_chronological(self):
+        self._interleave(3)
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/?q=GRP-")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context["grouped"])
+        self.assertEqual(resp.context["groups"], [])
+        rows = list(resp.context["page_obj"])
+        self.assertEqual(len(rows), 7)
+        self.assertEqual([r.id for r in rows], sorted((r.id for r in rows), reverse=True))
+        self.assertContains(resp, "?view=grouped&q=GRP-")
+
+    def test_grouped_mode_groups_by_user_with_system_last(self):
+        self._interleave(3)
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/?view=grouped&q=GRP-")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["grouped"])
+        groups = resp.context["groups"]
+        self.assertEqual([g["username"] for g in groups], ["alpha", "zeta", ""])
+        self.assertEqual([g["total"] for g in groups], [3, 3, 1])
+        alpha = groups[0]
+        self.assertEqual([r.object_repr for r in alpha["rows"]], ["GRP-2", "GRP-1", "GRP-0"])
+        self.assertEqual(alpha["office_name"], self.office.name)
+        self.assertLessEqual(alpha["earliest"], alpha["latest"])
+        self.assertContains(resp, "System / Anonymous")
+        self.assertContains(resp, 'data-bs-toggle="collapse"')
+        self.assertContains(resp, 'id="audit-group-3"')
+        self.assertContains(resp, '<input type="hidden" name="view" value="grouped">', html=True)
+
+    def test_grouped_mode_keeps_filters(self):
+        self._interleave(2)
+        self._log("alpha", "upd", action=AuditLog.Action.UPDATE)
+        self.client.force_login(self.auditor)
+        resp = self.client.get("/audit/?view=grouped&q=GRP-&action=update")
+        groups = resp.context["groups"]
+        self.assertEqual([(g["username"], g["total"]) for g in groups], [("alpha", 1)])
+        resp = self.client.get("/audit/?view=grouped&q=GRP-&user=zet")
+        self.assertEqual([(g["username"], g["total"]) for g in resp.context["groups"]], [("zeta", 2)])
+
+    def test_grouped_pagination_keeps_mode_and_filters_and_totals(self):
+        self._interleave(30)  # 61 rows: alpha 30, zeta 30, system 1
+        self.client.force_login(self.auditor)
+        url = "/audit/?view=grouped&q=GRP-&start_date=2000-01-01"
+        page1 = self.client.get(url)
+        groups = page1.context["groups"]
+        self.assertEqual([(g["username"], len(g["rows"]), g["total"]) for g in groups],
+                         [("alpha", 30, 30), ("zeta", 20, 30)])
+        self.assertContains(page1, "20 on this page")
+        query = page1.context["page_query"]
+        for part in ("view=grouped", "q=GRP-", "start_date=2000-01-01"):
+            self.assertIn(part, query)
+        self.assertNotIn("page=", query)
+
+        page2 = self.client.get(f"/audit/?page=2&{query}")
+        groups = page2.context["groups"]
+        self.assertEqual([(g["username"], len(g["rows"]), g["total"]) for g in groups],
+                         [("zeta", 10, 30), ("", 1, 1)])
+
+        # The toggle back to the flat list keeps the filters but starts at page 1.
+        page2_toggle = page2.context["filter_query"]
+        self.assertNotIn("view=", page2_toggle)
+        self.assertNotIn("page=", page2_toggle)
+        flat = self.client.get("/audit/?page=2&q=GRP-&start_date=2000-01-01")
+        self.assertFalse(flat.context["grouped"])
+        self.assertEqual(len(list(flat.context["page_obj"])), 11)
+
+    def test_grouped_view_is_auditor_only(self):
+        resp = self.client.get("/audit/?view=grouped")
+        self.assertEqual(resp.status_code, 302)
+        self.client.force_login(self.hrmo)
+        self.assertEqual(self.client.get("/audit/?view=grouped").status_code, 403)
+        self.assertEqual(self.client.get("/audit/export/csv/?view=grouped").status_code, 403)
+
+    def test_csv_export_stays_chronological(self):
+        self._interleave(3)
+        self.client.force_login(self.auditor)
+        import csv
+
+        content = self.client.get("/audit/export/csv/?view=grouped").content.decode()
+        reprs = [row[7] for row in csv.reader(content.splitlines()[1:]) if row[7].startswith("GRP-")]
+        self.assertEqual(reprs, ["GRP-sys", "GRP-2", "GRP-2", "GRP-1", "GRP-1", "GRP-0", "GRP-0"])
