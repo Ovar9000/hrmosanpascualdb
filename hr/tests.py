@@ -5871,6 +5871,23 @@ class AppVersionTestCase(TestCase):
         changelog = (django_settings.BASE_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn(f"## {version} ", changelog)  # every release is described
 
+    def test_version_follows_the_commit_messages(self):
+        import importlib.util
+        from django.conf import settings as django_settings
+
+        spec = importlib.util.spec_from_file_location("version_script", django_settings.BASE_DIR / "scripts" / "version.py")
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+        bump = script.next_version
+
+        self.assertEqual(bump("1.1.1", []), "1.1.1")
+        self.assertEqual(bump("1.1.1", ["docs(deploy): notes", "chore: tidy", "test: more"]), "1.1.1")
+        self.assertEqual(bump("1.1.1", ["fix(leave): crash"]), "1.1.2")
+        self.assertEqual(bump("1.1.1", ["Tidy the menu"]), "1.1.2")  # no type: assume users see a change
+        self.assertEqual(bump("1.1.1", ["fix: a", "feat(accounts): b", "fix: c"]), "1.2.0")  # one bump per release
+        self.assertEqual(bump("1.1.1", ["feat(api)!: new login"]), "2.0.0")
+        self.assertEqual(bump("1.9.3", ["fix: x\n\nBREAKING CHANGE: the PDS is stored differently"]), "2.0.0")
+
 
 class HrmoOwnRecordTestCase(TestCase):
     """R10: HRMO staff never change their own HR record; another HRMO staff member does."""

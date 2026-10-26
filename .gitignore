@@ -39,3 +39,4 @@ docs/IMG_*.jpg
 
 # Written by scripts/vps_update.sh on the server: the deployed commit (DECISIONS H9)
 /BUILD
+/RELEASE

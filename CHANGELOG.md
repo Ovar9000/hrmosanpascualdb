@@ -1,13 +1,17 @@
 # Changelog
 
-The version in every page footer is `MAJOR.MINOR.PATCH` from the `VERSION` file (DECISIONS H9):
+The version in every page footer is `MAJOR.MINOR.PATCH`, worked out automatically at each deploy from the
+commit messages since the last release in `VERSION` (`scripts/version.py`, DECISIONS H9):
 
-- **PATCH** (1.1.**1**): a release with bug fixes only.
-- **MINOR** (1.**2**.0): a release that adds features. The patch number goes back to 0.
-- **MAJOR** (**2**.0.0): a change that breaks how people work or what is stored, such as going live with real data.
+- **PATCH** (1.1.**1**): only `fix:` (or untyped) commits since the last release.
+- **MINOR** (1.**2**.0): at least one `feat:` commit. The patch number goes back to 0.
+- **MAJOR** (**2**.0.0): a `feat!:` / `fix!:` commit or "BREAKING CHANGE" in a message, such as going live with
+  real data.
+- `docs:`, `chore:`, `test:` and similar commits change nothing users see, so the number stays.
 
-Bump `VERSION`, add a section here, and tag the commit (`git tag v1.2.0`) in the same release. Hover over the
-version in the footer to see the exact commit that is running.
+To close a release (optional bookkeeping): set `VERSION` to the number the footer shows, rename the
+"Unreleased" heading here to it, and tag the commit (`git tag v1.2.0`). Hover over the version in the footer
+to see the exact commit that is running.
 
 ## Unreleased (next minor, 1.2.0)
 

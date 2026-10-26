@@ -173,9 +173,12 @@ def _read_file(name):
         return ""
 
 
-# The release shown in every page footer (DECISIONS H9): MAJOR.MINOR.PATCH from the committed VERSION
-# file, and the exact commit as BUILD, written by scripts/vps_update.sh when it deploys.
-APP_VERSION = os.environ.get("APP_VERSION", "").strip() or _read_file("VERSION") or "development"
+# The release shown in every page footer (DECISIONS H9): MAJOR.MINOR.PATCH worked out from the commit
+# messages by scripts/version.py into RELEASE when deploying, else the last release in VERSION; and the
+# exact commit as BUILD. Both files are written by scripts/vps_update.sh.
+APP_VERSION = (
+    os.environ.get("APP_VERSION", "").strip() or _read_file("RELEASE") or _read_file("VERSION") or "development"
+)
 APP_BUILD = os.environ.get("APP_BUILD", "").strip() or _read_file("BUILD")
 
 
