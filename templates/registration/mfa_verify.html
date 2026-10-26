@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Two-step login{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-8 col-md-5 col-lg-4">
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <h1 class="h5 mb-3">Type the code from your app</h1>
+        <p class="small text-body-secondary">Open your authenticator app and type the 6-digit code shown for
+          <strong>San Pascual HR</strong> ({{ user.get_username }}).</p>
+        {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+        <form method="post" novalidate>{% csrf_token %}
+          <input type="hidden" name="next" value="{{ next }}">
+          <div class="mb-3">
+            <label class="form-label" for="id_code">Code</label>
+            <input class="form-control form-control-lg" id="id_code" name="code" inputmode="numeric"
+                   autocomplete="one-time-code" autocapitalize="none" maxlength="12" required autofocus>
+          </div>
+          {% if remember_days %}
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="remember" value="1" id="id_remember">
+            <label class="form-check-label" for="id_remember">Remember this browser for {{ remember_days }} days</label>
+            <div class="form-text">Only on your own phone or computer, never on a shared office PC.</div>
+          </div>
+          {% endif %}
+          <button class="btn btn-primary btn-lg w-100" type="submit">Continue</button>
+        </form>
+        <p class="small mt-3 mb-2">Phone lost or not with you? Type one of your recovery codes instead
+          (like <code>abcde-fghjk</code>). Each works once.</p>
+        <p class="small mb-0">No recovery codes either? Ask the system administrator to reset your two-step login.</p>
+        <form method="post" action="{% url 'logout' %}" class="mt-3">{% csrf_token %}
+          <button class="btn btn-link p-0" type="submit">Log out</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

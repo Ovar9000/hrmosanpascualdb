@@ -1757,6 +1757,40 @@ class PasswordResetRequest(models.Model):
         return f"Password reset for {self.username_entered} ({self.get_status_display().lower()})"
 
 
+class MfaDevice(models.Model):
+    """The authenticator app an account uses for the second login step (DECISIONS A5).
+
+    Only a confirmed app is stored: setup keeps the new secret in the session until the person
+    types a code from it. The secret is never shown again and never written to the audit log.
+    """
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_device")
+    secret = models.CharField(max_length=64, help_text="Base32 TOTP secret shared with the app.")
+    confirmed_at = models.DateTimeField(default=timezone.now)
+    last_used_step = models.BigIntegerField(
+        default=0, help_text="30-second window of the last accepted code: a code works only once."
+    )
+    failures = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    remember_generation = models.PositiveIntegerField(
+        default=0, help_text="Raised by \"Forget remembered browsers\": every older remember cookie stops working."
+    )
+
+    def __str__(self):
+        return f"Authenticator app of {self.user.username}"
+
+
+class MfaRecoveryCode(models.Model):
+    """One-use code for when the phone is lost or not at hand (DECISIONS A5). Only a SHA-256 is stored."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa_recovery_codes")
+    code_hash = models.CharField(max_length=64)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Recovery code of {self.user.username}"
+
+
 # --- Delegation -------------------------------------------------------------
 
 
@@ -1822,6 +1856,10 @@ class AuditLog(models.Model):
         GROUP_CHANGE = "group_change", "Group Change"
         PERMISSION_DENIED = "permission_denied", "Permission Denied (403)"
         VERIFY_CHAIN = "verify_chain", "Audit Chain Verification"
+        MFA_SETUP = "mfa_setup", "Two-Step Login Set Up"
+        MFA_PASSED = "mfa_passed", "Two-Step Login Passed"
+        MFA_FAILED = "mfa_failed", "Two-Step Login Failed"
+        MFA_RESET = "mfa_reset", "Two-Step Login Reset"
 
     timestamp = models.DateTimeField(default=timezone.now, db_index=True)
     action = models.CharField(max_length=30, choices=Action.choices, db_index=True)

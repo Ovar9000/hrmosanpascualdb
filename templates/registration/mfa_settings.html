@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Two-step login{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h5 mb-3">Two-step login</h1>
+    {% if not device %}
+      <p>Off. Logging in takes only your password.</p>
+      <a class="btn btn-primary" href="{% url 'mfa_setup' %}">Set up two-step login</a>
+    {% else %}
+      <p>On since {{ device.confirmed_at|date:"F j, Y" }}. Logging in takes your password and a code from your
+        authenticator app. Recovery codes left: <strong>{{ codes_left }}</strong>.</p>
+      {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+      <form method="post" class="mb-3" novalidate>{% csrf_token %}
+        <label class="form-label" for="id_code">Code from the app</label>
+        <input class="form-control form-control-lg mb-3" id="id_code" name="code" inputmode="numeric"
+               autocomplete="one-time-code" maxlength="7" required>
+        <button class="btn btn-primary" type="submit" name="action" value="codes">Make new recovery codes</button>
+        {% if not required %}
+          <button class="btn btn-outline-danger" type="submit" name="action" value="off">Turn off</button>
+        {% endif %}
+      </form>
+      {% if remember_days %}
+        <h2 class="h6 mt-4">Remembered browsers</h2>
+        <p class="small">Browsers where you ticked "Remember this browser" skip the code for {{ remember_days }} days
+          (this one {% if remembered %}is{% else %}is not{% endif %} remembered). Changing your password forgets them all.
+          Lost a phone or used a shared computer? Forget them now.</p>
+        <form method="post" class="mb-3">{% csrf_token %}
+          <button class="btn btn-outline-secondary" type="submit" name="action" value="forget">Forget remembered browsers</button>
+        </form>
+      {% endif %}
+      {% if required %}
+        <p class="small text-body-secondary">Your role must use two-step login, so it cannot be turned off.
+          New phone? Ask the system administrator to reset it, then set it up again at your next login.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -77,3 +77,13 @@ def board_nav(request):
 def app_version(request):
     """The release and exact build, for the footer (DECISIONS H9)."""
     return {"app_version": settings.APP_VERSION, "app_build": settings.APP_BUILD}
+
+
+def mfa_nav(request):
+    """True while the session still has to pass the second login step: base.html hides the menus (A5)."""
+    from .mfa import needs_second_step
+
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated or not hasattr(request, "session"):
+        return {"mfa_pending": False}
+    return {"mfa_pending": SimpleLazyObject(lambda: needs_second_step(request))}

@@ -6290,3 +6290,276 @@ class ForgotPasswordTestCase(TestCase):
                              "/accounts/reset-requests/")
         req.refresh_from_db()
         self.assertEqual((req.status, req.note, req.handled_by), ("dismissed", "No such employee", self.hrmo_user))
+
+
+@override_settings(MFA_REQUIRED=True)
+class MfaTestCase(TestCase):
+    """A5: second login step with an authenticator app (TOTP) and one-use recovery codes."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        from hr import mfa
+
+        self.mfa = mfa
+
+    def _enroll(self, user):
+        from hr.models import MfaDevice
+
+        secret = self.mfa.new_secret()
+        MfaDevice.objects.create(user=user, secret=secret)
+        return secret
+
+    def _code(self, secret, offset=0):
+        return self.mfa.code_at(secret, self.mfa.current_step() + offset)
+
+    def test_codes_match_rfc_6238(self):
+        # RFC 6238 appendix B, SHA-1 key "12345678901234567890"; the RFC shows 8 digits, we use the last 6.
+        secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+        self.assertEqual(self.mfa.code_at(secret, 59 // 30), "287082")
+        self.assertEqual(self.mfa.code_at(secret, 1111111109 // 30), "081804")
+        self.assertEqual(self.mfa.matching_step(secret, "081 804", now=1111111109), 1111111109 // 30)
+        self.assertIsNone(self.mfa.matching_step(secret, "081804", now=1111111109 + 120))
+
+    def test_required_roles_must_set_up_before_anything_else(self):
+        for user in (self.hrmo_user, self.auditor_user, self.sysadmin, self.superuser):
+            self.client.force_login(user)
+            self.assertRedirects(self.client.get("/people/"), "/accounts/two-step/setup/", fetch_redirect_response=False)
+            self.assertRedirects(self.client.get("/admin/"), "/accounts/two-step/setup/", fetch_redirect_response=False)
+        # Plain employees and Office Heads are not forced; they may opt in.
+        for user in (self.emp_a_user, self.head_a):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_menus_are_hidden_before_the_second_step(self):
+        self.client.force_login(self.hrmo_user)
+        page = self.client.get("/accounts/two-step/setup/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, "Forgotten passwords")
+        self.assertNotContains(page, "Personnel")
+
+    def test_setup_stores_the_app_and_shows_recovery_codes_once(self):
+        from hr.models import AuditLog, MfaDevice, MfaRecoveryCode
+
+        self.client.force_login(self.hrmo_user)
+        page = self.client.get("/accounts/two-step/setup/")
+        self.assertContains(page, "data:image/svg+xml")
+        self.assertEqual(page["Cache-Control"], "no-store")
+        secret = self.client.session[self.mfa.SESSION_PENDING_SECRET]
+        self.assertFalse(MfaDevice.objects.filter(user=self.hrmo_user).exists())  # nothing stored before a code
+
+        self.assertContains(self.client.post("/accounts/two-step/setup/", {"code": "000000"}), "not right")
+        done = self.client.post("/accounts/two-step/setup/", {"code": self._code(secret)})
+        self.assertContains(done, "only time they are shown")
+        self.assertEqual(done["Cache-Control"], "no-store")
+        self.assertEqual(MfaDevice.objects.get(user=self.hrmo_user).secret, secret)
+        self.assertEqual(MfaRecoveryCode.objects.filter(user=self.hrmo_user).count(), 10)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+        self.assertTrue(AuditLog.objects.filter(action=AuditLog.Action.MFA_SETUP, user_id=self.hrmo_user.pk).exists())
+        self.assertFalse(any(secret in str(e.changes) for e in AuditLog.objects.all()))
+
+    def test_login_with_an_app_asks_for_a_code_and_keeps_the_page(self):
+        secret = self._enroll(self.hrmo_user)
+        response = self.client.post("/accounts/login/", {"username": "hrmo", "password": "hrmopass123"})
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(self.client.get("/people/"), "/accounts/two-step/code/?next=%2Fpeople%2F",
+                             fetch_redirect_response=False)
+        wrong = self.client.post("/accounts/two-step/code/", {"code": "000000", "next": "/people/"})
+        self.assertContains(wrong, "not right")
+        ok = self.client.post("/accounts/two-step/code/", {"code": self._code(secret), "next": "/people/"})
+        self.assertRedirects(ok, "/people/", fetch_redirect_response=False)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+    def test_an_app_is_needed_even_when_not_required(self):
+        with override_settings(MFA_REQUIRED=False):
+            self.client.force_login(self.hrmo_user)
+            self.assertEqual(self.client.get("/people/").status_code, 200)
+            self._enroll(self.emp_a_user)
+            self.client.force_login(self.emp_a_user)
+            self.assertEqual(self.client.get("/").status_code, 302)
+
+    def test_a_code_works_only_once(self):
+        secret = self._enroll(self.hrmo_user)
+        code = self._code(secret)
+        self.client.force_login(self.hrmo_user)
+        self.assertEqual(self.client.post("/accounts/two-step/code/", {"code": code}).status_code, 302)
+        other = self.client_class()
+        other.force_login(self.hrmo_user)
+        self.assertContains(other.post("/accounts/two-step/code/", {"code": code}), "not right")
+
+    def test_logging_in_again_needs_the_second_step_again(self):
+        secret = self._enroll(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        self.client.post("/accounts/two-step/code/", {"code": self._code(secret)})
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+        self.client.force_login(self.hrmo_user)
+        self.assertEqual(self.client.get("/people/").status_code, 302)
+
+    def test_five_wrong_codes_lock_the_account_not_just_the_session(self):
+        from hr.models import AuditLog
+
+        secret = self._enroll(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        for _ in range(4):
+            self.assertEqual(self.client.post("/accounts/two-step/code/", {"code": "000000"}).status_code, 200)
+        self.assertRedirects(self.client.post("/accounts/two-step/code/", {"code": "000000"}), "/accounts/login/",
+                             fetch_redirect_response=False)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        # A fresh password login does not reset the count, and even the right code is refused.
+        self.client.force_login(self.hrmo_user)
+        self.assertRedirects(self.client.post("/accounts/two-step/code/", {"code": self._code(secret)}),
+                             "/accounts/login/", fetch_redirect_response=False)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.MFA_FAILED).count(), 5)
+
+    def test_recovery_code_works_once(self):
+        self._enroll(self.hrmo_user)
+        codes = self.mfa.new_recovery_codes(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        self.assertEqual(self.client.post("/accounts/two-step/code/", {"code": codes[0].upper()}).status_code, 302)
+        self.assertEqual(self.mfa.recovery_codes_left(self.hrmo_user), 9)
+        self.client.force_login(self.hrmo_user)
+        self.assertContains(self.client.post("/accounts/two-step/code/", {"code": codes[0]}), "not right")
+
+    def test_next_never_leaves_the_site(self):
+        secret = self._enroll(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        response = self.client.post("/accounts/two-step/code/", {"code": self._code(secret), "next": "https://evil.example/"})
+        self.assertRedirects(response, "/", fetch_redirect_response=False)
+
+    def test_one_time_password_then_setup_then_password_change(self):
+        from hr.accounts import require_password_change
+
+        require_password_change(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        self.assertRedirects(self.client.get("/people/"), "/accounts/two-step/setup/", fetch_redirect_response=False)
+        self.assertEqual(self.client.get("/accounts/two-step/setup/").status_code, 200)  # no redirect loop
+        secret = self.client.session[self.mfa.SESSION_PENDING_SECRET]
+        self.client.post("/accounts/two-step/setup/", {"code": self._code(secret)})
+        self.assertRedirects(self.client.get("/people/"), "/accounts/password/", fetch_redirect_response=False)
+
+    def test_required_roles_cannot_turn_it_off_others_can(self):
+        secret = self._enroll(self.hrmo_user)
+        self.client.force_login(self.hrmo_user)
+        self.client.post("/accounts/two-step/code/", {"code": self._code(secret, -1)})
+        self.assertNotContains(self.client.get("/accounts/two-step/"), 'value="off"')
+        self.client.post("/accounts/two-step/", {"action": "off", "code": self._code(secret)})
+        self.assertTrue(self.mfa.has_device(self.hrmo_user))
+
+        secret = self._enroll(self.emp_a_user)
+        self.client.force_login(self.emp_a_user)
+        self.client.post("/accounts/two-step/code/", {"code": self._code(secret, -1)})
+        self.client.post("/accounts/two-step/", {"action": "off", "code": self._code(secret)})
+        self.assertFalse(self.mfa.has_device(self.emp_a_user))
+
+    def test_reset_command_and_admin_action(self):
+        from django.contrib.admin.sites import site
+        from hr.models import AuditLog
+
+        self._enroll(self.hrmo_user)
+        self.mfa.new_recovery_codes(self.hrmo_user)
+        with self.assertRaises(CommandError):
+            call_command("reset_mfa", "hrmo")  # a reason is required
+        call_command("reset_mfa", "HRMO", reason="Phone lost, LGU ID checked")
+        self.assertFalse(self.mfa.has_device(self.hrmo_user))
+        self.assertEqual(self.mfa.recovery_codes_left(self.hrmo_user), 0)
+        entry = AuditLog.objects.get(action=AuditLog.Action.MFA_RESET)
+        self.assertEqual((entry.username, entry.changes["reason"]), ("manage.py reset_mfa", "Phone lost, LGU ID checked"))
+
+        # In /admin/ only the emergency superuser gets the action: System Admin must not unlock HR accounts.
+        user_admin = site._registry[get_user_model()]
+        request = RequestFactory().get("/admin/auth/user/")
+        request.user = self.sysadmin
+        self.assertNotIn("reset_two_step_login", user_admin.get_actions(request))
+        request.user = self.superuser
+        self.assertIn("reset_two_step_login", user_admin.get_actions(request))
+
+
+@override_settings(MFA_REQUIRED=True, MFA_REMEMBER_DAYS=30)
+class MfaRememberBrowserTestCase(TestCase):
+    """A5: "Remember this browser" skips the code until it expires, the password changes, or it is forgotten."""
+
+    setUp_roles = Step4CSecurityAndRolesTestCase.setUp
+
+    def setUp(self):
+        self.setUp_roles()
+        from hr import mfa
+        from hr.models import MfaDevice
+
+        self.mfa = mfa
+        self.secret = mfa.new_secret()
+        MfaDevice.objects.create(user=self.hrmo_user, secret=self.secret)
+        self.cookie = mfa.remember_cookie_name(self.hrmo_user)
+
+    def _pass(self, remember=True, offset=0):
+        self.client.force_login(self.hrmo_user)
+        data = {"code": self.mfa.code_at(self.secret, self.mfa.current_step() + offset)}
+        if remember:
+            data["remember"] = "1"
+        return self.client.post("/accounts/two-step/code/", data)
+
+    def _login_again(self):
+        self.client.force_login(self.hrmo_user)
+        return self.client.get("/people/").status_code
+
+    def test_remembered_browser_skips_the_code_after_the_next_login(self):
+        from hr.models import AuditLog
+
+        response = self._pass()
+        self.assertEqual(response.cookies[self.cookie]["max-age"], 30 * 86400)
+        self.assertTrue(response.cookies[self.cookie]["httponly"])
+        self.assertEqual(self._login_again(), 200)
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.MFA_PASSED, changes__method="remembered browser").exists())
+        # Another browser still needs the code.
+        other = self.client_class()
+        other.force_login(self.hrmo_user)
+        self.assertEqual(other.get("/people/").status_code, 302)
+
+    def test_not_ticked_means_not_remembered(self):
+        self.assertNotIn(self.cookie, self._pass(remember=False).cookies)
+        self.assertEqual(self._login_again(), 302)
+
+    def test_option_off_when_days_is_zero(self):
+        with override_settings(MFA_REMEMBER_DAYS=0):
+            self.client.force_login(self.hrmo_user)
+            self.assertNotContains(self.client.get("/accounts/two-step/code/"), 'name="remember"')
+            self.assertNotIn(self.cookie, self._pass().cookies)
+
+    def test_forget_password_change_and_reset_each_end_it(self):
+        self._pass(offset=-1)
+        self.client.post("/accounts/two-step/", {"action": "forget"})
+        self.assertEqual(self._login_again(), 302)
+
+        self._pass(offset=0)
+        self.hrmo_user.set_password("Another-Pass-2026")
+        self.hrmo_user.save()
+        self.assertEqual(self._login_again(), 302)
+
+        self._pass(offset=1)
+        self.mfa.reset(self.hrmo_user, "Phone lost")
+        from hr.models import MfaDevice
+
+        MfaDevice.objects.create(user=self.hrmo_user, secret=self.secret)
+        self.assertEqual(self._login_again(), 302)
+
+    def test_expired_or_borrowed_cookies_do_not_count(self):
+        from unittest import mock
+        from django.http import HttpResponse
+
+        old = HttpResponse()
+        with mock.patch("django.core.signing.time.time", return_value=time.time() - 31 * 86400):
+            self.mfa.remember_browser(old, self.hrmo_user)
+        self.client.cookies[self.cookie] = old.cookies[self.cookie].value
+        self.assertEqual(self._login_again(), 302)
+
+        # The HRMO's valid cookie, copied under another account's name, does not let that account in.
+        from hr.models import MfaDevice
+
+        MfaDevice.objects.create(user=self.emp_a_user, secret=self.mfa.new_secret())
+        fresh = HttpResponse()
+        self.mfa.remember_browser(fresh, self.hrmo_user)
+        self.client.cookies[self.mfa.remember_cookie_name(self.emp_a_user)] = fresh.cookies[self.cookie].value
+        self.client.force_login(self.emp_a_user)
+        self.assertEqual(self.client.get("/").status_code, 302)

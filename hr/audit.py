@@ -42,6 +42,9 @@ SENSITIVE_AUDIT_FIELDS = {
     "pagibig_no",
     "sss_no",
     "password",
+    # Second login step (DECISIONS A5): never log the app secret or recovery code hashes.
+    "secret",
+    "code_hash",
     # Personal Data Sheet (DECISIONS PD6): ID numbers, answers to questions 34-40, and the frozen copy.
     "gov_id_number",
     "license_number",

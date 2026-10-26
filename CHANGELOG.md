@@ -12,6 +12,13 @@ version in the footer to see the exact commit that is running.
 ## Unreleased (next minor, 1.2.0)
 
 Added:
+- **Two-step login** with an authenticator app (Google Authenticator, Microsoft Authenticator, Aegis): no email or
+  SMS needed. Optional for now: anyone turns it on under *username → Two-step login* (scan a QR code, type a
+  code, keep ten recovery codes). `MFA_REQUIRED=1` makes HRMO Staff, Auditor, System Admin and superusers set it
+  up at their next login. **Remember this browser** skips the code for 30 days on your own device
+  (`MFA_REMEMBER_DAYS`); a password change or **Forget remembered browsers** ends it. Five wrong codes lock it for
+  15 minutes. A lost phone is reset by the emergency superuser in `/admin/` or with `manage.py reset_mfa` (A5).
+
 - The audit trail can be grouped by the person who acted (`/audit/?view=grouped`): one collapsible section
   per user, with their office, event count and time range, so events from people working at the same time
   no longer interleave. Filters and paging work in both views; the CSV export stays chronological (U1-U6).

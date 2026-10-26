@@ -47,6 +47,8 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "hr.middleware.AuditMiddleware",
+    # Before the password-change redirect: nothing happens on a password alone (DECISIONS A5).
+    "hr.middleware.MfaMiddleware",
     "hr.middleware.MustChangePasswordMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -85,6 +87,7 @@ TEMPLATES = [
                 "hr.context_processors.org_chart_nav",
                 "hr.context_processors.board_nav",
                 "hr.context_processors.app_version",
+                "hr.context_processors.mfa_nav",
             ],
         },
     },
@@ -128,6 +131,14 @@ ONE_TIME_PASSWORD_DAYS = int(os.environ.get("ONE_TIME_PASSWORD_DAYS", "14"))
 # Hours a one-time password HRMO issues for "forgot password" stays valid: the person is usually
 # at the counter and logs in right away, so it need not last as long as a provisioning slip (A2).
 RESET_PASSWORD_HOURS = int(os.environ.get("RESET_PASSWORD_HOURS", "24"))
+# Second login step with an authenticator app (DECISIONS A5). Optional for now: anyone may turn it on.
+# MFA_REQUIRED=1 makes superusers, /admin/ staff and these roles set it up (Go-Live item 10).
+MFA_REQUIRED = env_bool("MFA_REQUIRED", "0")
+MFA_REQUIRED_ROLES = env_list("MFA_REQUIRED_ROLES", "HRMO Staff,Auditor,System Admin")
+# Days a browser the person ticked "Remember this browser" on skips the code; 0 turns the option off.
+MFA_REMEMBER_DAYS = int(os.environ.get("MFA_REMEMBER_DAYS", "30"))
+# The rest of the suite logs in every role directly; MfaTestCase turns the second step back on.
+TEST_RUNNER = "hr.test_runner.Runner"
 
 # Salary actions tracker (DECISIONS SA1): the go-live date. Milestones before it are assumed handled
 # on paper, so the tracker starts without a backlog; cases open this many days before they fall due.

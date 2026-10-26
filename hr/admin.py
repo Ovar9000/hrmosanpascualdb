@@ -22,6 +22,7 @@ from .models import (
     Vacancy,
 )
 
+from . import mfa
 from .accounts import require_password_change
 from .permissions import PROTECTED_ROLES, hr_access_accounts
 
@@ -79,6 +80,22 @@ class CustomUserAdmin(BaseUserAdmin):
         super().save_model(request, obj, form, change)
         if not change and obj.has_usable_password():
             require_password_change(obj)
+
+    actions = ["reset_two_step_login"]
+
+    @admin.action(description="Reset two-step login (lost phone; check their ID first)")
+    def reset_two_step_login(self, request, queryset):
+        """Emergency superuser only (A5): resetting it for an HR account is as strong as its password."""
+        if not request.user.is_superuser:
+            raise PermissionDenied("Only the emergency superuser resets two-step login.")
+        done = [u.username for u in queryset if mfa.reset(u, "Reset in /admin/", actor=request.user)]
+        self.message_user(request, f"Reset for: {', '.join(done)}." if done else "None of them had an authenticator app.")
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            actions.pop("reset_two_step_login", None)
+        return actions
 
     def user_change_password(self, request, id, form_url=""):
         response = super().user_change_password(request, id, form_url)

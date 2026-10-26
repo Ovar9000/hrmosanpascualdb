@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Set up two-step login{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h5 mb-3">Set up two-step login</h1>
+    {% if required %}
+      <p>Your account can see or change every HR record, so logging in takes a password <em>and</em> a
+        code from your phone. You only set this up once.</p>
+    {% else %}
+      <p>After this, logging in takes your password and a code from your phone.</p>
+    {% endif %}
+    <ol class="ps-3">
+      <li class="mb-2">Install an authenticator app on your phone, if you have none: Google Authenticator,
+        Microsoft Authenticator or Aegis (all free). It works without signal or mobile data.</li>
+      <li class="mb-2">In the app, add an account and scan this picture:
+        <div class="my-3 text-center"><img src="{{ qr }}" alt="QR code for the authenticator app" width="220" height="220"></div>
+        Cannot scan? Choose "enter a setup key" and type this key (time-based):
+        <div class="my-2 text-center"><code class="fs-6 user-select-all">{{ secret }}</code></div>
+      </li>
+      <li class="mb-2">Type the 6-digit code the app now shows for San Pascual HR.</li>
+    </ol>
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    <form method="post" novalidate>{% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label" for="id_code">Code from the app</label>
+        <input class="form-control form-control-lg" id="id_code" name="code" inputmode="numeric"
+               autocomplete="one-time-code" maxlength="7" required autofocus>
+      </div>
+      {% if remember_days %}
+      <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" name="remember" value="1" id="id_remember">
+        <label class="form-check-label" for="id_remember">Remember this browser for {{ remember_days }} days</label>
+        <div class="form-text">Only on your own phone or computer, never on a shared office PC.</div>
+      </div>
+      {% endif %}
+      <button class="btn btn-primary btn-lg w-100" type="submit">Turn on two-step login</button>
+    </form>
+    <p class="small text-body-secondary mt-3">Do not share this picture or key: anyone who has it can make your codes.</p>
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+      <button class="btn btn-link p-0" type="submit">Log out</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Recovery codes{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h5 mb-3">Your recovery codes</h1>
+    <div class="alert alert-warning">This is the only time they are shown. Print this page or write them down,
+      and keep them away from your phone.</div>
+    <p>If your phone is lost or not with you, type one of these instead of the code from the app.
+      Each works once. Any older recovery codes no longer work.</p>
+    <ol class="font-monospace fs-5">
+      {% for code in codes %}<li>{{ code }}</li>{% endfor %}
+    </ol>
+    <div class="d-flex gap-2 d-print-none">
+      <button class="btn btn-outline-secondary" type="button" onclick="window.print()">Print</button>
+      <a class="btn btn-primary" href="{% url 'home' %}">I have saved them, continue</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

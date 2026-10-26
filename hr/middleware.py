@@ -3,17 +3,20 @@
 - Binds request context to thread-local ContextVar for signal-based audit logging.
 - Automatically logs HTTP 403 Permission Denied events on protected resources (DECISIONS U1/R2).
 - De-duplicates PERMISSION_DENIED entries (at most one per user + path + minute).
+- Holds sessions at the second login step until a code is accepted (DECISIONS A5).
 - Forces users flagged with must_change_password to the password-change page (DECISIONS A1).
 - Answers the hosting platform's health probe at /healthz/.
 """
 
 from datetime import timedelta
+from urllib.parse import urlencode
 from django.conf import settings
 from django.db import DatabaseError, connection
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
+from . import mfa
 from .audit import log_audit_event, resolve_request_id, set_current_request
 from .models import AuditLog, UserProfile
 
@@ -84,6 +87,36 @@ class AuditMiddleware:
             set_current_request(None)
 
 
+class MfaMiddleware:
+    """Keeps a session that has not passed the second login step away from every page (DECISIONS A5).
+
+    Fail-closed: a session counts as verified only once a code was accepted in it, or the browser
+    holds a valid "remember this browser" cookie. Until then an account with an app goes to the
+    code page, and an account that must have one goes to setup.
+    Exempt: those two pages, logout and static files. Runs before MustChangePasswordMiddleware,
+    so a stolen password alone cannot even be changed.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated and not self._is_exempt(request.path) and mfa.needs_second_step(request):
+            if mfa.has_device(user):
+                if mfa.is_remembered(request):
+                    mfa.pass_remembered(request)
+                    return self.get_response(request)
+                return redirect(f"{reverse('mfa_verify')}?{urlencode({'next': request.get_full_path()})}")
+            return redirect("mfa_setup")
+        return self.get_response(request)
+
+    @staticmethod
+    def _is_exempt(path):
+        static_prefix = "/" + settings.STATIC_URL.lstrip("/")
+        return path in (reverse("mfa_verify"), reverse("mfa_setup"), reverse("logout")) or path.startswith(static_prefix)
+
+
 class MustChangePasswordMiddleware:
     """Redirects users with UserProfile.must_change_password to the password-change page.
 
@@ -108,4 +141,6 @@ class MustChangePasswordMiddleware:
     @staticmethod
     def _is_exempt(path):
         static_prefix = "/" + settings.STATIC_URL.lstrip("/")
-        return path in (reverse("password_change"), reverse("logout")) or path.startswith(static_prefix)
+        # The second-step pages stay open: MfaMiddleware runs first and sends people there (A5).
+        exempt = ("password_change", "logout", "mfa_verify", "mfa_setup")
+        return path in [reverse(name) for name in exempt] or path.startswith(static_prefix)

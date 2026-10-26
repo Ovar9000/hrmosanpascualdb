@@ -15,6 +15,7 @@ from .audit import (
     log_audit_event,
     serialize_field_value,
 )
+from .mfa import SESSION_VERIFIED
 from .models import (
     Applicant,
     AuditLog,
@@ -221,6 +222,9 @@ def log_user_group_changes(sender, instance, action, pk_set, **kwargs):
 
 @receiver(user_logged_in)
 def log_user_login(sender, request, user, **kwargs):
+    # Every login starts before the second step, even one into a session that had passed it (A5).
+    if request is not None and hasattr(request, "session"):
+        request.session.pop(SESSION_VERIFIED, None)
     if is_audit_disabled():
         return
     log_audit_event(
