@@ -3998,7 +3998,7 @@ class OrgChartTestCase(TestCase):
         self.assertEqual(len(offices), Office.objects.filter(parent=None).count())
         self.assertEqual(offices[0].title, "Office of the Municipal Mayor")  # leads its branch
         self.assertIn("Office of the Municipal Treasurer", [o.title for o in offices])
-        self.assertEqual(offices[0].more, "+ 7 divisions, 1 coterminous")
+        self.assertEqual(offices[0].more, "+ 6 divisions, 1 coterminous")
         trunk = head.x + head.w / 2
         last_row_y = max(o.y for o in offices)
         for o in offices:  # the trunk only runs past rows through the gap between boxes
@@ -4025,41 +4025,109 @@ class OrgChartTestCase(TestCase):
         self.assertContains(self.client.get("/offices/chart/?office=nonsense"), "Local Government Unit")
 
     def test_mayors_structure_follows_the_chart_and_its_legend(self):
-        from hr.orgchart import STYLES, build_office_tree
+        from hr.orgchart import FILLS, PLACEHOLDER, TEXTS, build_office_tree
 
         chart = build_office_tree(focus=self.office_a.pk)
         head = chart.nodes[0]
         self.assertEqual((head.title, head.subtitle, head.style), ("Municipal Mayor I", "SG 27", StructurePosition.Status.ELECTED))
-        by_child = {id(e.child): e for e in chart.edges}
-        side = [e.child for e in chart.edges if e.parent is head and e.kind.startswith("side-")]
+        # The Mayor's own staff: a row on one line just below the box, joined to the trunk.
+        line_to = {id(e.child): e for e in chart.edges}
         self.assertEqual(
-            [(n.title, by_child[id(n)].kind, by_child[id(n)].dashed) for n in side],
+            [(n.title, line_to[id(n)].kind, line_to[id(n)].parent.title, line_to[id(n)].dashed) for n in head.side],
             [
-                ("Security Officer II", "side-left", False),
-                ("Senior Administrative Assistant III (Private Secretary II)", "side-left", False),
-                ("Executive Assistant II", "side-right", True),
-                ("Local Special Bodies", "side-right", True),
-                ("Office of the Municipal Administrator", "side-right", True),
+                ("Security Officer II", "side-left", "Senior Administrative Assistant III (Private Secretary II)", False),
+                ("Senior Administrative Assistant III (Private Secretary II)", "left", "Municipal Mayor I", False),
+                ("Executive Assistant II", "right", "Municipal Mayor I", False),
+                ("Local Special Bodies", "side-right", "Executive Assistant II", True),
+                ("Office of the Municipal Administrator", "side-right", "Local Special Bodies", True),
             ],
         )
+        self.assertTrue(all(n.y >= head.y + head.h for n in head.side))  # lowered, as on HRMO's chart
+        self.assertEqual(len({round(n.y + n.h / 2, 1) for n in head.side}), 1)
         divisions = [e.child for e in chart.edges if e.parent is head and e.kind == "below"]
-        self.assertEqual(len(divisions), 7)
-        self.assertEqual(len({d.y for d in divisions}), 1)  # one row, as on the chart
-        self.assertTrue(all(d.y > max(n.y + n.h for n in side) for d in divisions))
-        security = next(d for d in divisions if d.title.startswith("Civil Security"))
-        self.assertEqual(
-            [(c.title.replace("\xa0", " "), c.style) for c in security.children],  # no-break spaces
-            [("Security Officer I · SG 11", "proposed"), ("Security Guard II · SG 5", "proposed"), ("Security Guard I · SG 3", "filled")],
-        )
-        self.assertEqual(STYLES[security.children[0].style], "#e03131")  # red: proposed for creation
-        self.assertEqual(STYLES[security.children[2].style], "#2f9e44")  # green: existing filled-up
+        self.assertEqual([d.title for d in divisions][::5], ["Cooperatives Development Division (CDD)", "Sports Development and Regulation Division (SDRD)"])
+        self.assertEqual(len(divisions), 6)
+        # The whole chart wraps its divisions into rows to fit a screen; the trunk runs down between
+        # the divisions of every row but the last. A slide keeps its divisions in one row, as on the chart.
+        rows = sorted({d.y for d in divisions})
+        self.assertEqual(len(rows), 2)
+        trunk = head.x + head.w / 2
+        self.assertFalse(any(d.x < trunk < d.x + d.w for d in divisions if d.y != rows[-1]))
+        slide = build_office_tree(focus=self.office_a.pk, part=1)
+        self.assertEqual(len({e.child.y for e in slide.edges if e.parent is slide.nodes[0] and e.kind == "below"}), 1)
+        self.assertTrue(all(d.y > max(n.y + n.h for n in head.side) for d in divisions))
+
+        # Each division: its chief, the sections under the chief, a column of positions under each.
+        gsd = next(d for d in divisions if d.title.startswith("General Services"))
+        (chief,) = gsd.children
+        self.assertEqual(chief.title, "General Services Officer / Administrative Officer V")
+        self.assertEqual([s.title for s in chief.children][:2], ["Records & Archival Management Section", "Procurement and Supplies Section"])
+        under = self._under(gsd)
+        self.assertAlmostEqual(gsd.w, max(n.x + n.w for n in under) - min(n.x for n in under))  # spans it all
+        (records_head,) = chief.children[0].children
+        self.assertEqual([c.title for c in records_head.children], ["Administrative Officer I (Records Officer I)"] * 2)
+        (bookbinder,) = records_head.joined  # under both Records Officers, joined to each
+        self.assertEqual([e.parent for e in chart.edges if e.child is bookbinder], records_head.children)
+        self.assertTrue(bookbinder.y > max(c.y + c.h for c in records_head.children))
+        self.assertEqual((FILLS[records_head.style], TEXTS[records_head.style]), ("#e00000", "#ffff00"))  # red: vacant, proposed
+        self.assertEqual(FILLS[bookbinder.style], "#a9d18e")  # green: existing filled-up
+        sdrd = divisions[-1]
+        self.assertEqual([s.children[0].style for s in sdrd.children], [PLACEHOLDER, PLACEHOLDER])
         self._assert_no_overlap(chart)
+
+    def test_structure_lines_never_loop(self):
+        from hr.models import OrgUnit
+        from hr.orgchart import build_office_tree
+
+        guard = StructurePosition.objects.get(office=self.office_a, title="Security Guard II")
+        driver = StructurePosition.objects.get(office=self.office_a, title="Driver I")
+        driver.reports_to = guard
+        driver.save()
+        guard.reports_to = driver
+        guard.save()
+        titles = [n.title for n in build_office_tree(focus=self.office_a.pk).nodes]
+        self.assertIn("Security Guard II", titles)
+        self.assertIn("Driver I", titles)
+        elsewhere = StructurePosition(
+            office=self.office_a, unit=OrgUnit.objects.get(acronym="CDD"), title="X",
+            status=StructurePosition.Status.PROPOSED, reports_to=guard,
+        )
+        with self.assertRaises(ValidationError):
+            elsewhere.clean()
+
+    def test_wide_structure_exports_as_slides_like_hrmos(self):
+        from pptx import Presentation
+        from hr.orgchart import build_office_tree
+
+        mayor = self.office_a.pk
+        self.assertEqual(build_office_tree(focus=mayor).parts, 2)
+        one, two = (build_office_tree(focus=mayor, part=part) for part in (1, 2))
+        self.assertEqual((one.part_label, two.part_label), ("Part 1 of 2 · Divisions 1–3", "Part 2 of 2 · Divisions 4–6"))
+        self.assertEqual(
+            [n.title for n in one.nodes[0].children],
+            ["Cooperatives Development Division (CDD)", "Community Affairs and Public Relations Division (CAPRD)",
+             "General Services Division (GSD)", "Continued on next slide"],
+        )
+        back = two.nodes[0].children[0]
+        self.assertEqual((back.title, back.subtitle, back.dashed), ("Continued from previous slide", "CDD · CAPRD · GSD", True))
+        self.assertEqual(len(two.nodes[0].side), 5)  # every slide keeps the Mayor and the row beside the box
+        self.client.force_login(self.hrmo_user)
+        prs = Presentation(BytesIO(self.client.get(f"/offices/chart/export/pptx/?office={mayor}").content))
+        self.assertEqual(len(prs.slides), 2)
+        self.assertAlmostEqual(prs.slide_width / prs.slide_height, 16 / 9, places=2)
+        self.assertTrue(self.client.get(f"/offices/chart/export/png/?office={mayor}").content.startswith(b"\x89PNG"))
+
+    def _under(self, node):
+        found = []
+        for child in node.children + node.joined:
+            found += [child] + self._under(child)
+        return found
 
     def test_structure_seed_keeps_admin_changes(self):
         from hr.models import OrgUnit
 
-        self.assertEqual(OrgUnit.objects.filter(office=self.office_a, parent=None, beside_head=False).count(), 7)
-        self.assertEqual(StructurePosition.objects.filter(office=self.office_a).count(), 40)
+        self.assertEqual(OrgUnit.objects.filter(office=self.office_a, parent=None, beside_head=False).count(), 6)
+        self.assertEqual(StructurePosition.objects.filter(office=self.office_a).count(), 79)
         StructurePosition.objects.filter(title="Messenger").update(status=StructurePosition.Status.PROPOSED)
         call_command("seed_structure")
         self.assertEqual(StructurePosition.objects.get(title="Messenger").status, StructurePosition.Status.PROPOSED)
@@ -4079,10 +4147,10 @@ class OrgChartTestCase(TestCase):
         names = {s.shape_id: s.name for s in shapes}
         self.assertIn("Legend: Proposed for creation", names.values())
         dashed = [s for s in shapes if s._element.tag.endswith("}cxnSp") and "prstDash" in s._element.xml]
-        self.assertEqual(len(dashed), 3)
+        self.assertEqual(len(dashed), 2)
         ends = {names[d._element.nvCxnSpPr.cNvCxnSpPr.endCxn.id]: d._element.nvCxnSpPr.cNvCxnSpPr for d in dashed}
         glue = ends["Office of the Municipal Administrator"]
-        self.assertEqual((names[glue.stCxn.id], glue.stCxn.idx), ("Municipal Mayor I", SITE_RIGHT))
+        self.assertEqual((names[glue.stCxn.id], glue.stCxn.idx), ("Local Special Bodies", SITE_RIGHT))
         self.assertEqual(glue.endCxn.idx, SITE_LEFT)
         self.client.force_login(self.hrmo_user)
         resp = self.client.get(f"/offices/chart/export/pptx/?office={self.office_a.pk}")

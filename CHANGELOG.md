@@ -33,8 +33,25 @@ Added:
   hours if unused (`RESET_PASSWORD_HOURS`). HRMO resets plain employee accounts only; accounts with a role or
   delegation stay with the emergency superuser (A2, R3).
 
+- The **Mayor's Office structure chart** now reads like HRMO's own: the Mayor's staff in a row just below the
+  Mayor's box, each division with its chief, its sections under the chief and a column of positions under
+  each section, every position under the one it reports to. Boxes are filled with the legend colour: red
+  for a vacancy proposed for creation, green for an existing filled-up position, yellow elected, blue local
+  special bodies. It follows HRMO's new six-division structure (CDD, CAPRD, GSD, IMSD, PSD, SDRD). The PDF
+  and PowerPoint split it into slides of three divisions ("Part 1 of 2"), each still 16:9 (O7). On a server
+  that already has the old structure, run `manage.py seed_structure --replace` once to load it (this
+  discards admin edits to the Mayor's Office structure).
+
 Fixed:
 - Paging through the audit trail dropped the From/To date filters.
+- **Org charts**: the outer boxes of the office tree were cut off at both edges, and the wide Mayor's Office
+  structure was hard to take in. The Mayor's Office structure now puts its divisions in rows (3 + 3) either
+  side of the line down from the Mayor, so on a laptop or desktop screen it fits whole at about 60–70% instead
+  of 30%; the PNG picture does the same, and the PDF and PowerPoint keep their slides of three divisions (O7).
+  Every chart now uses the full width of the window and opens zoomed out so it fits whole. Zoom in and out with
+  **−** / **+** (up to 200%), Ctrl + scroll or a trackpad pinch; **Fit** and **100%** jump back. Drag with the
+  mouse to move around a zoomed-in chart. The chart scrolls inside its own frame, which can no longer widen
+  the page.
 
 ## 1.1.1 (October 2026)
 

@@ -287,6 +287,7 @@ def office_tree(request):
             "own_office": get_user_office(request.user),
             "focus_can_open": focus is not None and focus.pk in scope,
             "whole_url": orgchart.tree_url(whole=True),
+            "slides": chart.parts,
         },
     )
 
@@ -362,9 +363,13 @@ def office_tree_export(request, fmt):
     if not can_view_office_tree(request.user):
         raise PermissionDenied("You do not have access to the office tree.")
     focus, whole, _query = _tree_view(request)
-    chart = orgchart.build_office_tree(
-        detail_office_ids=_office_tree_scope(request.user), focus=focus and focus.pk, whole=whole
-    )
+    scope = _office_tree_scope(request.user)
+    chart = orgchart.build_office_tree(detail_office_ids=scope, focus=focus and focus.pk, whole=whole)
+    if chart.parts > 1 and fmt in ("pdf", "pptx"):  # a wide structure chart: a page per few divisions
+        chart = [
+            orgchart.build_office_tree(detail_office_ids=scope, focus=focus.pk, whole=whole, part=part)
+            for part in range(1, chart.parts + 1)
+        ]
     heading = focus.name if focus else "Municipal Government of San Pascual"
     name = slugify(focus.acronym or focus.name) if focus else "san-pascual"
     return _export_response(

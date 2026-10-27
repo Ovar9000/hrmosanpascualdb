@@ -32,13 +32,21 @@ SIDE_GAP, ROW_GAP = 22, 12  # trunk to a hanging box / between hanging boxes
 COTERM_GAP, DASH = 40, (5, 4)  # head box to a coterminous box beside it, and that line's dashes
 GRID_ROW_MAX, GRID_SIDE, TRUNK_GAP = 6, 3, 40  # office tree: more than 6 divisions go in rows of 3 + 3
 HEAD_W, HEAD_TEXT = 280, 1.2  # the head box at the top of the office tree: wider, larger text
-DIV_W, STACK_INDENT = 180, 14  # structure chart: a division column, and each level under it
 STACK_MIN = 3  # this many childless children hang in a column instead of a wide row
 TWO_SIDED_MIN = 5  # and this many hang on both sides of the trunk
 MARGIN = 16
 REGULAR, BOLD = "Helvetica", "Helvetica-Bold"
+# Structure charts (DECISIONS O7) look like HRMO's own: square boxes filled with the legend colour,
+# each position under the one it reports to, and the head's own staff in a row just below its box.
+POS_W, SIDE_W, FLAT_HEAD_W = 136, 156, 200
+FLAT_PAD_X, FLAT_PAD_Y, POS_MIN_H = 6, 6, 46
+FLAT_V_GAP, SIDE_DROP, SIDE_ROW_GAP = 22, 14, 30  # a box to the one under it / head to its staff row
+FLAT_HEAD_TEXT = 13
+PLACEHOLDER = "placeholder"  # an empty section: a dashed box where its positions will go
+DIVISIONS_PER_SLIDE = 3  # PDF and PowerPoint split a wider structure chart, as HRMO's slides do
+FIT_W, FIT_H = 1600, 800  # the page and PNG wrap a structure chart's divisions into rows to fit this shape
 
-INK, MUTED, LINE = "#212529", "#6c757d", "#adb5bd"
+INK, MUTED, LINE, FLAT_LINE = "#212529", "#6c757d", "#adb5bd", "#4472c4"
 # accent (border and top band) per style; elected/plantilla/... for people, branches for offices
 STYLES = {
     Engagement.Type.ELECTED: "#198754",
@@ -50,22 +58,25 @@ STYLES = {
     Office.Branch.OTHER: "#6c757d",
     "root": "#212529",
 }
-# Structure charts follow the legend of the office's own chart (DECISIONS O7): (accent, fill).
+# Structure charts follow the legend of the office's own chart (DECISIONS O7): (border, fill, text).
+# Red is a vacancy (proposed for creation), green a position that exists and is filled.
 STRUCTURE_STYLES = {
-    StructurePosition.Status.ELECTED: ("#e0a800", "#fff3bf"),
-    StructurePosition.Status.PROPOSED: ("#e03131", "#ffe3e3"),
-    StructurePosition.Status.FILLED: ("#2f9e44", "#e6f4ea"),
-    OrgUnit.Kind.DIVISION: ("#e8590c", "#ffe8d9"),
-    OrgUnit.Kind.SECTION: ("#e8590c", "#ffffff"),
-    OrgUnit.Kind.BODY: ("#1c7ed6", "#e7f5ff"),
+    StructurePosition.Status.ELECTED: ("#e46c0a", "#ffc000", INK),
+    StructurePosition.Status.PROPOSED: ("#a50000", "#e00000", "#ffff00"),
+    StructurePosition.Status.FILLED: ("#548235", "#a9d18e", INK),
+    OrgUnit.Kind.DIVISION: ("#70ad47", "#ffffff", INK),
+    OrgUnit.Kind.SECTION: ("#70ad47", "#ffffff", INK),
+    OrgUnit.Kind.BODY: ("#2e75b6", "#9dc3e6", INK),
+    PLACEHOLDER: (LINE, "#ffffff", MUTED),
 }
-STYLES.update({key: accent for key, (accent, _fill) in STRUCTURE_STYLES.items()})
-FILLS = {key: fill for key, (_accent, fill) in STRUCTURE_STYLES.items()}
+STYLES.update({key: border for key, (border, _fill, _text) in STRUCTURE_STYLES.items()})
+FILLS = {key: fill for key, (_border, fill, _text) in STRUCTURE_STYLES.items()}
+TEXTS = {key: text for key, (_border, _fill, text) in STRUCTURE_STYLES.items()}
+FLAT_TEXT = {OrgUnit.Kind.DIVISION: 10.5, OrgUnit.Kind.SECTION: 8, OrgUnit.Kind.BODY: 9, PLACEHOLDER: 8}  # else 8.5
 STRUCTURE_LEGEND = [
     (StructurePosition.Status.ELECTED.label, StructurePosition.Status.ELECTED),
     (StructurePosition.Status.PROPOSED.label, StructurePosition.Status.PROPOSED),
     (StructurePosition.Status.FILLED.label, StructurePosition.Status.FILLED),
-    ("Division / section", OrgUnit.Kind.DIVISION),
     (OrgUnit.Kind.BODY.label, OrgUnit.Kind.BODY),
 ]
 HIGHLIGHT_FILL, HIGHLIGHT_BORDER = "#fff3cd", "#b58105"
@@ -85,10 +96,14 @@ class ChartNode:
     more: str = ""  # collapsed office tree box: what is folded under it
     grid: bool = False  # office tree: childless children in rows across the page, never hanging
     emphasis: bool = False  # the head at the top: filled with its colour, white text
-    stack: bool = False  # structure chart: children listed in a column under the box, indented
+    flat: bool = False  # structure chart: a square box filled with its legend colour, text centred
+    span: bool = False  # structure chart: a division or section box as wide as everything under it
+    side_row: bool = False  # the side boxes go in a row just below this box, not in columns beside it
+    rows: bool = False  # structure chart: the children wrap into rows either side of the trunk to fit a screen
     dashed: bool = False  # the line to this box is dashed (coterminous)
     children: list = field(default_factory=list)
-    side: list = field(default_factory=list)  # coterminous: stacked beside this box, not below it
+    joined: list = field(default_factory=list)  # under the row of children, joined to the bottom of each
+    side: list = field(default_factory=list)  # coterminous: beside this box, not below it
     # Filled in by layout(): position, size and the wrapped text lines
     # as (text, font, size, colour, baseline offset from the box top).
     x: float = 0
@@ -103,12 +118,33 @@ class ChartNode:
 
     @property
     def fill(self):
-        if self.emphasis:
+        if self.emphasis and not self.flat:
             return self.accent
         return HIGHLIGHT_FILL if self.badge else FILLS.get(self.style, "#ffffff")
 
+    @property
+    def band(self):
+        """The coloured strip along the top of the box."""
+        return not self.emphasis and not self.flat
+
+    @property
+    def vgap(self):
+        return FLAT_V_GAP if self.flat else V_GAP
+
+    @property
+    def radius(self):
+        return 0 if self.flat else 5
+
+    @property
+    def outline_dashed(self):
+        return self.style == PLACEHOLDER
+
     def ink(self, colour):
-        """Text colour on this box: dark on a light filled head box, white and light grey on a dark one."""
+        """Text colour on this box: dark on a light filled head box, white and light grey on a dark one,
+        and the legend's own text colour on a structure box (yellow on red)."""
+        if self.flat:
+            text = TEXTS.get(self.style, INK)
+            return colour if text == INK else text
         if not self.emphasis:
             return colour
         if _light(self.accent):
@@ -125,9 +161,9 @@ def _light(colour):
 class Edge:
     parent: ChartNode
     child: ChartNode
-    # "below" (child in a row underneath), "right" / "left" (child hangs beside the trunk),
-    # "side-right" / "side-left" (child beside the parent's box, line from its side),
-    # "stack" (structure chart: child listed under the parent, line down its left edge)
+    # "below" (child in a row underneath, or a joined box under a column's last box),
+    # "right" / "left" (child hangs beside the trunk, or the first box of the head's side row),
+    # "side-right" / "side-left" (child beside the parent's box, line from its side)
     kind: str
 
     @property
@@ -135,16 +171,19 @@ class Edge:
         return self.child.dashed
 
     @property
+    def colour(self):
+        return FLAT_LINE if self.parent.flat else LINE
+
+    @property
     def points(self):
         p, c = self.parent, self.child
         px, pb = p.x + p.w / 2, p.y + p.h
         if self.kind == "below":
-            cx, mid = c.x + c.w / 2, c.y - V_GAP / 2  # just above the row, below any side band
+            cx, mid = c.x + c.w / 2, c.y - p.vgap / 2  # just above the row, below any side band
+            if p.span and len(p.children) == 1 and p.children[0] is c:
+                return [(cx, pb), (cx, c.y)]  # the box spans what is under it: straight down
             return [(px, pb), (px, mid), (cx, mid), (cx, c.y)]
         cy = c.y + c.h / 2
-        if self.kind == "stack":
-            tx = p.x + STACK_INDENT / 2
-            return [(tx, pb), (tx, cy), (c.x, cy)]
         if self.kind.startswith("side-"):
             right = self.kind == "side-right"
             sx, sy = (p.x + p.w if right else p.x), p.y + p.h / 2
@@ -165,6 +204,8 @@ class Chart:
     height: float
     trail: list = field(default_factory=list)  # office tree: (name, url) from the top down to the head
     legend: list = field(default_factory=list)  # (label, style) drawn with the chart
+    parts: int = 1  # structure chart: how many slides its divisions take in a PDF or PowerPoint
+    part_label: str = ""  # one of those slides: "Part 1 of 2 · Divisions 1-3"
 
 
 # --- Text ---------------------------------------------------------------------------
@@ -198,35 +239,49 @@ def wrap(text, font, size, max_width, max_lines):
     return [_fit(line, font, size, max_width) for line in lines]
 
 
-def _prepare_text(node):
-    inner = node.w - 2 * PAD_X
+def text_specs(node):
+    """The box's text as (text, font, size, colour, max lines), empty parts left out."""
     specs = []
     if node.badge:
         specs.append((node.badge.upper(), BOLD, 8, HIGHLIGHT_BORDER, 1))
     if node.tag:
         specs.append((node.tag.upper(), BOLD, 7.5, MUTED, 1))
-    big = HEAD_TEXT if node.emphasis else (0.9 if node.stack else 1)
-    specs += [
-        (node.title, BOLD, 11 * big, INK, 3 if node.stack else 2),
-        (node.subtitle, REGULAR, 9.5 * big, INK, 2),
-        (node.detail, REGULAR, 8.5 * big, MUTED, 1),
-        (node.more, BOLD, 8.5, node.accent, 1),
-    ]
-    pad = PAD_Y * 0.6 if node.stack else PAD_Y
-    cursor = ACCENT + pad
+    big = HEAD_TEXT if node.emphasis else 1
+    if node.flat:
+        size = FLAT_HEAD_TEXT if node.emphasis else FLAT_TEXT.get(node.style, 8.5)
+        specs += [
+            (node.title, BOLD, size, INK, 3),
+            (node.subtitle, BOLD if node.emphasis else REGULAR, size * 0.9, INK, 1),
+        ]
+    else:
+        specs += [(node.title, BOLD, 11 * big, INK, 2), (node.subtitle, REGULAR, 9.5 * big, INK, 2)]
+    specs += [(node.detail, REGULAR, 8.5 * big, MUTED, 1), (node.more, BOLD, 8.5, node.accent, 1)]
+    return [(text, font, size, node.ink(colour), n) for text, font, size, colour, n in specs if text]
+
+
+def _prepare_text(node):
+    pad_x, pad_y = (FLAT_PAD_X, FLAT_PAD_Y) if node.flat else (PAD_X, PAD_Y)
+    cursor = pad_y if node.flat else ACCENT + pad_y
     node.lines = []
-    for text, font, size, colour, max_lines in specs:
-        for line in wrap(text, font, size, inner, max_lines):
-            node.lines.append((line, font, size, node.ink(colour), cursor + size))
+    for text, font, size, colour, max_lines in text_specs(node):
+        # Structure boxes wrap a little short, so the PNG's wider font still fits without shrinking.
+        for line in wrap(text, font, size, (node.w - 2 * pad_x) * (0.9 if node.flat else 1), max_lines):
+            node.lines.append((line, font, size, colour, cursor + size))
             cursor += size * LINE_SPACING
-    node.h = cursor + pad
+    node._text_h = cursor + pad_y
+    is_position = node.flat and node.style not in (OrgUnit.Kind.DIVISION, OrgUnit.Kind.SECTION)
+    node.h = max(node._text_h, POS_MIN_H if is_position else 0)
 
 
 # --- Layout -------------------------------------------------------------------------
 
 
 def _hangs(node):
-    return not node.grid and len(node.children) >= STACK_MIN and all(not c.children for c in node.children)
+    # Structure charts keep every row a row, as on HRMO's chart.
+    return (
+        not node.grid and not node.flat and len(node.children) >= STACK_MIN
+        and all(not c.children for c in node.children)
+    )
 
 
 def _grid_rows(node):
@@ -242,21 +297,93 @@ def _split_side(node):
 
 
 def _measure_side(node):
-    """How far the box and its coterminous columns reach left and right of the box centre."""
+    """How far the box and its coterminous boxes reach left and right of the box centre."""
     if not node.side:
         return node.w / 2, node.w / 2
     left, right = _split_side(node)
+    if node.side_row:
+        reaches = [
+            node.w / 2 + COTERM_GAP + sum(c.w for c in column) + SIDE_ROW_GAP * (len(column) - 1)
+            for column in (left, right)
+        ]
+        return tuple(reach if column else node.w / 2 for reach, column in zip(reaches, (left, right)))
     reach = node.w / 2 + COTERM_GAP + BOX_W
     return (reach if left else node.w / 2), (reach if right else node.w / 2)
 
 
+def _row_width(row):
+    return sum(c._width for c in row) + H_GAP * (len(row) - 1) if row else 0
+
+
+def _halves(row):
+    """A row of subtrees split where its two sides are closest in width: (left, right) of the trunk."""
+    cut = min(range(len(row) + 1), key=lambda i: abs(_row_width(row[:i]) - _row_width(row[i:])))
+    return row[:cut], row[cut:]
+
+
+def _wrap_rows(node, need_left, need_right):
+    """rows: tries every number of children per row and keeps the one that shows the whole chart
+    largest on a FIT_W x FIT_H screen. Each row but the last is split either side of the trunk; the
+    last is centred on it, where the trunk ends. False when one row is best (laid out as usual)."""
+    kids = node.children
+    tallest = max(c.h for c in kids)
+    for child in kids:
+        child.h = tallest
+    depth = {}
+    for child in kids:  # a trial placement, only to learn how far down each subtree goes
+        _place(child, 0, 0, [])
+        depth[id(child)] = _bottom(child)
+    side = SIDE_DROP + max(c.h for c in node.side) + ROW_GAP if node.side and node.side_row else 0
+    best = None
+    for per_row in range(1, len(kids) + 1):
+        rows = [kids[i : i + per_row] for i in range(0, len(kids), per_row)]
+        split = [_halves(row) for row in rows[:-1]]
+        last = _row_width(rows[-1]) / 2
+        left = max([need_left, last] + [_row_width(a) + TRUNK_GAP / 2 for a, _b in split])
+        right = max([need_right, last] + [_row_width(b) + TRUNK_GAP / 2 for _a, b in split])
+        height = node.h + side + sum(max(depth[id(c)] for c in row) + 2 * node.vgap for row in rows)
+        size = min(FIT_W / (left + right), FIT_H / height)
+        if best is None or size > best[0]:
+            best = (size, rows, split, left, right)
+    _size, rows, split, left, right = best
+    if len(rows) == 1:
+        return False
+    node._rows, node._split = rows, split
+    node._anchor, node._width = left, left + right
+    return True
+
+
+def _shift(node, d):
+    """Moves the box and everything under it d to the right inside its subtree."""
+    node._anchor += d
+    node._width += d
+    node._offsets = [o + d for o in getattr(node, "_offsets", [])]
+    node._joined_offsets = [o + d for o in getattr(node, "_joined_offsets", [])]
+
+
+def _measure_joined(node):
+    """The joined boxes go in a row centred under the box, below its row of children."""
+    for child in node.joined:
+        _measure(child)
+    tallest = max(c.h for c in node.joined)
+    for child in node.joined:
+        child.h = tallest
+    width = sum(c._width for c in node.joined) + H_GAP * (len(node.joined) - 1)
+    start = node._anchor - width / 2
+    if start < 0:
+        _shift(node, -start)
+        start = 0
+    node._joined_offsets = []
+    for child in node.joined:
+        node._joined_offsets.append(start)
+        start += child._width + H_GAP
+    node._width = max(node._width, start - H_GAP)
+
+
 def _measure(node):
     """Sets node._width (whole subtree) and node._anchor (box centre, from the subtree's left)."""
-    if node.stack:  # the children sit inside the box's own width
-        for child in node.children:
-            _measure(child)
-        node._width, node._anchor = node.w, node.w / 2
-        return
+    if node.joined and not node.children:  # nothing to join: they are just the row under the box
+        node.children, node.joined = node.joined, []
     need_left, need_right = _measure_side(node)
     if not node.children:
         node._anchor = need_left
@@ -271,6 +398,9 @@ def _measure(node):
         half = GRID_SIDE * BOX_W + (GRID_SIDE - 1) * H_GAP + TRUNK_GAP / 2
         node._anchor = max(half, need_left)
         node._width = node._anchor + max(half, need_right)
+        return
+    node._rows = None
+    if node.rows and _wrap_rows(node, need_left, need_right):
         return
     if _hangs(node):
         if len(node.children) >= TWO_SIDED_MIN:
@@ -293,15 +423,37 @@ def _measure(node):
     node._offsets = [o + shift for o in offsets]
     node._anchor = centre + shift
     node._width = max(pos - H_GAP + shift, node._anchor + need_right)
+    if node.joined:
+        _measure_joined(node)
+    if node.span:  # as wide as everything under it, text wrapped again to the new width
+        if node._width < node.w:
+            _shift(node, (node.w - node._width) / 2)
+        node._width = max(node._width, node.w)
+        node.w, node._anchor = node._width, node._width / 2
+        _prepare_text(node)
 
 
 def _place_side(node, edges):
-    """Stacks the coterminous boxes beside the box, the first row level with it. Done here, not
-    in _measure, because a row of boxes only gets its shared height after it is measured.
-    Returns how far they run below the box, so the children can start under them."""
+    """Places the coterminous boxes beside the box. Done here, not in _measure, because a row of
+    boxes only gets its shared height after it is measured. Returns how far they run below the
+    box, so the children can start under them.
+
+    side_row: in a row each side, centred on one line just below the box and joined to the trunk
+    (HRMO's charts). Otherwise stacked in a column each side, the first level with the box."""
     if not node.side:
         return 0
     left, right = _split_side(node)
+    if node.side_row:
+        tallest = max(c.h for c in node.side)
+        cy = node.y + node.h + SIDE_DROP + tallest / 2
+        for column, kind in ((left[::-1], "left"), (right, "right")):  # from the trunk outwards
+            x, inner = (node.x - COTERM_GAP if kind == "left" else node.x + node.w + COTERM_GAP), node
+            for child in column:
+                child.x, child.y = (x - child.w if kind == "left" else x), cy - child.h / 2
+                x = child.x - SIDE_ROW_GAP if kind == "left" else child.x + child.w + SIDE_ROW_GAP
+                edges.append(Edge(inner, child, kind if inner is node else f"side-{kind}"))
+                inner = child
+        return SIDE_DROP + tallest + ROW_GAP
     firsts = [column[0].h for column in (left, right) if column]
     if node.emphasis and max(firsts) > node.h:
         # The head has no row to match: grow it, text centred, so the first side boxes line up.
@@ -322,18 +474,18 @@ def _place_side(node, edges):
 
 
 def _bottom(node):
-    return max([node.y + node.h] + [_bottom(c) for c in node.children])
+    return max([node.y + node.h] + [_bottom(c) for c in node.children + node.joined])
+
+
+def _column_end(node):
+    """The last box down a column of single boxes: where a joined box's line starts."""
+    while len(node.children) == 1 and not node.joined:
+        node = node.children[0]
+    return node
 
 
 def _place(node, left, top, edges):
     node.x, node.y = left + node._anchor - node.w / 2, top
-    if node.stack:
-        y = node.y + node.h + ROW_GAP / 1.5
-        for child in node.children:
-            _place(child, node.x + STACK_INDENT, y, edges)
-            edges.append(Edge(node, child, "stack"))
-            y = _bottom(child) + ROW_GAP / 1.5
-        return
     trunk = left + node._anchor
     top += _place_side(node, edges)  # the children start below the coterminous boxes
     if not node.children:
@@ -356,10 +508,33 @@ def _place(node, left, top, edges):
                 edges.append(Edge(node, child, "below"))
             y += row[0].h + V_GAP
         return
+    if getattr(node, "_rows", None):
+        # Each row's line across sits just above it; the trunk runs down the gap in the split rows.
+        y = top + node.h + node.vgap
+        for i, row in enumerate(node._rows):
+            if i < len(node._split):
+                left_half, right_half = node._split[i]
+                starts = [trunk - TRUNK_GAP / 2 - _row_width(left_half), trunk + TRUNK_GAP / 2]
+                halves = [left_half, right_half]
+            else:
+                starts, halves = [trunk - _row_width(row) / 2], [row]
+            for x, half in zip(starts, halves):
+                for child in half:
+                    _place(child, x, y, edges)
+                    edges.append(Edge(node, child, "below"))
+                    x += child._width + H_GAP
+            y = max(_bottom(c) for c in row) + 2 * node.vgap
+        return
     if not _hangs(node):
         for child, offset in zip(node.children, node._offsets):
-            _place(child, left + offset, top + node.h + V_GAP, edges)
+            _place(child, left + offset, top + node.h + node.vgap, edges)
             edges.append(Edge(node, child, "below"))
+        if node.joined:
+            y = max(_bottom(c) for c in node.children) + node.vgap
+            ends = [_column_end(c) for c in node.children]
+            for child, offset in zip(node.joined, node._joined_offsets):
+                _place(child, left + offset, y, edges)
+                edges += [Edge(end, child, "below") for end in ends]
         return
     kids = node.children
     if len(kids) >= TWO_SIDED_MIN:
@@ -383,9 +558,7 @@ def layout(roots):
     def walk(node):
         nodes.append(node)
         _prepare_text(node)
-        for child in node.side + node.children:
-            if node.stack:
-                child.stack, child.w = True, node.w - STACK_INDENT
+        for child in node.side + node.children + node.joined:
             walk(child)
 
     for root in roots:
@@ -399,6 +572,10 @@ def layout(roots):
         _measure(root)
         _place(root, left, MARGIN, edges)
         left += root._width + H_GAP * 2
+    for node in nodes:  # structure boxes: text centred in a box made taller by its row
+        if node.flat and node.h > node._text_h:
+            down = (node.h - node._text_h) / 2
+            node.lines = [(text, font, size, colour, dy + down) for text, font, size, colour, dy in node.lines]
     width = max((n.x + n.w for n in nodes), default=0) + MARGIN
     height = max((n.y + n.h for n in nodes), default=0) + MARGIN
     return Chart(nodes, edges, width, height)
@@ -515,34 +692,53 @@ def _plural(n, word):
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
-def _position_node(position, compact=False):
-    """compact: the grade on the title line, for the columns under a division."""
-    grade = f"SG {position.salary_grade}" if position.salary_grade else ""
+def _position_node(position, width=POS_W):
     return ChartNode(
-        title=f"{position.title} · {grade.replace(' ', chr(0xa0))}" if compact and grade else position.title,
-        subtitle="" if compact else grade,
+        title=position.title,
+        subtitle=f"SG {position.salary_grade}" if position.salary_grade else "",
         style=position.status,
         dashed=position.coterminous,
+        flat=True,
+        w=width,
     )
 
 
 def _unit_node(unit, units, positions):
-    """A division or section box with what is under it, in the order HRMO set."""
+    """A division or section box with what is under it, in the order HRMO set: each position under
+    the one it reports to, and the sections under the unit's top position when it has just one."""
+    beside = unit.beside_head
     node = ChartNode(
         title=f"{unit.name} ({unit.acronym})" if unit.acronym else unit.name,
         style=unit.kind,
-        dashed=unit.beside_head,
+        dashed=beside,
+        flat=True,
+        span=not beside,
+        w=SIDE_W if beside else POS_W,
     )
-    items = [(u.order, _unit_node(u, units, positions)) for u in units if u.parent_id == unit.pk]
-    items += [(p.order, _position_node(p, compact=True)) for p in positions if p.unit_id == unit.pk]
-    node.children = [n for _order, n in sorted(items, key=lambda item: item[0])]
+    mine = [p for p in positions if p.unit_id == unit.pk]
+    boxes = {p.pk: _position_node(p) for p in mine}
+    upper = {p.pk: p.reports_to_id for p in mine if p.reports_to_id in boxes}
+    for position in mine:
+        parent = upper.get(position.pk)
+        # A line to a position outside the unit, or one that loops back, starts at the unit box.
+        if parent is not None and parent != position.pk and not _reaches(parent, position.pk, upper):
+            target = boxes[parent]
+        else:
+            upper.pop(position.pk, None)
+            target = node
+        (target.joined if position.joins_row else target.children).append(boxes[position.pk])
+    sections = [_unit_node(u, units, positions) for u in units if u.parent_id == unit.pk]
+    (node.children[0] if len(node.children) == 1 else node).children.extend(sections)
+    if unit.kind == OrgUnit.Kind.SECTION and not node.children and not node.joined:
+        node.children = [ChartNode(title="Positions to follow", style=PLACEHOLDER, flat=True, w=POS_W)]
     return node
 
 
 def build_structure(office, base):
     """The office's own structure chart (DECISIONS O7): its head position at the top, the
-    positions and bodies beside the head, and each division as a column of its sections and
-    positions. base: the office's box on the office tree (its detail line and link)."""
+    positions and bodies beside the head in a row just below it, and each division with its
+    top position, its sections and their positions in columns under it. base: the office's
+    box on the office tree (its detail line and link)."""
     units = list(office.units.all())
     positions = list(office.structure_positions.all())
     head_position = next((p for p in positions if p.unit_id is None and not p.beside_head), None)
@@ -552,23 +748,54 @@ def build_structure(office, base):
         detail=base.detail,
         style=head_position.status if head_position else office.branch,
         url=base.url,
+        flat=True,
+        side_row=True,
+        w=FLAT_HEAD_W,
     )
-    side = [(p.order, _position_node(p)) for p in positions if p.unit_id is None and p.beside_head]
+    side = [(p.order, _position_node(p, SIDE_W)) for p in positions if p.unit_id is None and p.beside_head]
     side += [(u.order, _unit_node(u, units, positions)) for u in units if u.parent_id is None and u.beside_head]
     head.side = [n for _order, n in sorted(side, key=lambda item: item[0])]
     for unit in sorted((u for u in units if u.parent_id is None and not u.beside_head), key=lambda u: u.order):
-        division = _unit_node(unit, units, positions)
-        division.stack, division.w = True, DIV_W
-        head.children.append(division)
+        head.children.append(_unit_node(unit, units, positions))
     return head
 
 
-def build_office_tree(detail_office_ids=(), linked_office_ids=(), focus=None, whole=False):
+def _split_divisions(head, office, part):
+    """Keeps only the divisions of one slide (part, from 1) under the structure head, with a
+    dashed box naming the divisions on the other slides. Returns (parts, label)."""
+    divisions = head.children
+    parts = math.ceil(len(divisions) / DIVISIONS_PER_SLIDE)
+    if not part or parts < 2:
+        return parts, ""
+    part = min(max(part, 1), parts)
+    names = [
+        u.acronym or u.name
+        for u in sorted(
+            office.units.filter(parent=None, beside_head=False, kind=OrgUnit.Kind.DIVISION), key=lambda u: u.order
+        )
+    ]
+    start, end = (part - 1) * DIVISIONS_PER_SLIDE, part * DIVISIONS_PER_SLIDE
+    head.children = divisions[start:end]
+
+    def pointer(title, others):
+        return ChartNode(title=title, subtitle=" · ".join(others), style=PLACEHOLDER, flat=True, dashed=True, w=POS_W)
+
+    if part > 1:
+        head.children.insert(0, pointer("Continued from previous slide", names[:start]))
+    if part < parts:
+        head.children.append(pointer("Continued on next slide", names[end:]))
+    shown = min(end, len(divisions))
+    label = f"Part {part} of {parts} · Divisions {start + 1}–{shown}" if shown > start + 1 else f"Part {part} of {parts} · Division {shown}"
+    return parts, label
+
+
+def build_office_tree(detail_office_ids=(), linked_office_ids=(), focus=None, whole=False, part=None):
     """The municipal office tree. Head names and staff counts only for detail_office_ids.
 
     focus: pk of an office to draw as the head at the top, with its divisions under it and its
     coterminous offices beside it (DECISIONS O6). Without it, the municipality is the head with
-    the top offices under it. Offices one level further down are folded: their box says what
+    the top offices under it. part: only that slide's divisions of a structure chart (exports).
+    Offices one level further down are folded: their box says what
     is under them and clicking it makes them the head. whole: nothing folded.
     """
     offices = list(Office.objects.select_related("parent").order_by("name"))
@@ -614,14 +841,17 @@ def build_office_tree(detail_office_ids=(), linked_office_ids=(), focus=None, wh
             roots.append(nodes[office.pk])
 
     trail = [("Municipal Government of San Pascual", tree_url())]
-    legend = []
+    legend, slides, part_label = [], 1, ""
     if focus in nodes:
         head = nodes[focus]
         if focus in has_structure:  # its own chart, with its sub-offices still beside or under it
             office_node = head
             head = build_structure(by_pk[focus], office_node)
+            slides, part_label = _split_divisions(head, by_pk[focus], part)
             head.side += office_node.side
-            head.children += office_node.children
+            if not part or part >= slides:  # sub-offices go after the last division
+                head.children += office_node.children
+            head.rows = not part  # the whole chart (page, PNG) wraps its divisions into rows
             legend = STRUCTURE_LEGEND
         chain, current = [], by_pk[focus]
         while current is not None and current.pk not in {o.pk for o in chain}:
@@ -640,7 +870,9 @@ def build_office_tree(detail_office_ids=(), linked_office_ids=(), focus=None, wh
             head = ChartNode(
                 title="Municipal Government of San Pascual", subtitle="Local Government Unit", children=roots, grid=True
             )
-    head.emphasis, head.w = True, HEAD_W
+    head.emphasis = True
+    if not head.flat:  # a structure head keeps its own size
+        head.w = HEAD_W
 
     # An office box with more under it says what, and clicking it makes it the head. Its own
     # structure is only ever drawn on its own chart; folded sub-offices only when not whole.
@@ -659,6 +891,7 @@ def build_office_tree(detail_office_ids=(), linked_office_ids=(), focus=None, wh
             node.children, node.side = [], []
     chart = layout([head])
     chart.trail, chart.legend = trail, legend
+    chart.parts, chart.part_label = slides, part_label
     return chart
 
 
@@ -744,18 +977,19 @@ def render_svg(chart, label=""):
     for edge in chart.edges:
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y in edge.points)
         dash = f' stroke-dasharray="{DASH[0]} {DASH[1]}"' if edge.dashed else ""
-        out.append(f'<polyline points="{points}" fill="none" stroke="{LINE}" stroke-width="1.5"{dash}/>')
+        out.append(f'<polyline points="{points}" fill="none" stroke="{edge.colour}" stroke-width="1.5"{dash}/>')
     for node in chart.nodes:
         if node.url:
             out.append(f'<a href="{escape(node.url)}">')
         out.append("<g>")
         out.append(f"<title>{escape(' · '.join(t for t in (node.title, node.subtitle, node.detail) if t))}</title>")
         width = 2.5 if node.badge else 1.5
+        dash = f' stroke-dasharray="{DASH[0]} {DASH[1]}"' if node.outline_dashed else ""
         out.append(
-            f'<rect x="{node.x:.1f}" y="{node.y:.1f}" width="{node.w:.1f}" height="{node.h:.1f}" rx="5" '
-            f'fill="{node.fill}" stroke="{node.accent}" stroke-width="{width}"/>'
+            f'<rect x="{node.x:.1f}" y="{node.y:.1f}" width="{node.w:.1f}" height="{node.h:.1f}" rx="{node.radius}" '
+            f'fill="{node.fill}" stroke="{node.accent}" stroke-width="{width}"{dash}/>'
         )
-        if not node.emphasis:
+        if node.band:
             out.append(f'<rect x="{node.x:.1f}" y="{node.y:.1f}" width="{node.w:.1f}" height="{ACCENT}" fill="{node.accent}"/>')
         cx = node.x + node.w / 2
         for text, font, size, colour, dy in node.lines:
@@ -790,72 +1024,86 @@ def _hex(colour):
     return tuple(int(colour[i : i + 2], 16) for i in (0, 2, 4))
 
 
+def _charts(chart):
+    return chart if isinstance(chart, list) else [chart]
+
+
+def _page_heading(heading, chart):
+    return f"{heading} · {chart.part_label}" if chart.part_label else heading
+
+
 def render_pdf(chart, heading, note=""):
-    """One-page vector PDF: A4 landscape, then A3, at no less than 60% size; otherwise a page
-    as large as the chart (it still prints with "fit to page")."""
+    """Vector PDF, a page per chart (a list of charts: a structure chart split by slide).
+    Each page is A4 landscape, then A3, at no less than 60% size; otherwise as large as the
+    chart (it still prints with "fit to page")."""
     from reportlab.lib.pagesizes import A3, A4, landscape
     from reportlab.pdfgen import canvas
 
-    margin = 28
-    need_w, need_h = chart.width, chart.height + HEADING_SPACE
-    for page in (landscape(A4), landscape(A3)):
-        scale = min(1, (page[0] - 2 * margin) / need_w, (page[1] - 2 * margin) / need_h)
-        if scale >= 0.6:
-            break
-    else:
-        page, scale = (need_w + 2 * margin, need_h + 2 * margin), 1
-    page_w, page_h = page
-    left = (page_w - need_w * scale) / 2
-
-    def pt(x, y):  # chart coordinates (y down) -> PDF points (y up)
-        return left + x * scale, page_h - margin - (HEADING_SPACE + y) * scale
-
     buf = io.BytesIO()
-    pdf = canvas.Canvas(buf, pagesize=page)
+    pdf = canvas.Canvas(buf)
     pdf.setTitle(heading)
     pdf.setAuthor("San Pascual HR")
-    pdf.setFont(BOLD, 14)
-    pdf.drawString(margin, page_h - margin - 12, heading)
-    if note:
-        pdf.setFont(REGULAR, 9)
-        pdf.setFillColorRGB(*[c / 255 for c in _hex(MUTED)])
-        pdf.drawString(margin, page_h - margin - 28, note)
-    pdf.setFont(REGULAR, LEGEND_SIZE)
-    for x, label, accent, fill in legend_items(chart, page_w - margin):
-        pdf.setStrokeColorRGB(*[c / 255 for c in _hex(accent)])
-        pdf.setFillColorRGB(*[c / 255 for c in _hex(fill)])
-        pdf.setLineWidth(1.5)
-        pdf.rect(x, page_h - margin - 12, LEGEND_KEY, LEGEND_KEY, stroke=1, fill=1)
+    for chart in _charts(chart):
+        margin = 28
+        need_w, need_h = chart.width, chart.height + HEADING_SPACE
+        for page in (landscape(A4), landscape(A3)):
+            scale = min(1, (page[0] - 2 * margin) / need_w, (page[1] - 2 * margin) / need_h)
+            if scale >= 0.6:
+                break
+        else:
+            page, scale = (need_w + 2 * margin, need_h + 2 * margin), 1
+        page_w, page_h = page
+        left = (page_w - need_w * scale) / 2
+
+        def pt(x, y):  # chart coordinates (y down) -> PDF points (y up)
+            return left + x * scale, page_h - margin - (HEADING_SPACE + y) * scale
+
+        pdf.setPageSize(page)
+        pdf.setFont(BOLD, 14)
         pdf.setFillColorRGB(*[c / 255 for c in _hex(INK)])
-        pdf.drawString(x + LEGEND_KEY + 4, page_h - margin - 11, label)
+        pdf.drawString(margin, page_h - margin - 12, _page_heading(heading, chart))
+        if note:
+            pdf.setFont(REGULAR, 9)
+            pdf.setFillColorRGB(*[c / 255 for c in _hex(MUTED)])
+            pdf.drawString(margin, page_h - margin - 28, note)
+        pdf.setFont(REGULAR, LEGEND_SIZE)
+        for x, label, accent, fill in legend_items(chart, page_w - margin):
+            pdf.setStrokeColorRGB(*[c / 255 for c in _hex(accent)])
+            pdf.setFillColorRGB(*[c / 255 for c in _hex(fill)])
+            pdf.setLineWidth(1.5)
+            pdf.rect(x, page_h - margin - 12, LEGEND_KEY, LEGEND_KEY, stroke=1, fill=1)
+            pdf.setFillColorRGB(*[c / 255 for c in _hex(INK)])
+            pdf.drawString(x + LEGEND_KEY + 4, page_h - margin - 11, label)
 
-    pdf.setStrokeColorRGB(*[c / 255 for c in _hex(LINE)])
-    pdf.setLineWidth(1.5 * scale)
-    for edge in chart.edges:
-        path = pdf.beginPath()
-        points = [pt(x, y) for x, y in edge.points]
-        path.moveTo(*points[0])
-        for point in points[1:]:
-            path.lineTo(*point)
-        pdf.setDash([d * scale for d in DASH] if edge.dashed else [])
-        pdf.drawPath(path, stroke=1, fill=0)
-    pdf.setDash([])
+        pdf.setLineWidth(1.5 * scale)
+        for edge in chart.edges:
+            pdf.setStrokeColorRGB(*[c / 255 for c in _hex(edge.colour)])
+            path = pdf.beginPath()
+            points = [pt(x, y) for x, y in edge.points]
+            path.moveTo(*points[0])
+            for point in points[1:]:
+                path.lineTo(*point)
+            pdf.setDash([d * scale for d in DASH] if edge.dashed else [])
+            pdf.drawPath(path, stroke=1, fill=0)
+        pdf.setDash([])
 
-    for node in chart.nodes:
-        x, y_top = pt(node.x, node.y)
-        w, h = node.w * scale, node.h * scale
-        pdf.setLineWidth((2.5 if node.badge else 1.5) * scale)
-        pdf.setStrokeColorRGB(*[c / 255 for c in _hex(node.accent)])
-        pdf.setFillColorRGB(*[c / 255 for c in _hex(node.fill)])
-        pdf.roundRect(x, y_top - h, w, h, 5 * scale, stroke=1, fill=1)
-        if not node.emphasis:
-            pdf.setFillColorRGB(*[c / 255 for c in _hex(node.accent)])
-            pdf.rect(x, y_top - ACCENT * scale, w, ACCENT * scale, stroke=0, fill=1)
-        for text, font, size, colour, dy in node.lines:
-            pdf.setFillColorRGB(*[c / 255 for c in _hex(colour)])
-            pdf.setFont(font, size * scale)
-            pdf.drawCentredString(x + w / 2, y_top - dy * scale, text)
-    pdf.showPage()
+        for node in chart.nodes:
+            x, y_top = pt(node.x, node.y)
+            w, h = node.w * scale, node.h * scale
+            pdf.setLineWidth((2.5 if node.badge else 1.5) * scale)
+            pdf.setStrokeColorRGB(*[c / 255 for c in _hex(node.accent)])
+            pdf.setFillColorRGB(*[c / 255 for c in _hex(node.fill)])
+            pdf.setDash([d * scale for d in DASH] if node.outline_dashed else [])
+            pdf.roundRect(x, y_top - h, w, h, node.radius * scale, stroke=1, fill=1)
+            pdf.setDash([])
+            if node.band:
+                pdf.setFillColorRGB(*[c / 255 for c in _hex(node.accent)])
+                pdf.rect(x, y_top - ACCENT * scale, w, ACCENT * scale, stroke=0, fill=1)
+            for text, font, size, colour, dy in node.lines:
+                pdf.setFillColorRGB(*[c / 255 for c in _hex(colour)])
+                pdf.setFont(font, size * scale)
+                pdf.drawCentredString(x + w / 2, y_top - dy * scale, text)
+        pdf.showPage()
     pdf.save()
     return buf.getvalue()
 
@@ -894,12 +1142,7 @@ def render_png(chart, heading, note="", scale=2):
     def px(x, y):
         return (x + off_x) * scale, (y + HEADING_SPACE + off_y) * scale
 
-    line_w = max(1, int(1.5 * scale))
-    for edge in chart.edges:
-        points = [px(x, y) for x, y in edge.points]
-        if not edge.dashed:
-            draw.line(points, fill=LINE, width=line_w, joint="curve")
-            continue
+    def dashed(points, colour, width):
         on, off = DASH[0] * scale, DASH[1] * scale  # PIL has no dashes: draw them one by one
         for (x0, y0), (x1, y1) in zip(points, points[1:]):
             length = math.hypot(x1 - x0, y1 - y0)
@@ -907,16 +1150,28 @@ def render_png(chart, heading, note="", scale=2):
             while start < length:
                 end = min(start + on, length)
                 a, b = start / length, end / length
-                draw.line([(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a), (x0 + (x1 - x0) * b, y0 + (y1 - y0) * b)], fill=LINE, width=line_w)
+                draw.line([(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a), (x0 + (x1 - x0) * b, y0 + (y1 - y0) * b)], fill=colour, width=width)
                 start += on + off
+
+    line_w = max(1, int(1.5 * scale))
+    for edge in chart.edges:
+        points = [px(x, y) for x, y in edge.points]
+        if edge.dashed:
+            dashed(points, edge.colour, line_w)
+        else:
+            draw.line(points, fill=edge.colour, width=line_w, joint="curve")
     for node in chart.nodes:
         x0, y0 = px(node.x, node.y)
         x1, y1 = px(node.x + node.w, node.y + node.h)
         border = int((2.5 if node.badge else 1.5) * scale)
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=5 * scale, fill=node.fill, outline=node.accent, width=border)
-        if not node.emphasis:
+        if node.outline_dashed:
+            draw.rectangle([x0, y0, x1, y1], fill=node.fill)
+            dashed([(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)], node.accent, border)
+        else:
+            draw.rounded_rectangle([x0, y0, x1, y1], radius=node.radius * scale, fill=node.fill, outline=node.accent, width=border)
+        if node.band:
             draw.rectangle([x0, y0, x1, y0 + ACCENT * scale], fill=node.accent)
-        max_w = (node.w - 2 * PAD_X) * scale
+        max_w = (node.w - 2 * (FLAT_PAD_X if node.flat else PAD_X)) * scale
         for text, font, size, colour, dy in node.lines:
             size_px = size * scale
             fnt = _png_font(font, size_px)
@@ -970,7 +1225,8 @@ def connector_frame(start, end, first_leg=(0, 1)):
 
 
 def render_pptx(chart, heading, note=""):
-    """One editable slide: every box is a rounded rectangle and every line a connector glued to
+    """An editable slide per chart (a list of charts: a structure chart split by slide), all the
+    same size: every box is a rounded rectangle and every line a connector glued to
     its two boxes, so moving a box in PowerPoint drags its lines along."""
     from pptx import Presentation
     from pptx.dml.color import RGBColor
@@ -980,141 +1236,141 @@ def render_pptx(chart, heading, note=""):
     from pptx.oxml.ns import qn
     from pptx.util import Emu, Pt
 
+    charts = _charts(chart)
     margin, head = 24, HEADING_SPACE + 12  # room for a slide-sized title
     slide_w, slide_h, max_side = 960, 540, 4032  # 16:9 in points; PowerPoint allows up to 56 in
-    scale = min(1, (slide_w - 2 * margin) / chart.width, (slide_h - head - margin) / chart.height)
-    if scale < 0.5:  # too small to read on 16:9: grow the slide instead
-        scale = min(0.5, (max_side - 2 * margin) / chart.width, (max_side - head - margin) / chart.height)
-        slide_w = max(slide_w, chart.width * scale + 2 * margin)
-        slide_h = max(slide_h, chart.height * scale + head + margin)
-    left = (slide_w - chart.width * scale) / 2
+    for chart in charts:
+        scale = min(1, (slide_w - 2 * margin) / chart.width, (slide_h - head - margin) / chart.height)
+        if scale < 0.5:  # too small to read on 16:9: grow the slide instead
+            scale = min(0.5, (max_side - 2 * margin) / chart.width, (max_side - head - margin) / chart.height)
+            slide_w = max(slide_w, chart.width * scale + 2 * margin)
+            slide_h = max(slide_h, chart.height * scale + head + margin)
+    slide_w = max(slide_w, slide_h * 16 / 9)  # a grown slide stays 16:9, so it still presents full screen
+    slide_h = max(slide_h, slide_w * 9 / 16)
 
     def emu(points):
         return Emu(int(round(points * 12700)))
 
-    def to_slide(x, y):
-        return left + x * scale, head + y * scale
-
     prs = Presentation()
     prs.slide_width, prs.slide_height = emu(slide_w), emu(slide_h)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+    for chart in charts:
+        scale = min(1, (slide_w - 2 * margin) / chart.width, (slide_h - head - margin) / chart.height)
+        left = (slide_w - chart.width * scale) / 2
 
-    legend_w = sum(stringWidth(label, REGULAR, LEGEND_SIZE) + LEGEND_KEY + 18 for label, _style in chart.legend)
-    title = slide.shapes.add_textbox(emu(margin), emu(8), emu(slide_w - 2 * margin - legend_w), emu(head - 8))
-    title.text_frame.word_wrap = True
-    for i, (text, size, bold, colour) in enumerate(((heading, 20, True, INK), (note, 10, False, MUTED))):
-        if not text:
-            continue
-        para = title.text_frame.paragraphs[0] if i == 0 else title.text_frame.add_paragraph()
-        run = para.add_run()
-        run.text = text
-        run.font.size, run.font.bold, run.font.name = Pt(size), bold, "Arial"
-        run.font.color.rgb = RGBColor(*_hex(colour))
+        def to_slide(x, y, left=left, scale=scale):
+            return left + x * scale, head + y * scale
 
-    for x, label, accent, fill in legend_items(chart, slide_w - margin):
-        key = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, emu(x), emu(12), emu(LEGEND_KEY), emu(LEGEND_KEY))
-        key.shadow.inherit = False
-        key.fill.solid()
-        key.fill.fore_color.rgb = RGBColor(*_hex(fill))
-        key.line.color.rgb = RGBColor(*_hex(accent))
-        key.name = f"Legend: {label}"
-        text = slide.shapes.add_textbox(emu(x + LEGEND_KEY + 2), emu(7), emu(stringWidth(label, REGULAR, LEGEND_SIZE) + 12), emu(LEGEND_KEY + 10))
-        frame = text.text_frame
-        frame.margin_top = frame.margin_bottom = 0
-        run = frame.paragraphs[0].add_run()
-        run.text = label
-        run.font.size, run.font.name = Pt(LEGEND_SIZE), "Arial"
-        run.font.color.rgb = RGBColor(*_hex(INK))
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
 
-    shapes = {}
-    for node in chart.nodes:
-        x, y = to_slide(node.x, node.y)
-        shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, emu(x), emu(y), emu(node.w * scale), emu(node.h * scale))
-        shape.name = node.title[:60]
-        shape.adjustments[0] = 0.08
-        shape.shadow.inherit = False
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = RGBColor(*_hex(node.fill))
-        shape.line.color.rgb = RGBColor(*_hex(node.accent))
-        shape.line.width = emu((2.5 if node.badge else 1.5) * scale)
-        frame = shape.text_frame
-        frame.word_wrap = True
-        frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-        frame.margin_left = frame.margin_right = emu(PAD_X * scale / 2)
-        frame.margin_top = frame.margin_bottom = emu(PAD_Y * scale / 2)
-        # Whole strings, not the wrapped lines: PowerPoint wraps them again as people edit.
-        parts = [(node.badge.upper(), 8, True, HIGHLIGHT_BORDER)] if node.badge else []
-        parts += [(node.tag.upper(), 7.5, True, MUTED)] if node.tag else []
-        big = HEAD_TEXT if node.emphasis else 1
-        parts += [(node.title, 11 * big, True, INK), (node.subtitle, 9.5 * big, False, INK), (node.detail, 8.5 * big, False, MUTED)]
-        parts.append((node.more, 8.5, True, node.accent))
-        parts = [(text, size, bold, node.ink(colour)) for text, size, bold, colour in parts]
-        first = True
-        for text, size, bold, colour in parts:
+        legend_w = sum(stringWidth(label, REGULAR, LEGEND_SIZE) + LEGEND_KEY + 18 for label, _style in chart.legend)
+        title = slide.shapes.add_textbox(emu(margin), emu(8), emu(slide_w - 2 * margin - legend_w), emu(head - 8))
+        title.text_frame.word_wrap = True
+        for i, (text, size, bold, colour) in enumerate(((_page_heading(heading, chart), 20, True, INK), (note, 10, False, MUTED))):
             if not text:
                 continue
-            para = frame.paragraphs[0] if first else frame.add_paragraph()
-            first = False
-            para.alignment = PP_ALIGN.CENTER
+            para = title.text_frame.paragraphs[0] if i == 0 else title.text_frame.add_paragraph()
             run = para.add_run()
             run.text = text
-            run.font.size, run.font.bold, run.font.name = Pt(size * scale), bold, "Arial"
+            run.font.size, run.font.bold, run.font.name = Pt(size), bold, "Arial"
             run.font.color.rgb = RGBColor(*_hex(colour))
-        shapes[id(node)] = shape
 
-    for edge in chart.edges:
-        points = [to_slide(x, y) for x, y in edge.points]
-        start, end = points[0], points[-1]
-        start_site, end_site = {
-            "stack": (SITE_BOTTOM, SITE_LEFT),
-            "below": (SITE_BOTTOM, SITE_TOP),
-            "right": (SITE_BOTTOM, SITE_LEFT),
-            "left": (SITE_BOTTOM, SITE_RIGHT),
-            "side-right": (SITE_RIGHT, SITE_LEFT),
-            "side-left": (SITE_LEFT, SITE_RIGHT),
-        }[edge.kind]
-        if abs(start[0] - end[0]) < 0.01 or abs(start[1] - end[1]) < 0.01:
-            cxn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, emu(start[0]), emu(start[1]), emu(end[0]), emu(end[1]))
-        else:
-            cxn = slide.shapes.add_connector(MSO_CONNECTOR.ELBOW, 0, 0, emu(1), emu(1))
-            first_leg = {SITE_RIGHT: (1, 0), SITE_LEFT: (-1, 0)}.get(start_site, (0, 1))
-            rot, flip_h, flip_v, (fx, fy, fw, fh) = connector_frame(start, end, first_leg)
-            sp_pr = cxn._element.spPr
-            if edge.kind in ("right", "left", "stack"):
-                sp_pr.prstGeom.set("prst", "bentConnector2")  # one bend: down the trunk, then across
-            elif edge.kind == "below":  # two bends: put the middle leg where the page draws it
-                bend = (points[1][1] - start[1]) / (end[1] - start[1])
-                av_lst = sp_pr.prstGeom.find(qn("a:avLst"))
-                if av_lst is None:
-                    av_lst = sp_pr.prstGeom.makeelement(qn("a:avLst"), {})
-                    sp_pr.prstGeom.append(av_lst)
-                av_lst.append(av_lst.makeelement(qn("a:gd"), {"name": "adj1", "fmla": f"val {round(bend * 100000)}"}))
-            xfrm = sp_pr.xfrm
-            for attr in ("rot", "flipH", "flipV"):
-                xfrm.attrib.pop(attr, None)
-            if rot:
-                xfrm.set("rot", str(rot * 60000))
-            if flip_h:
-                xfrm.set("flipH", "1")
-            if flip_v:
-                xfrm.set("flipV", "1")
-            xfrm.off.x, xfrm.off.y = emu(fx), emu(fy)
-            xfrm.ext.cx, xfrm.ext.cy = emu(fw), emu(fh)
-        glue = cxn._element.nvCxnSpPr.cNvCxnSpPr
-        st = glue.get_or_add_stCxn()
-        st.id, st.idx = shapes[id(edge.parent)].shape_id, start_site
-        en = glue.get_or_add_endCxn()
-        en.id, en.idx = shapes[id(edge.child)].shape_id, end_site
-        cxn.line.color.rgb = RGBColor(*_hex(LINE))
-        cxn.line.width = emu(1.5 * scale)
-        if edge.dashed:
-            cxn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+        for x, label, accent, fill in legend_items(chart, slide_w - margin):
+            key = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, emu(x), emu(12), emu(LEGEND_KEY), emu(LEGEND_KEY))
+            key.shadow.inherit = False
+            key.fill.solid()
+            key.fill.fore_color.rgb = RGBColor(*_hex(fill))
+            key.line.color.rgb = RGBColor(*_hex(accent))
+            key.name = f"Legend: {label}"
+            text = slide.shapes.add_textbox(emu(x + LEGEND_KEY + 2), emu(7), emu(stringWidth(label, REGULAR, LEGEND_SIZE) + 12), emu(LEGEND_KEY + 10))
+            frame = text.text_frame
+            frame.margin_top = frame.margin_bottom = 0
+            run = frame.paragraphs[0].add_run()
+            run.text = label
+            run.font.size, run.font.name = Pt(LEGEND_SIZE), "Arial"
+            run.font.color.rgb = RGBColor(*_hex(INK))
 
-    # Lines behind boxes: move every connector to the back of the shape tree, after the title.
-    tree = slide.shapes._spTree
-    for cxn_el in [el for el in tree if el.tag.endswith("}cxnSp")]:
-        tree.remove(cxn_el)
-        tree.insert(3, cxn_el)
+        shapes = {}
+        for node in chart.nodes:
+            x, y = to_slide(node.x, node.y)
+            kind = MSO_SHAPE.ROUNDED_RECTANGLE if node.radius else MSO_SHAPE.RECTANGLE
+            shape = slide.shapes.add_shape(kind, emu(x), emu(y), emu(node.w * scale), emu(node.h * scale))
+            shape.name = node.title[:60]
+            if node.radius:
+                shape.adjustments[0] = 0.08
+            shape.shadow.inherit = False
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = RGBColor(*_hex(node.fill))
+            shape.line.color.rgb = RGBColor(*_hex(node.accent))
+            shape.line.width = emu((2.5 if node.badge else 1.5) * scale)
+            if node.outline_dashed:
+                shape.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+            frame = shape.text_frame
+            frame.word_wrap = True
+            frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+            frame.margin_left = frame.margin_right = emu(PAD_X * scale / 2)
+            frame.margin_top = frame.margin_bottom = emu(PAD_Y * scale / 2)
+            # Whole strings, not the wrapped lines: PowerPoint wraps them again as people edit.
+            for i, (text, font, size, colour, _max_lines) in enumerate(text_specs(node)):
+                para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
+                para.alignment = PP_ALIGN.CENTER
+                run = para.add_run()
+                run.text = text
+                run.font.size, run.font.bold, run.font.name = Pt(size * scale), font == BOLD, "Arial"
+                run.font.color.rgb = RGBColor(*_hex(colour))
+            shapes[id(node)] = shape
+
+        for edge in chart.edges:
+            points = [to_slide(x, y) for x, y in edge.points]
+            start, end = points[0], points[-1]
+            start_site, end_site = {
+                "below": (SITE_BOTTOM, SITE_TOP),
+                "right": (SITE_BOTTOM, SITE_LEFT),
+                "left": (SITE_BOTTOM, SITE_RIGHT),
+                "side-right": (SITE_RIGHT, SITE_LEFT),
+                "side-left": (SITE_LEFT, SITE_RIGHT),
+            }[edge.kind]
+            if abs(start[0] - end[0]) < 0.01 or abs(start[1] - end[1]) < 0.01:
+                cxn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, emu(start[0]), emu(start[1]), emu(end[0]), emu(end[1]))
+            else:
+                cxn = slide.shapes.add_connector(MSO_CONNECTOR.ELBOW, 0, 0, emu(1), emu(1))
+                first_leg = {SITE_RIGHT: (1, 0), SITE_LEFT: (-1, 0)}.get(start_site, (0, 1))
+                rot, flip_h, flip_v, (fx, fy, fw, fh) = connector_frame(start, end, first_leg)
+                sp_pr = cxn._element.spPr
+                if edge.kind in ("right", "left"):
+                    sp_pr.prstGeom.set("prst", "bentConnector2")  # one bend: down the trunk, then across
+                elif edge.kind == "below":  # two bends: put the middle leg where the page draws it
+                    bend = (points[1][1] - start[1]) / (end[1] - start[1])
+                    av_lst = sp_pr.prstGeom.find(qn("a:avLst"))
+                    if av_lst is None:
+                        av_lst = sp_pr.prstGeom.makeelement(qn("a:avLst"), {})
+                        sp_pr.prstGeom.append(av_lst)
+                    av_lst.append(av_lst.makeelement(qn("a:gd"), {"name": "adj1", "fmla": f"val {round(bend * 100000)}"}))
+                xfrm = sp_pr.xfrm
+                for attr in ("rot", "flipH", "flipV"):
+                    xfrm.attrib.pop(attr, None)
+                if rot:
+                    xfrm.set("rot", str(rot * 60000))
+                if flip_h:
+                    xfrm.set("flipH", "1")
+                if flip_v:
+                    xfrm.set("flipV", "1")
+                xfrm.off.x, xfrm.off.y = emu(fx), emu(fy)
+                xfrm.ext.cx, xfrm.ext.cy = emu(fw), emu(fh)
+            glue = cxn._element.nvCxnSpPr.cNvCxnSpPr
+            st = glue.get_or_add_stCxn()
+            st.id, st.idx = shapes[id(edge.parent)].shape_id, start_site
+            en = glue.get_or_add_endCxn()
+            en.id, en.idx = shapes[id(edge.child)].shape_id, end_site
+            cxn.line.color.rgb = RGBColor(*_hex(edge.colour))
+            cxn.line.width = emu(1.5 * scale)
+            if edge.dashed:
+                cxn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+
+        # Lines behind boxes: move every connector to the back of the shape tree, after the title.
+        tree = slide.shapes._spTree
+        for cxn_el in [el for el in tree if el.tag.endswith("}cxnSp")]:
+            tree.remove(cxn_el)
+            tree.insert(3, cxn_el)
 
     buf = io.BytesIO()
     prs.save(buf)

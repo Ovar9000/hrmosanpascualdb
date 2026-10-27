@@ -103,10 +103,22 @@ class StructurePosition(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices)
     beside_head = models.BooleanField(default=False, help_text="Drawn beside the head, not below it.")
     coterminous = models.BooleanField(default=False, help_text="Drawn with a dashed line.")
+    reports_to = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="reports",
+        help_text="The position it is drawn under, in the same division or section. "
+        "Empty: directly under its division or section.",
+    )
+    joins_row = models.BooleanField(
+        default=False, help_text="Drawn under the row of positions above it, joined to the bottom of each.",
+    )
     order = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         ordering = ["office", "order", "title"]
+
+    def clean(self):
+        if self.reports_to_id and (self.reports_to_id == self.pk or self.reports_to.unit_id != self.unit_id):
+            raise ValidationError({"reports_to": "Choose another position in the same division or section."})
 
     def __str__(self):
         return f"{self.title} (SG {self.salary_grade})" if self.salary_grade else self.title

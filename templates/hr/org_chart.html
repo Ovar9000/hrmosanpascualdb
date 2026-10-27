@@ -3,8 +3,14 @@
 
 {% block content %}
 <style>
-  .org-chart-scroll { overflow: auto; max-height: 78vh; background: #fff; }
-  .org-chart-scroll svg { display: block; }
+  /* The chart's frame spans the whole window (16px each side), wider than the page's text column.
+     --page-w is the window's width less any scrollbar, set by the script below; 100vw would include it. */
+  .org-chart-wide { width: calc(var(--page-w, 100vw) - 32px); margin-left: calc(50% - var(--page-w, 100vw) / 2 + 16px); }
+  /* contain: the chart's own width never widens the page; it scrolls in here instead */
+  .org-chart-scroll { overflow: auto; max-height: 78vh; max-width: 100%; contain: inline-size; background: #fff; }
+  .org-chart-scroll svg { display: block; max-width: none; }
+  .org-chart-scroll.dragging { cursor: grabbing; user-select: none; }
+  .org-zoom-level { min-width: 3.5rem; }
   .org-chart-scroll a { text-decoration: none; }
   .org-chart-scroll a:hover rect:first-of-type, .org-chart-scroll a:focus rect:first-of-type { stroke-width: 3; }
   .org-chart-scroll svg { margin: 0 auto; }
@@ -101,21 +107,33 @@
 </div>
 {% endif %}
 
+{% if staff and not staff.on_chart %}
 <div class="card shadow-sm border-0 mb-2">
-  {% if staff and not staff.on_chart %}
-    <div class="card-body text-muted">No active Elected, Plantilla, Casual or Contractual staff in this office.</div>
-  {% else %}
-    <div class="org-chart-scroll" tabindex="0" aria-label="Org chart, scroll to see all of it">{{ svg|safe }}</div>
-  {% endif %}
+  <div class="card-body text-muted">No active Elected, Plantilla, Casual or Contractual staff in this office.</div>
 </div>
+{% else %}
+<div class="card shadow-sm border-0 mb-2 org-chart-wide">
+  <div class="org-zoom card-header bg-white d-flex flex-wrap align-items-center gap-2 py-1 small" hidden>
+    <div class="btn-group btn-group-sm" role="group" aria-label="Zoom">
+      <button type="button" class="btn btn-outline-secondary" data-zoom="out" aria-label="Zoom out">−</button>
+      <span class="btn btn-outline-secondary disabled org-zoom-level" aria-live="polite"></span>
+      <button type="button" class="btn btn-outline-secondary" data-zoom="in" aria-label="Zoom in">+</button>
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-zoom="fit">Fit</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-zoom="full">100%</button>
+    <span class="text-muted d-none d-md-inline">Ctrl + scroll to zoom, drag to move around.</span>
+  </div>
+  <div class="org-chart-scroll" tabindex="0" aria-label="Org chart, scroll to see all of it">{{ svg|safe }}</div>
+</div>
+{% endif %}
 
 <div class="small text-muted d-flex flex-wrap gap-3 mb-3">
   {% if legend %}
     {% for label, accent, fill in legend %}
       <span><span class="org-key" style="background:{{ fill }};border:2px solid {{ accent }}"></span> {{ label }}</span>
     {% endfor %}
-    <span><svg width="28" height="10" aria-hidden="true"><line x1="0" y1="5" x2="28" y2="5" stroke="#adb5bd" stroke-width="1.5" stroke-dasharray="5 4"/></svg> Coterminous</span>
-    <span>As on the office's approved structure chart. Positions are not appointments: click the head for who holds them.</span>
+    <span><svg width="28" height="10" aria-hidden="true"><line x1="0" y1="5" x2="28" y2="5" stroke="#4472c4" stroke-width="1.5" stroke-dasharray="5 4"/></svg> Attached or coterminous</span>
+    <span>Red is a vacancy proposed for creation, green an existing filled-up position. Each position sits under the one it reports to. As on the office's approved structure chart; positions are not appointments: click the head for who holds them.{% if slides > 1 %} The PDF and PowerPoint split it into {{ slides }} slides, as HRMO's chart does.{% endif %}</span>
   {% elif is_tree %}
     <span><span class="org-key" style="background:#0d6efd"></span> Executive</span>
     <span><span class="org-key" style="background:#087990"></span> Legislative</span>
@@ -130,4 +148,84 @@
     {% if not_drawn_note %}<span>{{ not_drawn_note }}Job Order, Contract of Service and project-based staff are counted, not drawn.</span>{% endif %}
   {% endif %}
 </div>
+<script>
+  // The chart opens zoomed out to fit the frame, so all of it shows at once. − and + (or Ctrl + scroll,
+  // or a pinch on a trackpad) zoom from there up to 200%; dragging with the mouse moves around a zoomed-in chart.
+  // Without this script the chart shows at full size and scrolls.
+  var page = document.documentElement;
+  function pageWidth() { page.style.setProperty("--page-w", page.clientWidth + "px"); }
+  pageWidth();
+  window.addEventListener("resize", pageWidth);
+  document.querySelectorAll(".org-chart-wide").forEach(function (card) {
+    var box = card.querySelector(".org-chart-scroll"), svg = box.querySelector("svg"), bar = card.querySelector(".org-zoom");
+    if (!svg) return;
+    var w = svg.viewBox.baseVal.width, h = svg.viewBox.baseVal.height, MAX = 2, STEP = 1.25;
+    var scale = 1, fitted = true;
+    function fitScale() {  // all of it in the frame: as wide as the frame and no taller than its max-height
+      var tall = parseFloat(getComputedStyle(box).maxHeight) || Infinity;
+      return Math.min(1, box.clientWidth / w, tall / h);
+    }
+    // Zooms keeping the chart point under (x, y), in window coordinates, where it is.
+    function zoom(next, x, y) {
+      next = Math.min(MAX, Math.max(fitScale(), next));
+      var before = svg.getBoundingClientRect(), px = (x - before.left) / scale, py = (y - before.top) / scale;
+      scale = next;
+      svg.style.width = w * scale + "px";
+      svg.style.height = h * scale + "px";
+      pageWidth();  // the new height may have added or removed the page's scrollbar
+      var after = svg.getBoundingClientRect();
+      box.scrollLeft += after.left + px * scale - x;
+      box.scrollTop += after.top + py * scale - y;
+      bar.querySelector(".org-zoom-level").textContent = Math.round(scale * 100) + "%";
+    }
+    function middle() { var r = box.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }
+    function fit() {
+      fitted = true;
+      zoom(fitScale(), 0, 0);
+      zoom(fitScale(), 0, 0);  // again, in case that added or removed the vertical scrollbar
+      box.scrollLeft = box.scrollTop = 0;
+    }
+    bar.hidden = false;
+    fit();
+    bar.addEventListener("click", function (e) {
+      var how = e.target.closest("[data-zoom]"), at = middle();
+      if (!how) return;
+      how = how.dataset.zoom;
+      if (how === "fit") return fit();
+      fitted = false;
+      zoom(how === "in" ? scale * STEP : how === "out" ? scale / STEP : 1, at[0], at[1]);
+    });
+    box.addEventListener("wheel", function (e) {
+      if (!e.ctrlKey) return;  // a plain wheel still scrolls
+      e.preventDefault();
+      fitted = false;
+      zoom(scale * Math.pow(STEP, -e.deltaY / 100), e.clientX, e.clientY);
+    }, { passive: false });
+    var room = box.clientWidth;
+    new ResizeObserver(function () {  // the frame got wider or narrower: refit, or keep the zoom above the fit
+      if (box.clientWidth === room) return;
+      room = box.clientWidth;
+      if (fitted) fit(); else if (scale < fitScale()) zoom(fitScale(), 0, 0);
+    }).observe(box);
+    // Drag to move (mouse only: touch screens already scroll by dragging). A drag is not a click on a box.
+    var start = null, moved = false;
+    box.addEventListener("pointerdown", function (e) {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      start = [e.clientX, e.clientY, box.scrollLeft, box.scrollTop];
+      moved = false;
+    });
+    window.addEventListener("pointermove", function (e) {
+      if (!start) return;
+      var dx = e.clientX - start[0], dy = e.clientY - start[1];
+      if (!moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+      moved = true;
+      box.classList.add("dragging");
+      box.scrollLeft = start[2] - dx;
+      box.scrollTop = start[3] - dy;
+    });
+    window.addEventListener("pointerup", function () { start = null; box.classList.remove("dragging"); });
+    box.addEventListener("click", function (e) { if (moved) { e.preventDefault(); moved = false; } }, true);
+    box.addEventListener("dragstart", function (e) { e.preventDefault(); });  // links would start a native drag
+  });
+</script>
 {% endblock %}

@@ -179,9 +179,10 @@ class OrgUnitAdmin(SuperuserOnlyAdmin):
 
 @admin.register(StructurePosition)
 class StructurePositionAdmin(SuperuserOnlyAdmin):
-    list_display = ("title", "salary_grade", "status", "office", "unit", "beside_head", "coterminous", "order")
+    list_display = ("title", "salary_grade", "status", "office", "unit", "reports_to", "joins_row", "beside_head", "coterminous", "order")
     list_filter = ("office", "status")
     search_fields = ("title",)
+    list_select_related = ("office", "unit", "reports_to")
 
 
 class EngagementInline(admin.TabularInline):
