@@ -15,6 +15,8 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+## 1.3.0 (October 27, 2026)
+
 Added:
 - The **Mayor's Office structure chart** now reads like HRMO's own: the Mayor's staff in a row just below the
   Mayor's box, each division with its chief, its sections under the chief and a column of positions under
