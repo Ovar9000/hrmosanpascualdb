@@ -5956,6 +5956,32 @@ class AppVersionTestCase(TestCase):
         self.assertEqual(bump("1.1.1", ["feat(api)!: new login"]), "2.0.0")
         self.assertEqual(bump("1.9.3", ["fix: x\n\nBREAKING CHANGE: the PDS is stored differently"]), "2.0.0")
 
+    def test_deploy_releases_the_unreleased_changelog(self):
+        import importlib.util
+        from django.conf import settings as django_settings
+
+        spec = importlib.util.spec_from_file_location("deploy_script", django_settings.BASE_DIR / "scripts" / "deploy.py")
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+
+        committed = "# Changelog\n\n## Unreleased (next minor)\n\nAdded:\n- Org charts zoom.\n\nFixed:\n- Paging.\n\n## 1.2.0 (October 26, 2026)\n\n- Old.\n"
+        released, notes = script.release_changelog(committed, "1.3.0", "October 27, 2026")
+        self.assertEqual(notes, "Added:\n- Org charts zoom.\n\nFixed:\n- Paging.")
+        self.assertIn("## Unreleased\n\n## 1.3.0 (October 27, 2026)\n\nAdded:\n- Org charts zoom.", released)
+        self.assertTrue(released.endswith("- Paging.\n\n## 1.2.0 (October 26, 2026)\n\n- Old.\n"))
+        # No entries: the commit subjects are the notes.
+        empty = "## Unreleased\n\n## 1.2.0 (x)\n"
+        self.assertEqual(script.release_changelog(empty, "1.2.1", "y", ["- fix: a"])[1], "- fix: a")
+
+        # An entry not committed yet stays under Unreleased, under its label; the release keeps the rest.
+        working = committed.replace("- Paging.\n", "- Paging.\n- Two-step login clock message.\n")
+        after = script.carry_uncommitted(committed, working, released)
+        self.assertIn("## Unreleased\n\nFixed:\n- Two-step login clock message.\n\n## 1.3.0", after)
+        self.assertEqual(after.count("Two-step login"), 1)
+        self.assertEqual(script.carry_uncommitted(committed, committed, released), released)
+        with self.assertRaises(script.Stop):  # an uncommitted edit to a released line
+            script.carry_uncommitted(committed, committed.replace("- Old.", "- Older."), released)
+
 
 class HrmoOwnRecordTestCase(TestCase):
     """R10: HRMO staff never change their own HR record; another HRMO staff member does."""

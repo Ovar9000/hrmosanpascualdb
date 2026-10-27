@@ -210,8 +210,10 @@ account and its one-time password **privately**.
 
 ### During the review
 
-- **Code updates:** push to the branch, then on the server `sh scripts/vps_update.sh`
-  (pulls, rebuilds, migrates, restarts the website).
+- **Code updates:** from your PC run `python scripts/deploy.py`. When users would see a change it cuts a
+  release (the version number, the changelog heading, a `vX.Y.Z` tag), then pushes `main` and runs
+  `sh scripts/vps_update.sh` on the server (pulls, rebuilds, migrates, restarts the website). Set the server
+  once per clone: `git config deploy.host root@203.0.113.10`. `--dry-run` only shows what it would do.
 - **Locked out after 5 wrong passwords:**
   `docker compose -f docker-compose.prod.yml exec -u app web python manage.py axes_reset`
 - **Logs:** `docker compose -f docker-compose.prod.yml logs --tail 100 web`

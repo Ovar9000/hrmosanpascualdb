@@ -9,11 +9,33 @@ commit messages since the last release in `VERSION` (`scripts/version.py`, DECIS
   real data.
 - `docs:`, `chore:`, `test:` and similar commits change nothing users see, so the number stays.
 
-To close a release (optional bookkeeping): set `VERSION` to the number the footer shows, rename the
-"Unreleased" heading here to it, and tag the commit (`git tag v1.2.0`). Hover over the version in the footer
-to see the exact commit that is running.
+Releases are cut by `python scripts/deploy.py`, which also pushes and deploys: it sets `VERSION`, renames the
+"Unreleased" heading here to the new number and date, and tags the commit `vX.Y.Z`. So write each change
+under "Unreleased" as you make it. Hover over the version in the footer to see the exact commit that is running.
 
-## Unreleased (next minor, 1.2.0)
+## Unreleased
+
+Added:
+- The **Mayor's Office structure chart** now reads like HRMO's own: the Mayor's staff in a row just below the
+  Mayor's box, each division with its chief, its sections under the chief and a column of positions under
+  each section, every position under the one it reports to. Boxes are filled with the legend colour: red
+  for a vacancy proposed for creation, green for an existing filled-up position, yellow elected, blue local
+  special bodies. It follows HRMO's new six-division structure (CDD, CAPRD, GSD, IMSD, PSD, SDRD). The PDF
+  and PowerPoint split it into slides of three divisions ("Part 1 of 2"), each still 16:9 (O7). On a server
+  that already has the old structure, run `manage.py seed_structure --replace` once to load it (this
+  discards admin edits to the Mayor's Office structure).
+
+Fixed:
+- **Org charts**: the outer boxes of the office tree were cut off at both edges, and the wide Mayor's Office
+  structure was hard to take in. The Mayor's Office structure now puts its divisions in rows (3 + 3) either
+  side of the line down from the Mayor, so on a laptop or desktop screen it fits whole at about 60–70% instead
+  of 30%; the PNG picture does the same, and the PDF and PowerPoint keep their slides of three divisions (O7).
+  Every chart now uses the full width of the window and opens zoomed out so it fits whole. Zoom in and out with
+  **−** / **+** (up to 200%), Ctrl + scroll or a trackpad pinch; **Fit** and **100%** jump back. Drag with the
+  mouse to move around a zoomed-in chart. The chart scrolls inside its own frame, which can no longer widen
+  the page.
+
+## 1.2.0 (October 26, 2026)
 
 Added:
 - **Two-step login** with an authenticator app (Google Authenticator, Microsoft Authenticator, Aegis): no email or
@@ -33,25 +55,11 @@ Added:
   hours if unused (`RESET_PASSWORD_HOURS`). HRMO resets plain employee accounts only; accounts with a role or
   delegation stay with the emergency superuser (A2, R3).
 
-- The **Mayor's Office structure chart** now reads like HRMO's own: the Mayor's staff in a row just below the
-  Mayor's box, each division with its chief, its sections under the chief and a column of positions under
-  each section, every position under the one it reports to. Boxes are filled with the legend colour: red
-  for a vacancy proposed for creation, green for an existing filled-up position, yellow elected, blue local
-  special bodies. It follows HRMO's new six-division structure (CDD, CAPRD, GSD, IMSD, PSD, SDRD). The PDF
-  and PowerPoint split it into slides of three divisions ("Part 1 of 2"), each still 16:9 (O7). On a server
-  that already has the old structure, run `manage.py seed_structure --replace` once to load it (this
-  discards admin edits to the Mayor's Office structure).
+- The version in the footer is worked out from the commit messages at each deploy, so it no longer lags
+  behind new features; hover over it for the exact build (H9).
 
 Fixed:
 - Paging through the audit trail dropped the From/To date filters.
-- **Org charts**: the outer boxes of the office tree were cut off at both edges, and the wide Mayor's Office
-  structure was hard to take in. The Mayor's Office structure now puts its divisions in rows (3 + 3) either
-  side of the line down from the Mayor, so on a laptop or desktop screen it fits whole at about 60–70% instead
-  of 30%; the PNG picture does the same, and the PDF and PowerPoint keep their slides of three divisions (O7).
-  Every chart now uses the full width of the window and opens zoomed out so it fits whole. Zoom in and out with
-  **−** / **+** (up to 200%), Ctrl + scroll or a trackpad pinch; **Fit** and **100%** jump back. Drag with the
-  mouse to move around a zoomed-in chart. The chart scrolls inside its own frame, which can no longer widen
-  the page.
 
 ## 1.1.1 (October 2026)
 
