@@ -49,9 +49,10 @@ Changed:
 - The **Tools** menu is now short: a link to the new **HR Desk**, which groups every tool by task (hiring and
   appointments, requests, leave and time, pay and benefits, and so on) with counts of what is waiting, plus
   only the items that need attention now (DK1-DK3).
-- Printed appointment papers follow the **2025 ORAOHRA**: CS Form No. 33-A while the CSC regulates the LGU, 33-B from the date set in `CSC_ACCREDITED_ON`,
-  CS Form No. 4 and the ROAI (CS Form No. 2) are now Revised 2025. Casuals no longer get CS Form No. 33: under
-  the 2025 rules they go on the Plantilla of Casual Appointment (CS Form No. 34), not built yet (AP1).
+- Printed appointment papers follow the **2025 ORAOHRA**: CS Form No. 33-A while the CSC regulates the LGU,
+  33-B from the date set in `CSC_ACCREDITED_ON`; CS Form No. 4 and the ROAI (CS Form No. 2) are now Revised
+  2025. Casuals no longer get CS Form No. 33: under the 2025 rules they go on the Plantilla of Casual
+  Appointment (CS Form No. 34), not built yet (AP1).
 
 Fixed:
 - **Plantilla of Personnel**: an item whose holder retired or resigned no longer drops off the report when no
