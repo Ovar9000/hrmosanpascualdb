@@ -523,9 +523,14 @@ class FormVersionsAndPlantillaItemsTestCase(LguBase):
 
     def test_2025_form_versions(self):
         url = f"/engagements/{self.eng_a.pk}/papers/"
-        self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-B, Revised 2025")
-        with override_settings(CSC_AGENCY_STATUS="regulated"):
+        self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-A, Revised 2025")
+        with override_settings(CSC_ACCREDITED_ON=date(2025, 6, 1)):
+            self.eng_a.issued_on = date(2025, 1, 2)  # signed while regulated: a reprint keeps 33-A
+            self.eng_a.save()
             self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-A, Revised 2025")
+            self.eng_a.issued_on = date(2025, 6, 1)
+            self.eng_a.save()
+            self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-B, Revised 2025")
         self.assertContains(self.get(self.hrmo_user, f"{url}assumption/"), "CS Form No. 4, Revised 2025")
         self.assertContains(self.get(self.hrmo_user, "/reports/roai/", month="2025-01", print="1"), "CS Form No. 2, Revised 2025")
 

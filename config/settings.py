@@ -5,7 +5,7 @@ All secrets and environment-specific values come from environment variables
 """
 
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -207,9 +207,10 @@ COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
 # Optional modules switched on (DECISIONS MD1): any of pass_slips, development_plans, awards, workforce.
 # Off by default: they were built before HRMO asked for them.
 HR_MODULES = _types("HR_MODULES", "")
-# Appointment papers (DECISIONS AP1): whether the CSC regulates the LGU's appointments or has accredited
-# it (2025 ORAOHRA). It picks CS Form No. 33-A or 33-B and 34-A or 34-B. Confirm with HRMO.
-CSC_AGENCY_STATUS = os.environ.get("CSC_AGENCY_STATUS", "accredited")
+# Appointment papers (DECISIONS AP1): the date the CSC accredited the LGU, as YYYY-MM-DD. Blank means the CSC
+# regulates its appointments (San Pascual, confirmed 2026-10-28). Appointments signed before the date keep
+# the regulated forms (CS Form No. 33-A, 34-A); those signed on or after it get the accredited ones (33-B, 34-B).
+CSC_ACCREDITED_ON = date.fromisoformat(os.environ["CSC_ACCREDITED_ON"]) if os.environ.get("CSC_ACCREDITED_ON") else None
 # Working days a month, to turn a daily rate into a monthly one.
 WORKING_DAYS_PER_MONTH = int(os.environ.get("WORKING_DAYS_PER_MONTH", "22"))
 # Job order and contract of service papers (DECISIONS JC1): the fund charged when the contract has no

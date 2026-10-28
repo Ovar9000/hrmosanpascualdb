@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db.models import Q
+from django.utils import timezone
 
 from .models import Engagement, SalaryAction, SalaryRate, SalarySchedule, Vacancy
 
@@ -102,9 +103,15 @@ def signatories():
 # --- Appointment papers (AP1-AP4) ---------------------------------------------------------------
 
 
-def appointment_form_label():
-    """CS Form No. 33-A for regulated agencies, 33-B for accredited ones (2025 ORAOHRA, AP1)."""
-    letter = "A" if settings.CSC_AGENCY_STATUS == "regulated" else "B"
+def is_accredited(day):
+    """Whether the CSC had accredited the LGU on that day (AP1)."""
+    return settings.CSC_ACCREDITED_ON is not None and day >= settings.CSC_ACCREDITED_ON
+
+
+def appointment_form_label(eng):
+    """CS Form No. 33-A while the CSC regulates the LGU, 33-B once it is accredited, by the date the
+    appointment was signed (today if not recorded), so a reprint keeps the form it was issued on (AP1)."""
+    letter = "B" if is_accredited(eng.issued_on or timezone.localdate()) else "A"
     return f"CS Form No. 33-{letter}, Revised 2025"
 
 
@@ -141,7 +148,7 @@ def appointment_context(eng):
         "status": employment_status(eng),
         "monthly": rate, "monthly_words": amount_in_words(rate), "monthly_peso": peso(rate),
         "vacancy": publication_for(eng),
-        "form_label": appointment_form_label(),
+        "form_label": appointment_form_label(eng),
         "supervisor": eng.reports_to,
         "sign": signatories(),
     }
