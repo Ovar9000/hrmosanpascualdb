@@ -15,6 +15,8 @@ from hr.models import (
 )
 from hr.tests import Step4CSecurityAndRolesTestCase
 
+ALL_MODULES = ["pass_slips", "development_plans", "awards", "workforce"]
+
 
 def _table(base=10000, grades=3):
     """A pasted schedule: one line per grade, 8 steps, rising."""
@@ -224,6 +226,7 @@ class SalaryScheduleTestCase(LguBase):
         self.assertEqual(self.get(self.hrmo_user, f"/salary-actions/{case.pk}/nosi/").status_code, 403)
 
 
+@override_settings(HR_MODULES=ALL_MODULES)
 class PassSlipTestCase(LguBase):
     def _file(self, **extra):
         data = {"kind": "personal", "slip_date": timezone.localdate().isoformat(), "time_out": "09:00",
@@ -297,7 +300,7 @@ class PassSlipTestCase(LguBase):
         slip.refresh_from_db()
         self.assertIsNone(slip.actual_out)
 
-    @override_settings(PASS_SLIP_STEPS=["recommend", "approve"])
+    @override_settings(PASS_SLIP_STEPS=["recommend", "approve"], HR_MODULES=ALL_MODULES)
     def test_office_head_recommends_when_configured(self):
         self._file()
         slip = PassSlip.objects.get()
@@ -386,6 +389,7 @@ class SeparationTestCase(LguBase):
         self.assertEqual(self.eng_a.status, Engagement.Status.RETIRED)
 
 
+@override_settings(HR_MODULES=ALL_MODULES)
 class AwardsPlansWorkforceTestCase(LguBase):
     def test_hrmo_records_an_award_for_many(self):
         resp = self.post(self.hrmo_user, "/awards/new/", {
@@ -445,3 +449,70 @@ class AwardsPlansWorkforceTestCase(LguBase):
         self.assertContains(page, "Papers")
         self.assertContains(page, "Separation &amp; clearance")
 
+
+class ModulesAndDeskTestCase(LguBase):
+    """MD1-MD3, DK1-DK3: optional modules stay hidden until switched on; the HR Desk holds every tool."""
+
+    MODULE_URLS = ["/pass-slips/", "/pass-slips/log/", "/awards/", "/development-plan/", "/tracker/development-plans/",
+                   "/reports/workforce/"]
+
+    def test_modules_off_by_default_answer_not_found_and_leave_no_links(self):
+        for url in self.MODULE_URLS:
+            with self.subTest(url=url):
+                self.assertEqual(self.get(self.hrmo_user, url).status_code, 404)
+        home = self.get(self.emp_a_user, "/")
+        for text in ("My pass slips", "My development plan", "Awards &amp; recognition"):
+            self.assertNotContains(home, text)
+        desk = self.get(self.hrmo_user, "/desk/")
+        for text in ("Pass slip log", "Development plans", "Awards &amp; recognition", "Workforce profile"):
+            self.assertNotContains(desk, text)
+        person = self.get(self.hrmo_user, f"/people/{self.person_a.pk}/")
+        self.assertNotContains(person, "Development plan")
+        self.assertNotContains(person, "Record a paper pass slip")
+
+    @override_settings(HR_MODULES=["awards"])
+    def test_switching_one_on_shows_only_that_one(self):
+        self.assertEqual(self.get(self.hrmo_user, "/awards/").status_code, 200)
+        self.assertEqual(self.get(self.hrmo_user, "/pass-slips/log/").status_code, 404)
+        desk = self.get(self.hrmo_user, "/desk/")
+        self.assertContains(desk, "Awards &amp; recognition")
+        self.assertNotContains(desk, "Pass slip log")
+
+    def test_unknown_module_name_is_a_programming_error(self):
+        from hr import modules
+
+        with self.assertRaises(ValueError):
+            modules.enabled("payroll")
+
+    def test_desk_groups_tools_and_counts_what_is_waiting(self):
+        from hr import desk
+
+        self.jo.end_date = date(2026, 8, 31)  # active but past its end: lapsed
+        self.jo.save()
+        cards = desk.cards(self.hrmo_user, date(2026, 10, 28))
+        titles = [c["title"] for c in cards]
+        self.assertEqual(titles[:2], ["Hiring and appointments", "Requests from employees"])
+        renewals = next(i for c in cards for i in c["items"] if i["name"] == "tracker_renewals")
+        self.assertEqual((renewals["count"], renewals["what"]), (1, "lapsed"))
+        self.assertIn(renewals, desk.attention(cards))
+        page = self.get(self.hrmo_user, "/desk/")
+        self.assertContains(page, "Waiting now")
+        self.assertContains(page, "Report on Appointments Issued")
+
+    def test_tools_menu_is_the_desk_link_and_waiting_items_only(self):
+        page = self.get(self.hrmo_user, "/")
+        self.assertContains(page, "HR Desk: all tools")
+        self.assertNotContains(page, ">Training hours<")  # on the desk, not in the menu
+
+    def test_who_gets_the_desk(self):
+        self.assertEqual(self.get(self.auditor_user, "/desk/").status_code, 200)
+        auditor = self.get(self.auditor_user, "/desk/")
+        self.assertNotContains(auditor, "Record overtime")  # HRMO records, the Auditor reads
+        mayor = self.get(self.mayor, "/desk/")  # Executives already had Tools for the project list
+        self.assertEqual([c["title"] for c in mayor.context["desk"]], ["Hiring and appointments"])
+        self.assertContains(mayor, "Projects")
+        self.assertNotContains(mayor, "Contract renewals")
+        for user in (self.emp_a_user, self.head_a, self.staff_a):
+            with self.subTest(user=user.username):
+                self.assertEqual(self.get(user, "/desk/").status_code, 403)
+                self.assertNotContains(self.get(user, "/"), "HR Desk: all tools")

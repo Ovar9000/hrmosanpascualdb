@@ -40,10 +40,8 @@ def board_nav(request):
     def links():
         from . import board, coc, leave, pass_slips, saln
         from .models import CertificateRequest, PasswordResetRequest, PdsSubmission
-        from .permissions import (
-            can_handle_password_resets, can_print_papers, can_view_pass_slip_log, can_view_separations,
-            can_view_workforce_report, is_office_head,
-        )
+        from .modules import enabled
+        from .permissions import can_handle_password_resets, is_office_head
 
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
@@ -56,11 +54,7 @@ def board_nav(request):
             "person": person is not None,
             "approver": approver,
             "inbox": len(leave.inbox(user)) if approver else 0,
-            "slip_inbox": len(pass_slips.inbox(user)) if approver else 0,
-            "papers": can_print_papers(user),
-            "separations": can_view_separations(user),
-            "slip_log": can_view_pass_slip_log(user),
-            "workforce": can_view_workforce_report(user),
+            "slip_inbox": len(pass_slips.inbox(user)) if approver and enabled("pass_slips") else 0,
             "register": can_view_leave_register(user),
             "plantilla": can_view_plantilla_report(user),
             "unread": board.unread_memos(person).count() if person else 0,
@@ -80,6 +74,19 @@ def board_nav(request):
         }
 
     return {"board_nav": SimpleLazyObject(links)}
+
+
+def desk_nav(request):
+    """The Tools menu: the HR Desk link and what is waiting on it (DECISIONS DK3), and which optional
+    modules are on (MD1). Lazy, like org_nav."""
+    from . import desk, modules
+
+    def links():
+        user = getattr(request, "user", None)
+        cards = desk.cards(user) if user is not None else []
+        return {"show": bool(cards), "waiting": desk.attention(cards)}
+
+    return {"desk_nav": SimpleLazyObject(links), "modules": modules.flags()}
 
 
 def app_version(request):

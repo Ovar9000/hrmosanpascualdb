@@ -40,6 +40,13 @@ Added:
   has one by office (ID1-ID3).
 - **Workforce profile**: people in active service by sex, appointment type, office, age, length of service, and
   persons with disability, solo parents and indigenous groups from the PDS, for the GAD plan (WF1-WF2).
+- Pass slips, development plans, awards and the workforce profile are **switched off** until HRMO asks for them
+  (`HR_MODULES`, MD1-MD3).
+
+Changed:
+- The **Tools** menu is now short: a link to the new **HR Desk**, which groups every tool by task (hiring and
+  appointments, requests, leave and time, pay and benefits, and so on) with counts of what is waiting, plus
+  only the items that need attention now (DK1-DK3).
 
 ## 1.3.0 (October 27, 2026)
 

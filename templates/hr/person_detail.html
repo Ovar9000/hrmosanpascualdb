@@ -30,8 +30,8 @@
             </ul>
           </div>
         {% endif %}
-        {% if can_manage_records and engagements.first.status == 'active' %}<a href="{% url 'slip_record' person.pk %}" class="btn btn-sm btn-outline-secondary" title="Record a paper pass slip">Pass slip</a>{% endif %}
-        {% if idp %}<a href="{% url 'idp_person' person.pk %}" class="btn btn-sm btn-outline-primary">Development plan</a>{% endif %}
+        {% if modules.pass_slips and can_manage_records and engagements.first.status == 'active' %}<a href="{% url 'slip_record' person.pk %}" class="btn btn-sm btn-outline-secondary" title="Record a paper pass slip">Pass slip</a>{% endif %}
+        {% if idp and modules.development_plans %}<a href="{% url 'idp_person' person.pk %}" class="btn btn-sm btn-outline-primary">Development plan</a>{% endif %}
         {% if separations.manage %}{% with curr=engagements.first %}{% if curr and curr.status == 'active' %}<a href="{% url 'separation_new' person.pk %}" class="btn btn-sm btn-outline-danger">Separation &amp; clearance</a>{% endif %}{% endwith %}{% endif %}
         {% if can_manage_records %}
           <a href="{% url 'person_edit' person.pk %}" class="btn btn-sm btn-outline-primary">
@@ -303,7 +303,7 @@
   </ul>
 </div>
 {% endif %}
-{% if awards %}
+{% if awards and modules.awards %}
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2">Awards and recognition</div>
   <ul class="list-group list-group-flush small">

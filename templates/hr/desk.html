@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}HR Desk{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h1 class="h3 mb-0">HR Desk</h1>
+  <div class="text-muted small">Every tool, grouped by what you are doing. Numbers show what is waiting.</div>
+</div>
+
+{% if waiting %}
+<div class="card border-0 shadow-sm mb-3 border-start border-4 border-warning">
+  <div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center">
+    <span class="fw-semibold me-1">Waiting now:</span>
+    {% for i in waiting %}<a class="btn btn-sm btn-outline-dark" href="{{ i.url }}">{{ i.label }} <span class="badge text-bg-warning">{{ i.count }} {{ i.what }}</span></a>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  {% for card in desk %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white py-2"><div class="fw-bold">{{ card.title }}</div><div class="small text-muted">{{ card.hint }}</div></div>
+      <div class="list-group list-group-flush">
+        {% for i in card.items %}
+          <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ i.url }}">
+            <span>{{ i.label }}</span>
+            {% if i.count %}<span class="badge {% if i.quiet %}text-bg-light border{% else %}text-bg-warning{% endif %}">{{ i.count }} {{ i.what }}</span>{% endif %}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

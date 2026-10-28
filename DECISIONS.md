@@ -336,6 +336,17 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | WF1 | **Counts by sex** of people in active service (one row per person, their latest appointment): appointment type, office, age band, years since their first appointment in the LGU, and from PDS question 40 persons with disability, solo parents and members of indigenous groups (only people with a PDS here are counted, and the page says how many). For the GAD plan and database and the CSC. Excel. | Maybe |
 | WF2 | **HRMO and Auditor only:** counts of small groups can point to a person, and question 40 is sensitive (PD5). | No |
 
+## Optional modules and the HR Desk
+
+| # | Decision | Survey? |
+|---|---|---|
+| MD1 | **Features built before HRMO asked for them are switched off** until HRMO asks: `HR_MODULES` lists the ones that are on, from `pass_slips`, `development_plans`, `awards` and `workforce` (default: none). Decided 2026-10-28, to keep the review copy to what the survey asked for. | **Likely** (HRMO's answer per module) |
+| MD2 | **Off means absent:** no menu, desk or person-page link, and the module's pages answer 404 (`hr.modules.requires` in `urls.py`). Its code, tables, data and tests stay, so switching it on is a settings change and a restart. | No |
+| MD3 | **Adding a module:** put its name in `hr.modules.OPTIONAL`, wrap its routes with `requires`, and check `modules.<name>` in templates. *Proven by* `ModulesAndDeskTestCase`. | No |
+| DK1 | **The HR Desk** (`/desk/`) holds every HRMO tool as cards grouped by what HRMO is doing (hiring and appointments, requests from employees, leave and time, pay and benefits, performance and development, compliance, leaving the LGU, records) instead of by kind of page. A new tool is one entry in `hr.desk.CARDS`, with who sees it. | Maybe (HRMO may group them differently) |
+| DK2 | **Counts on the cards** show what is waiting: lapsed contracts, people past 65, salary cases due, requests to prepare, PDSs to verify, password requests, meetings to hold, separations in progress. | No |
+| DK3 | **The Tools menu stays short:** the desk link plus only the items with something waiting (separations in progress are a queue, not an alarm, so they show on the desk only). Who sees the desk is unchanged from the old Tools menu: HRMO, Auditor, and roles with a tool of their own (Executives and Project Maintainers: projects; staff: Admin). Office heads and employees keep their things in the People and Leave menus. *Proven by* `ModulesAndDeskTestCase`. | No |
+
 ## Import / export
 
 | # | Decision | Survey? |

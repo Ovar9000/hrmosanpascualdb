@@ -86,6 +86,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "hr.context_processors.org_chart_nav",
                 "hr.context_processors.board_nav",
+                "hr.context_processors.desk_nav",
                 "hr.context_processors.app_version",
                 "hr.context_processors.mfa_nav",
             ],
@@ -203,6 +204,9 @@ COC_RESTDAY_RATE = os.environ.get("COC_RESTDAY_RATE", "1.5")
 COC_MONTHLY_CAP = int(os.environ.get("COC_MONTHLY_CAP", "40"))
 COC_BALANCE_CAP = int(os.environ.get("COC_BALANCE_CAP", "120"))
 COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
+# Optional modules switched on (DECISIONS MD1): any of pass_slips, development_plans, awards, workforce.
+# Off by default: they were built before HRMO asked for them.
+HR_MODULES = _types("HR_MODULES", "")
 # Appointment papers (DECISIONS AP1): the form number printed on the appointment, and the working days
 # a month used to turn a daily rate into a monthly one.
 APPOINTMENT_FORM_LABEL = os.environ.get("APPOINTMENT_FORM_LABEL", "CS Form No. 33-B, Revised 2018")
