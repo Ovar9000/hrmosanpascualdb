@@ -15,6 +15,8 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+## 1.4.0 (October 28, 2026)
+
 Added:
 - **Appointment papers**: every plantilla, casual and contractual appointment now has a **Papers** page (person
   record → Papers) to fill in the nature of appointment, vice, and the signing, oath and assumption dates, and
