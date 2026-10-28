@@ -23,7 +23,7 @@
           <tr>
             <td class="text-nowrap">{{ r.item }}</td><td>{{ r.position }}</td><td class="text-center">{{ r.sg }}</td>
             <td class="text-end">{{ r.annual|floatformat:"2g"|default:"" }}</td><td class="text-center">{{ r.step }}</td>
-            {% if r.vacant %}<td colspan="3" class="text-center fw-bold">(Vacant)</td><td></td><td></td><td></td><td></td>
+            {% if r.vacant %}<td colspan="3" class="text-center fw-bold">(Vacant){% if r.unfunded %} (unfunded){% endif %}</td><td></td><td></td><td></td><td></td>
             {% else %}<td>{{ r.person.last_name }}</td><td>{{ r.person.first_name }}</td><td>{{ r.person.middle_name }}</td>
               <td class="text-center">{{ r.person.birthdate|date:"m/d/Y" }}</td><td class="text-center">{{ r.original|date:"m/d/Y" }}</td>
               <td class="text-center">{{ r.promoted|date:"m/d/Y"|default:"N/A" }}</td><td class="text-center">{{ r.status }}</td>{% endif %}

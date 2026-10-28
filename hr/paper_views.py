@@ -13,14 +13,14 @@ from django.utils import timezone
 
 from . import papers
 from .audit import log_audit_event
-from .forms import EngagementPapersForm, SalaryScheduleForm
-from .models import AuditLog, Engagement, Office, SalaryAction, SalaryRate, SalarySchedule
+from .forms import EngagementPapersForm, PlantillaItemForm, SalaryScheduleForm
+from .models import AuditLog, Engagement, Office, PlantillaItem, SalaryAction, SalaryRate, SalarySchedule
 from .permissions import can_manage_papers, can_manage_record_of, can_print_papers
 from .views import _xlsx_response
 
 # Which papers each kind of engagement gets (AP1, JC1).
 PRINTS = {
-    "appointment": ("Appointment (CS Form No. 33)", papers.APPOINTED_TYPES, "hr/paper_appointment_print.html"),
+    "appointment": ("Appointment (CS Form No. 33)", papers.CS33_TYPES, "hr/paper_appointment_print.html"),
     "oath": ("Oath of office", papers.OATH_TYPES, "hr/paper_oath_print.html"),
     "assumption": ("Certificate of assumption to duty", papers.APPOINTED_TYPES, "hr/paper_assumption_print.html"),
     "description": ("Position description", papers.APPOINTED_TYPES, "hr/paper_description_print.html"),
@@ -75,7 +75,7 @@ def engagement_papers(request, pk):
     prints = [(key, label) for key, (label, types, _t) in PRINTS.items() if eng.type in types]
     return render(request, "hr/engagement_papers.html", {
         "eng": eng, "person": eng.person, "form": form, "can_edit": can_edit, "prints": prints,
-        "missing": papers.missing_for_appointment(eng) if eng.type in papers.APPOINTED_TYPES else [],
+        "missing": papers.missing_for_appointment(eng) if eng.type in papers.CS33_TYPES else [],
         "vacancy": papers.publication_for(eng),
     })
 
@@ -332,3 +332,67 @@ def nosi_print(request, pk):
     context = papers.nosi_context(case)
     context.update(today=today)
     return render(request, "hr/nosi_print.html", context)
+
+
+# --- Plantilla items (PI1-PI4) ----------------------------------------------------------------
+
+
+@login_required
+def plantilla_item_list(request):
+    """Every plantilla item with its holder; HRMO adds items the Sangguniang Bayan creates (PI1)."""
+    _require_print(request)
+    office = _office(request)
+    show = request.GET.get("show", "current")
+    items = PlantillaItem.objects.select_related("office").order_by("office__name", "item_number")
+    if show == "abolished":
+        items = items.filter(status=PlantillaItem.Status.ABOLISHED)
+    else:
+        show = "current"
+        items = items.exclude(status=PlantillaItem.Status.ABOLISHED)
+    if office:
+        items = items.filter(office=office)
+    holders = {e.plantilla_item_id: e for e in Engagement.objects.filter(
+        type=Engagement.Type.PLANTILLA, status=Engagement.Status.ACTIVE, plantilla_item__isnull=False,
+    ).select_related("person")}
+    form = None
+    if can_manage_papers(request.user):
+        form = PlantillaItemForm(request.POST or None, initial={"office": office.pk if office else None})
+        if request.method == "POST" and form.is_valid():
+            item = form.save()
+            messages.success(request, f"Added item {item.item_number}. It shows as vacant on the Plantilla until filled.")
+            return redirect("plantilla_item_detail", pk=item.pk)
+    elif request.method == "POST":
+        raise PermissionDenied("Only HRMO adds plantilla items.")
+    rows = [(item, holders.get(item.pk)) for item in items]
+    return render(request, "hr/plantilla_item_list.html", {
+        "rows": rows, "office": office, "offices": Office.objects.order_by("name"), "show": show, "form": form,
+        "vacant": sum(1 for _i, h in rows if h is None),
+    })
+
+
+@login_required
+def plantilla_item_detail(request, pk):
+    _require_print(request)
+    item = get_object_or_404(PlantillaItem.objects.select_related("office"), pk=pk)
+    can_edit = can_manage_papers(request.user)
+    form = PlantillaItemForm(instance=item)
+    if request.method == "POST":
+        if not can_edit:
+            raise PermissionDenied("Only HRMO edits plantilla items.")
+        form = PlantillaItemForm(request.POST, instance=item)
+        if form.is_valid():
+            with transaction.atomic():
+                locked = PlantillaItem.objects.select_for_update().get(pk=pk)
+                if locked.version != form.cleaned_data.get("version"):
+                    form.add_error(None, "Someone changed this item while you had it open. Reload and try again.")
+                else:
+                    for field in form.Meta.fields:
+                        setattr(locked, field, form.cleaned_data[field])
+                    locked.version += 1
+                    locked.save()
+                    messages.success(request, "Saved.")
+                    return redirect("plantilla_item_detail", pk=pk)
+    return render(request, "hr/plantilla_item_detail.html", {
+        "item": item, "form": form, "can_edit": can_edit,
+        "history": item.engagements.select_related("person", "office").order_by("-start_date"),
+    })

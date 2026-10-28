@@ -42,11 +42,20 @@ Added:
   persons with disability, solo parents and indigenous groups from the PDS, for the GAD plan (WF1-WF2).
 - Pass slips, development plans, awards and the workforce profile are **switched off** until HRMO asks for them
   (`HR_MODULES`, MD1-MD3).
+- **Plantilla items**: every item the Sangguniang Bayan created is now a record HRMO can add, mark unfunded or
+  abolish, with the history of who held it (HR Desk → Plantilla items, PI1-PI4).
 
 Changed:
 - The **Tools** menu is now short: a link to the new **HR Desk**, which groups every tool by task (hiring and
   appointments, requests, leave and time, pay and benefits, and so on) with counts of what is waiting, plus
   only the items that need attention now (DK1-DK3).
+- Printed appointment papers follow the **2025 ORAOHRA**: CS Form No. 33-A or 33-B (set `CSC_AGENCY_STATUS`),
+  CS Form No. 4 and the ROAI (CS Form No. 2) are now Revised 2025. Casuals no longer get CS Form No. 33: under
+  the 2025 rules they go on the Plantilla of Casual Appointment (CS Form No. 34), not built yet (AP1).
+
+Fixed:
+- **Plantilla of Personnel**: an item whose holder retired or resigned no longer drops off the report when no
+  vacancy has been drafted for it; it shows as vacant until filled or abolished (PI3).
 
 ## 1.3.0 (October 27, 2026)
 

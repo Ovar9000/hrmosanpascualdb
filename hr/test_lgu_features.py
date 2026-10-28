@@ -516,3 +516,74 @@ class ModulesAndDeskTestCase(LguBase):
             with self.subTest(user=user.username):
                 self.assertEqual(self.get(user, "/desk/").status_code, 403)
                 self.assertNotContains(self.get(user, "/"), "HR Desk: all tools")
+
+
+class FormVersionsAndPlantillaItemsTestCase(LguBase):
+    """AP1 (2025 ORAOHRA form versions) and PI1-PI4 (plantilla items stay on the Plantilla when vacated)."""
+
+    def test_2025_form_versions(self):
+        url = f"/engagements/{self.eng_a.pk}/papers/"
+        self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-B, Revised 2025")
+        with override_settings(CSC_AGENCY_STATUS="regulated"):
+            self.assertContains(self.get(self.hrmo_user, f"{url}appointment/"), "CS Form No. 33-A, Revised 2025")
+        self.assertContains(self.get(self.hrmo_user, f"{url}assumption/"), "CS Form No. 4, Revised 2025")
+        self.assertContains(self.get(self.hrmo_user, "/reports/roai/", month="2025-01", print="1"), "CS Form No. 2, Revised 2025")
+
+    def test_casuals_are_not_appointed_on_cs_form_33(self):
+        url = f"/engagements/{self.eng_b.pk}/papers/"
+        self.assertEqual(self.get(self.hrmo_user, f"{url}appointment/").status_code, 403)
+        page = self.get(self.hrmo_user, url)
+        self.assertContains(page, "CS Form No. 34-A or 34-B")
+        self.assertNotContains(page, "Appointment (CS Form No. 33)")
+
+    def test_items_are_created_and_reused(self):
+        from hr.models import PlantillaItem
+
+        item = self.eng_a.plantilla_item
+        self.assertEqual((item.item_number, item.salary_grade, item.office), ("SP-MO-001", 22, self.office_a))
+        self.assertIsNone(self.eng_b.plantilla_item)  # casual
+        self.eng_a.status, self.eng_a.end_date = Engagement.Status.RETIRED, date(2026, 6, 30)
+        self.eng_a.save()
+        successor = Engagement.objects.create(
+            person=self.person_b, office=self.office_a, type=Engagement.Type.PLANTILLA, position_title="Executive Assistant IV",
+            salary_grade=22, step=1, item_number=" sp-mo-001 ", start_date=date(2026, 7, 1))
+        self.assertEqual(successor.plantilla_item, item)
+        self.assertEqual(PlantillaItem.objects.count(), 1)
+
+    def test_vacated_item_stays_on_the_plantilla(self):
+        from hr import board
+
+        self.eng_a.status, self.eng_a.end_date = Engagement.Status.RETIRED, date(2026, 6, 30)
+        self.eng_a.save()
+        rows = [r for _o, rs, _t in board.plantilla_rows() for r in rs]
+        row = next(r for r in rows if r["item"] == "SP-MO-001")
+        self.assertTrue(row["vacant"])
+        self.assertIsNone(row["vacancy"])
+        self.assertContains(self.get(self.hrmo_user, "/reports/plantilla/"), "no vacancy notice yet")
+        item = self.eng_a.plantilla_item
+        item.status = "abolished"
+        item.save()
+        self.assertFalse(any(r["item"] == "SP-MO-001" for _o, rs, _t in board.plantilla_rows() for r in rs))
+
+    def test_hrmo_adds_and_edits_items(self):
+        from hr.models import PlantillaItem
+
+        resp = self.post(self.hrmo_user, "/plantilla-items/", {
+            "item_number": "SP-MO-050", "office": self.office_a.pk, "position_title": "Administrative Aide IV",
+            "salary_grade": 4, "status": "funded", "ordinance": "SB Ordinance No. 3, s. 2026"})
+        item = PlantillaItem.objects.get(item_number="SP-MO-050")
+        self.assertRedirects(resp, f"/plantilla-items/{item.pk}/")
+        self.assertContains(self.get(self.hrmo_user, "/reports/plantilla/"), "SP-MO-050")
+        self.assertContains(self.post(self.hrmo_user, "/plantilla-items/", {
+            "item_number": "sp-mo-050", "office": self.office_a.pk, "position_title": "x", "salary_grade": 4,
+            "status": "funded"}), "already exists")
+        held = self.eng_a.plantilla_item
+        resp = self.post(self.hrmo_user, f"/plantilla-items/{held.pk}/", {
+            "version": held.version, "item_number": held.item_number, "office": self.office_a.pk,
+            "position_title": held.position_title, "salary_grade": 22, "status": "abolished"})
+        self.assertContains(resp, "Someone holds this item")
+        self.assertEqual(self.get(self.auditor_user, "/plantilla-items/").status_code, 200)
+        self.assertEqual(self.post(self.auditor_user, "/plantilla-items/", {}).status_code, 403)
+        for user in (self.head_a, self.emp_a_user, self.mayor):
+            with self.subTest(user=user.username):
+                self.assertEqual(self.get(user, "/plantilla-items/").status_code, 403)

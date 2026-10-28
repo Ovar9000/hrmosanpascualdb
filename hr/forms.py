@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
     FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest,
-    LeaveType, PassSlip, SalarySchedule, Separation,
+    LeaveType, PassSlip, PlantillaItem, SalarySchedule, Separation,
     MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
     PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
 )
@@ -1256,6 +1256,45 @@ class EngagementPapersForm(forms.ModelForm):
             self.add_error("assumed_on", "Duty is assumed on or after the date the appointment was signed.")
         if issued and oath and oath < issued:
             self.add_error("oath_on", "The oath is taken on or after the date the appointment was signed.")
+        return cleaned
+
+
+class PlantillaItemForm(forms.ModelForm):
+    """A plantilla item as the ordinance created it (PI1)."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = PlantillaItem
+        fields = ["item_number", "office", "position_title", "salary_grade", "status", "ordinance", "notes"]
+        widgets = {
+            "item_number": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. SP-MO-001"}),
+            "office": forms.Select(attrs=_SELECT),
+            "position_title": forms.TextInput(attrs=_TEXT),
+            "salary_grade": forms.NumberInput(attrs={**_TEXT, "min": "1", "max": "33"}),
+            "status": forms.Select(attrs=_SELECT),
+            "ordinance": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. SB Ordinance No. 12, s. 2024"}),
+            "notes": forms.Textarea(attrs={**_TEXT, "rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["version"].initial = self.instance.version
+
+    def clean_item_number(self):
+        number = self.cleaned_data["item_number"].strip()
+        clash = PlantillaItem.objects.filter(item_number__iexact=number).exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise ValidationError("This item number already exists.")
+        return number
+
+    def clean(self):
+        cleaned = super().clean()
+        if (self.instance.pk and cleaned.get("status") == PlantillaItem.Status.ABOLISHED
+                and self.instance.engagements.filter(status=Engagement.Status.ACTIVE).exists()):
+            self.add_error("status", "Someone holds this item. End their appointment before abolishing it.")
+        if self.instance.pk and cleaned.get("item_number") and cleaned["item_number"] != self.instance.item_number                 and self.instance.engagements.exists():
+            self.add_error("item_number", "Appointments refer to this item number; it cannot be changed here.")
         return cleaned
 
 

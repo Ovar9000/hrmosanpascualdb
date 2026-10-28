@@ -9,7 +9,7 @@
 {% endblock %}
 {% block sheet %}
 <div class="sheet portrait oath" style="min-height: 0;">
-  <div class="small-print"><i>CS Form No. 32, Revised 2018</i></div>
+  <div class="small-print"><i>CS Form No. 32 (English text)</i></div>
   {% include "hr/_paper_header.html" %}
   <p class="text-center fw-bold fs-4 my-4">OATH OF OFFICE</p>
   <p class="body">I, <span class="fill" style="min-width: 280px;">{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</span> of <span class="fill" style="min-width: 260px;">{{ person.address|default:"" }}</span> having been {% if eng.type == "elected" %}elected{% else %}appointed{% endif %} to the position of <span class="fill">{{ eng.position_title }}</span> hereby solemnly swear, that I will faithfully discharge to the best of my ability, the duties of my present position and of all others that I may hereafter hold under the Republic of the Philippines; that I will bear true faith and allegiance to the same; that I will obey the laws, legal orders, and decrees promulgated by the duly constituted authorities of the Republic of the Philippines; and that I impose this obligation upon myself voluntarily, without mental reservation or purpose of evasion.</p>

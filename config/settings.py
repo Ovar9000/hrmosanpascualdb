@@ -207,9 +207,10 @@ COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
 # Optional modules switched on (DECISIONS MD1): any of pass_slips, development_plans, awards, workforce.
 # Off by default: they were built before HRMO asked for them.
 HR_MODULES = _types("HR_MODULES", "")
-# Appointment papers (DECISIONS AP1): the form number printed on the appointment, and the working days
-# a month used to turn a daily rate into a monthly one.
-APPOINTMENT_FORM_LABEL = os.environ.get("APPOINTMENT_FORM_LABEL", "CS Form No. 33-B, Revised 2018")
+# Appointment papers (DECISIONS AP1): whether the CSC regulates the LGU's appointments or has accredited
+# it (2025 ORAOHRA). It picks CS Form No. 33-A or 33-B and 34-A or 34-B. Confirm with HRMO.
+CSC_AGENCY_STATUS = os.environ.get("CSC_AGENCY_STATUS", "accredited")
+# Working days a month, to turn a daily rate into a monthly one.
 WORKING_DAYS_PER_MONTH = int(os.environ.get("WORKING_DAYS_PER_MONTH", "22"))
 # Job order and contract of service papers (DECISIONS JC1): the fund charged when the contract has no
 # project, and the accountant who certifies funds (blank prints a line).

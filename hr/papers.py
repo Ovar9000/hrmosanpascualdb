@@ -13,9 +13,12 @@ from django.db.models import Q
 
 from .models import Engagement, SalaryAction, SalaryRate, SalarySchedule, Vacancy
 
-# Appointment types that get CS Form No. 33 and appear on the ROAI (AP1). JO and COS are contracts,
-# not appointments; elected officials take an oath but are not appointed.
+# Appointment types that appear on the ROAI and get the oath and assumption papers (AP1). JO and COS are
+# contracts, not appointments; elected officials take an oath but are not appointed.
 APPOINTED_TYPES = [Engagement.Type.PLANTILLA, Engagement.Type.CASUAL, Engagement.Type.CONTRACTUAL]
+# CS Form No. 33 is for these; casuals are appointed as a group on the Plantilla of Casual Appointment,
+# CS Form No. 34-A/34-B (2025 ORAOHRA), which is not built yet.
+CS33_TYPES = [Engagement.Type.PLANTILLA, Engagement.Type.CONTRACTUAL]
 CONTRACT_TYPES = [Engagement.Type.JOB_ORDER, Engagement.Type.CONTRACT_OF_SERVICE, Engagement.Type.PROJECT_BASED]
 OATH_TYPES = APPOINTED_TYPES + [Engagement.Type.ELECTED]
 
@@ -99,6 +102,12 @@ def signatories():
 # --- Appointment papers (AP1-AP4) ---------------------------------------------------------------
 
 
+def appointment_form_label():
+    """CS Form No. 33-A for regulated agencies, 33-B for accredited ones (2025 ORAOHRA, AP1)."""
+    letter = "A" if settings.CSC_AGENCY_STATUS == "regulated" else "B"
+    return f"CS Form No. 33-{letter}, Revised 2025"
+
+
 def monthly_rate(eng):
     if eng.rate is None:
         return None
@@ -132,7 +141,7 @@ def appointment_context(eng):
         "status": employment_status(eng),
         "monthly": rate, "monthly_words": amount_in_words(rate), "monthly_peso": peso(rate),
         "vacancy": publication_for(eng),
-        "form_label": settings.APPOINTMENT_FORM_LABEL,
+        "form_label": appointment_form_label(),
         "supervisor": eng.reports_to,
         "sign": signatories(),
     }

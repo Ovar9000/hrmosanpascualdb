@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Plantilla items{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Plantilla items</h1>
+    <div class="text-muted small">Every item the Sangguniang Bayan created, filled or vacant. An item stays here, and on the Plantilla of Personnel, when its holder leaves; mark it abolished or unfunded when an ordinance says so.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'plantilla_report' %}">Plantilla of Personnel →</a>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="show">Show</label>
+    <select class="form-select form-select-sm" id="show" name="show" onchange="this.form.submit()"><option value="current"{% if show == "current" %} selected{% endif %}>Current items</option><option value="abolished"{% if show == "abolished" %} selected{% endif %}>Abolished</option></select></div>
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+  <div class="ms-auto">{{ rows|length }} item{{ rows|length|pluralize }}{% if show == "current" %}, <span class="{% if vacant %}text-danger{% endif %}">{{ vacant }} vacant</span>{% endif %}</div>
+</form>
+<div class="row g-3">
+  <div class="{% if form %}col-lg-8{% else %}col-12{% endif %}">
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-sm small align-middle mb-0">
+          <thead class="table-light"><tr><th>Item no.</th><th>Position</th><th class="text-center">SG</th><th>Office</th><th>Held by</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for item, holder in rows %}
+              <tr{% if not holder and show == "current" %} class="table-warning"{% endif %}>
+                <td class="font-monospace text-nowrap"><a href="{% url 'plantilla_item_detail' item.pk %}">{{ item.item_number }}</a></td>
+                <td>{{ item.position_title }}</td>
+                <td class="text-center">{{ item.salary_grade }}</td>
+                <td>{{ item.office.acronym|default:item.office.name }}</td>
+                <td>{% if holder %}<a class="text-decoration-none" href="{% url 'person_detail' holder.person.pk %}">{{ holder.person.full_name }}</a>{% else %}<span class="text-muted">Vacant</span>{% endif %}</td>
+                <td>{{ item.get_status_display }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="text-center text-muted py-3">No items.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% if form %}
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">Add an item</div>
+      <div class="card-body">
+        <p class="small text-muted">For a new item created by ordinance. Items are also added automatically when an appointment uses a new item number.</p>
+        <form method="post" novalidate>{% csrf_token %}
+          {% include "hr/_form_fields.html" %}
+          <div class="mt-3 text-end"><button class="btn btn-primary">Add item</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

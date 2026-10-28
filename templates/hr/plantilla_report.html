@@ -5,7 +5,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
   <div>
     <h1 class="h3 mb-0">{{ year }} Plantilla of Personnel</h1>
-    <div class="text-muted small">Active plantilla appointments by item number, with vacant items from Vacancies. As of {{ as_of|date:"F d, Y" }}. Salaries are the actual rates recorded on each appointment.</div>
+    <div class="text-muted small">Every plantilla item on file by item number, filled or vacant (abolished items are left out; manage them under <a href="{% url 'plantilla_item_list' %}">Plantilla items</a>). As of {{ as_of|date:"F d, Y" }}. Salaries are the actual rates recorded on each appointment.</div>
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}{% if qs %}&{% endif %}export=xlsx">Excel</a>
@@ -39,7 +39,7 @@
             <td class="text-end font-monospace">{% if r.annual %}{{ r.annual|floatformat:"2g" }}{% else %}—{% endif %}</td>
             <td class="text-center">{{ r.step }}</td>
             {% if r.vacant %}
-              <td colspan="4"><a href="{% url 'vacancy_detail' r.vacancy.pk %}">(Vacant)</a> <span class="text-muted">· {{ r.vacancy.get_status_display }}</span></td><td></td>
+              <td colspan="4">{% if r.vacancy %}<a href="{% url 'vacancy_detail' r.vacancy.pk %}">(Vacant)</a> <span class="text-muted">· {{ r.vacancy.get_status_display }}</span>{% else %}(Vacant) <span class="text-muted">· no vacancy notice yet</span>{% endif %}{% if r.unfunded %} <span class="badge text-bg-secondary">unfunded</span>{% endif %}</td><td></td>
             {% else %}
               <td><a href="{% url 'person_detail' r.person.pk %}" class="text-decoration-none">{{ r.person.last_name }}, {{ r.person.first_name }} {{ r.person.middle_name }}</a></td>
               <td class="text-nowrap">{{ r.person.birthdate|date:"m/d/Y" }}</td>

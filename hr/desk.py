@@ -67,6 +67,7 @@ CARDS = [
         ("Salary schedules & NOSA", "salary_schedule_list", can_print_papers, None, ""),
         ("Year-end bonus", "tracker_year_end_bonus", can_view_trackers, None, ""),
         ("Plantilla of Personnel", "plantilla_report", can_view_plantilla_report, None, ""),
+        ("Plantilla items", "plantilla_item_list", can_print_papers, None, ""),
     ]),
     ("Performance and development", "Ratings, training and recognition.", [
         ("Performance ratings", "tracker_ratings", can_view_trackers, None, ""),

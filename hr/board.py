@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from django.db.models import Q
 
-from .models import Engagement, Memo, MemoAcknowledgment, Office, Person, Vacancy
+from .models import Engagement, Memo, MemoAcknowledgment, Office, Person, PlantillaItem, Vacancy
 
 # Vacancies whose item still counts as vacant on the Plantilla.
 VACANT_STATUSES = [Vacancy.Status.DRAFT, Vacancy.Status.OPEN, Vacancy.Status.SCREENING]
@@ -38,31 +38,72 @@ def _career(person_ids):
     return result
 
 
-def plantilla_rows(office=None):
-    """[(office, rows)] in office order; each row is a filled item or a vacancy (RP1)."""
+def _vacant_annual(item, vacancy, today):
+    """A vacant item's annual salary: from its vacancy notice, else step 1 of its grade in the salary
+    schedule in force (NS1), else unknown."""
+    if vacancy is not None:
+        return vacancy.monthly_salary * 12
+    from .papers import rate_in, schedule_on
+
+    monthly = rate_in(schedule_on(today), item.salary_grade, 1)
+    return monthly * 12 if monthly is not None else None
+
+
+def plantilla_rows(office=None, today=None):
+    """[(office, rows, totals)] in office order: every plantilla item that is not abolished, filled by its
+    active appointment or vacant (with its vacancy notice, if any), plus vacancy notices for item numbers
+    not on file yet (RP1, PI3)."""
+    from django.utils import timezone
+
+    today = today or timezone.localdate()
+    items = PlantillaItem.objects.exclude(status=PlantillaItem.Status.ABOLISHED).select_related("office")
     filled = (Engagement.objects.filter(type=Engagement.Type.PLANTILLA, status=Engagement.Status.ACTIVE)
               .select_related("person", "office"))
-    vacant = Vacancy.objects.filter(status__in=VACANT_STATUSES).select_related("office")
+    vacant = Vacancy.objects.filter(status__in=VACANT_STATUSES).select_related("office").order_by("created_at")
     if office:
-        filled, vacant = filled.filter(office=office), vacant.filter(office=office)
+        items, filled, vacant = items.filter(office=office), filled.filter(office=office), vacant.filter(office=office)
     career = _career({e.person_id for e in filled})
-    held_items = {e.item_number for e in filled}
+    holders = {e.plantilla_item_id: e for e in filled if e.plantilla_item_id}
+    notices = {v.item_number.strip().lower(): v for v in vacant}
     by_office = defaultdict(list)
-    for eng in filled:
+    seen = set()
+
+    def filled_row(eng):
         original, promoted = career.get(eng.person_id, (eng.start_date, None))
-        by_office[eng.office].append({
+        return {
             "item": eng.item_number, "position": eng.position_title, "sg": eng.salary_grade, "step": eng.step,
             "annual": annual_salary(eng), "person": eng.person, "vacant": False,
             "original": original, "promoted": promoted, "status": eng.appointment_status,
             "status_label": eng.get_appointment_status_display(), "eng": eng,
-        })
-    for vac in vacant:
-        if vac.item_number in held_items:
-            continue
-        by_office[vac.office].append({
-            "item": vac.item_number, "position": vac.position_title, "sg": vac.salary_grade, "step": 1,
-            "annual": vac.monthly_salary * 12, "person": None, "vacant": True, "vacancy": vac,
-        })
+        }
+
+    for item in items:
+        key = item.item_number.strip().lower()
+        seen.add(key)
+        eng = holders.get(item.pk)
+        if eng is not None:
+            row = filled_row(eng)
+            by_office[eng.office].append(row)
+        else:
+            vac = notices.get(key)
+            row = {"item": item.item_number, "position": item.position_title, "sg": item.salary_grade, "step": 1,
+                   "annual": _vacant_annual(item, vac, today), "person": None, "vacant": True, "vacancy": vac}
+            by_office[item.office].append(row)
+        row["unfunded"] = item.status == PlantillaItem.Status.UNFUNDED
+        row["plantilla_item"] = item
+    # Appointments whose item is filed under another office, or not linked to an item.
+    listed = {i.pk for i in items}
+    for eng in filled:
+        key = eng.item_number.strip().lower()
+        if eng.plantilla_item_id not in listed and key not in seen:
+            seen.add(key)
+            by_office[eng.office].append(filled_row(eng))
+    for key, vac in notices.items():
+        if key not in seen:
+            by_office[vac.office].append({
+                "item": vac.item_number, "position": vac.position_title, "sg": vac.salary_grade, "step": 1,
+                "annual": vac.monthly_salary * 12, "person": None, "vacant": True, "vacancy": vac,
+            })
     groups = []
     for off in sorted(by_office, key=lambda o: o.name):
         rows = sorted(by_office[off], key=lambda r: r["item"])

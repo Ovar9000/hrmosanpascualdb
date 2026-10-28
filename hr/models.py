@@ -273,6 +273,51 @@ class Project(models.Model):
         return self.status in self.HIRING_STATUSES and bool(self.funding_reference)
 
 
+# --- Plantilla items (DECISIONS PI1-PI4) -------------------------------------
+
+
+class PlantillaItem(models.Model):
+    """A plantilla item, created by ordinance. It stays on the Plantilla of Personnel whether filled or
+    vacant, until it is abolished (PI1)."""
+
+    class Status(models.TextChoices):
+        FUNDED = "funded", "Funded"
+        UNFUNDED = "unfunded", "Unfunded"
+        ABOLISHED = "abolished", "Abolished"
+
+    item_number = models.CharField("Item no.", max_length=50)
+    office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="plantilla_items")
+    position_title = models.CharField(max_length=150)
+    salary_grade = models.PositiveSmallIntegerField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.FUNDED, db_index=True)
+    ordinance = models.CharField("Created by", max_length=150, blank=True,
+                                 help_text="SB ordinance or resolution that created the item, if known.")
+    notes = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["item_number"]
+        constraints = [
+            models.UniqueConstraint(Lower("item_number"), name="plantillaitem_unique_number",
+                                    violation_error_message="This item number already exists."),
+            models.CheckConstraint(condition=Q(salary_grade__range=(1, 33)), name="plantillaitem_salary_grade_range",
+                                   violation_error_message="Salary grade must be 1 to 33."),
+        ]
+
+    def __str__(self):
+        return f"{self.item_number} – {self.position_title}"
+
+    @classmethod
+    def for_engagement(cls, eng):
+        """The item an appointment's item number refers to, created from the appointment if it is new (PI2)."""
+        item = cls.objects.filter(item_number__iexact=eng.item_number.strip()).first()
+        if item is None:
+            item = cls.objects.create(item_number=eng.item_number.strip(), office=eng.office,
+                                      position_title=eng.position_title, salary_grade=eng.salary_grade or 1)
+        return item
+
+
 # --- Engagements -------------------------------------------------------------
 
 
@@ -342,6 +387,11 @@ class Engagement(models.Model):
     # Status column of the Plantilla of Personnel (DECISIONS RP1).
     appointment_status = models.CharField(
         "Appointment status", max_length=2, choices=AppointmentStatus.choices, blank=True,
+    )
+
+    # Plantilla only: the item the item number refers to, kept in step by save() (DECISIONS PI2).
+    plantilla_item = models.ForeignKey(
+        PlantillaItem, null=True, blank=True, on_delete=models.PROTECT, related_name="engagements"
     )
 
     # Project-based only.
@@ -432,6 +482,15 @@ class Engagement(models.Model):
 
     def __str__(self):
         return f"{self.person} – {self.position_title} ({self.get_type_display()})"
+
+    def save(self, *args, **kwargs):
+        # Every plantilla item number is kept as a PlantillaItem, so the item stays on the Plantilla of
+        # Personnel after its holder leaves (DECISIONS PI2).
+        if self.type == self.Type.PLANTILLA and self.item_number.strip():
+            self.plantilla_item = PlantillaItem.for_engagement(self)
+        else:
+            self.plantilla_item = None
+        super().save(*args, **kwargs)
 
     @classmethod
     def default_leave_eligible(cls, engagement_type):

@@ -21,6 +21,9 @@
       </div>
       <div class="card-footer bg-light small text-muted">Printed for wet signatures. The signed paper is the record; file it and upload the scan under Documents.</div>
     </div>
+    {% if eng.type == "casual" %}
+      <div class="alert alert-info small">Casuals are appointed as a group on the <b>Plantilla of Casual Appointment</b> (CS Form No. 34-A or 34-B, 2025 rules), not on CS Form No. 33. That form is not in the app yet: use the office's paper form.</div>
+    {% endif %}
     {% if missing %}
       <div class="alert alert-warning small"><strong>Before printing the appointment</strong>, fill in: {{ missing|join:"; " }}. Blank parts print as lines to write on.</div>
     {% endif %}
