@@ -1,0 +1,11 @@
+{% comment %}One pass slip in a list. Pass `s`; `show_person` adds the name.{% endcomment %}
+<a class="list-group-item list-group-item-action" href="{% url 'slip_detail' s.pk %}">
+  <div class="d-flex justify-content-between gap-2">
+    <span>{% if show_person %}<b>{{ s.person.full_name }}</b> · {% endif %}{{ s.slip_date|date:"D, M d" }} · {{ s.time_out|time:"g:i A" }}{% if s.expected_back %}–{{ s.expected_back|time:"g:i A" }}{% endif %} · {{ s.destination }}</span>
+    <span class="text-nowrap">
+      <span class="badge {% if s.kind == 'personal' %}text-bg-light border{% else %}text-bg-info{% endif %}">{{ s.get_kind_display }}</span>
+      <span class="badge {% if s.status == 'approved' %}text-bg-success{% elif s.status == 'pending' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ s.get_status_display }}</span>
+    </span>
+  </div>
+  <div class="small text-muted">{{ s.purpose|truncatechars:90 }}{% if s.actual_out %} · out {{ s.actual_out|time:"g:i A" }}{% if s.actual_back %}, back {{ s.actual_back|time:"g:i A" }}{% else %}, not back yet{% endif %}{% endif %}</div>
+</a>

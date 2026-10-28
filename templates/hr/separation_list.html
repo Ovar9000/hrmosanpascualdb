@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Separations and clearances{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h1 class="h3 mb-0">Separations and clearances</h1>
+  <div class="text-muted small">People leaving the LGU. Start one from the person's record (<b>Separation &amp; clearance</b>); the appointment is ended when every clearance line is signed.</div>
+</div>
+<ul class="nav nav-pills small mb-3">
+  <li class="nav-item"><a class="nav-link{% if show == 'clearing' %} active{% endif %}" href="?show=clearing">In progress ({{ counts.clearing }})</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'completed' %} active{% endif %}" href="?show=completed">Completed ({{ counts.completed }})</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'cancelled' %} active{% endif %}" href="?show=cancelled">Cancelled ({{ counts.cancelled }})</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'all' %} active{% endif %}" href="?show=all">All</a></li>
+</ul>
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Name</th><th>Position</th><th>Kind</th><th>Last day</th><th>Clearance</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for sep, left in rows %}
+          <tr>
+            <td><a class="text-decoration-none" href="{% url 'separation_detail' sep.pk %}">{{ sep.person.full_name }}</a></td>
+            <td>{{ sep.engagement.position_title }}<div class="text-muted">{{ sep.engagement.office.name }}</div></td>
+            <td>{{ sep.get_kind_display }}</td>
+            <td class="text-nowrap">{{ sep.last_day|date:"M d, Y" }}{% if sep.is_open and sep.last_day < today %} <span class="badge text-bg-danger">passed</span>{% endif %}</td>
+            <td>{% if sep.is_open %}{% if left %}{{ left|length }} to sign{% else %}<span class="text-success">all signed</span>{% endif %}{% else %}—{% endif %}</td>
+            <td>{{ sep.get_status_display }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-3">None.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

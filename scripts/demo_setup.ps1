@@ -146,6 +146,10 @@ Write-Step "Leave applications, vacancies and memos"
 $board = Invoke-Manage seed_demo_board
 Write-Ok (($board | Select-Object -Last 1) -replace '^Board demo data: ', '')
 
+Write-Step "Salary schedules, appointment papers, pass slips, a separation, awards"
+$papers = Invoke-Manage seed_demo_papers
+Write-Ok (($papers | Select-Object -Last 1) -replace '^Papers demo data: ', '')
+
 # --- 5. Sample upload files -----------------------------------------------------------
 Write-Step "Writing sample upload files to demo_files\"
 New-Item -ItemType Directory -Force -Path demo_files | Out-Null

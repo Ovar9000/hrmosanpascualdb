@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Record an award{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'award_list' %}" class="btn btn-sm btn-outline-secondary">← Awards</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">Record an award</h1></div>
+  <div class="card-body p-4">
+    {% if case %}<div class="alert alert-info small">From the issued {{ case.years }}-year loyalty award of {{ case.person.full_name }}.</div>{% endif %}
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">The award</legend>
+        {% include "hr/_form_fields.html" %}
+      </fieldset>
+      {% include "hr/_people_picker.html" with picker_title="Who received it" %}
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'award_list' %}">Cancel</a>
+        <button class="btn btn-primary">Record award</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

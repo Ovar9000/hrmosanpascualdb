@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Job order and contract of service papers{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Job order and contract of service papers</h1>
+    <div class="text-muted small">Tick the contracts to print, one per page. Renew a contract on the person's record first, so the new period prints.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'jo_cos_report' %}">JO/COS list for CSC →</a>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="show">Show</label>
+    <select class="form-select form-select-sm" id="show" name="show" onchange="this.form.submit()">
+      <option value="active"{% if show == "active" %} selected{% endif %}>Active contracts</option>
+      <option value="starting"{% if show == "starting" %} selected{% endif %}>Starting in the next 60 days</option>
+    </select></div>
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+</form>
+{% if no_duties %}<div class="alert alert-info small py-2">{{ no_duties }} contract{{ no_duties|pluralize }} {{ no_duties|pluralize:"has,have" }} no scope of work recorded; it prints as a line to write on. Add it under <b>Papers</b>.</div>{% endif %}
+<form method="get" action="{% url 'contracts_print' %}" target="_blank">
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+      <label class="form-check mb-0 small"><input class="form-check-input" type="checkbox" id="tick-all"> <span class="form-check-label">Tick all {{ rows|length }}</span></label>
+      <button class="btn btn-sm btn-primary">Print ticked</button>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm small align-middle mb-0">
+        <thead class="table-light"><tr><th></th><th>Name</th><th>Designation</th><th>Office</th><th>Type</th><th>Period</th><th class="text-end">Rate</th><th></th></tr></thead>
+        <tbody>
+          {% for e in rows %}
+            <tr>
+              <td><input class="form-check-input row-tick" type="checkbox" name="id" value="{{ e.pk }}" aria-label="Print {{ e.person.full_name }}"></td>
+              <td><a class="text-decoration-none" href="{% url 'person_detail' e.person.pk %}">{{ e.person.full_name }}</a></td>
+              <td>{{ e.position_title }}{% if not e.duties %} <span class="badge text-bg-light border" title="No scope of work">no scope</span>{% endif %}</td>
+              <td>{{ e.office.acronym|default:e.office.name }}</td>
+              <td>{{ e.get_type_display }}</td>
+              <td class="text-nowrap">{{ e.start_date|date:"m/d/Y" }}–{{ e.end_date|date:"m/d/Y"|default:"open" }}</td>
+              <td class="text-end font-monospace text-nowrap">{% if e.rate %}{{ e.rate|floatformat:"2g" }} <span class="text-muted">/ {{ e.get_rate_basis_display|lower }}</span>{% else %}—{% endif %}</td>
+              <td class="text-nowrap"><a class="btn btn-sm btn-outline-secondary py-0" href="{% url 'engagement_papers' e.pk %}">Papers</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="text-center text-muted py-3">No contracts.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer bg-light small text-muted">Up to {{ max_batch }} at a time.</div>
+  </div>
+</form>
+<script>
+document.getElementById("tick-all").addEventListener("change", function (e) {
+  document.querySelectorAll(".row-tick").forEach(function (b) { b.checked = e.target.checked; });
+});
+</script>
+{% endblock %}

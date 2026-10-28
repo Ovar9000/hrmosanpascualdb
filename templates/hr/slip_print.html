@@ -1,0 +1,28 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Pass slip · {{ slip.person.full_name }}{% endblock %}
+{% block back %}{% url 'slip_detail' slip.pk %}{% endblock %}
+{% block page_size %}size: A5 landscape;{% endblock %}
+{% block style %}
+  .ps { font-size: 10.5pt; line-height: 1.6; }
+  .ps .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 140px; padding: 0 4px; font-weight: bold; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet ps" style="width: 210mm; min-height: 0;">
+  <p class="text-center mb-1">Republic of the Philippines<br><b>MUNICIPALITY OF SAN PASCUAL</b>, Masbate</p>
+  <p class="text-center fw-bold fs-5 mb-2">PASS SLIP</p>
+  <div class="d-flex justify-content-between"><span>Name: <span class="fill" style="min-width: 260px;">{{ slip.person.full_name }}</span></span><span>Date: <span class="fill">{{ slip.slip_date|date:"F d, Y" }}</span></span></div>
+  <div>Position / office: <span class="fill" style="min-width: 420px;">{{ slip.position_title }}{% if slip.office %}, {{ slip.office.name }}{% endif %}</span></div>
+  <div><span class="box{% if slip.kind == 'official' %} on{% endif %}"></span>Official business &nbsp; <span class="box{% if slip.kind == 'personal' %} on{% endif %}"></span>Personal</div>
+  <div>Destination: <span class="fill" style="min-width: 460px;">{{ slip.destination }}</span></div>
+  <div>Purpose: <span class="fill" style="min-width: 480px;">{{ slip.purpose }}</span></div>
+  <div class="d-flex flex-wrap gap-4">
+    <span>Time out: <span class="fill" style="min-width: 80px;">{% if slip.actual_out %}{{ slip.actual_out|time:"g:i A" }}{% else %}{{ slip.time_out|time:"g:i A" }}{% endif %}</span></span>
+    <span>Expected back: <span class="fill" style="min-width: 80px;">{{ slip.expected_back|time:"g:i A" }}</span></span>
+    <span>Time back: <span class="fill" style="min-width: 80px;">{{ slip.actual_back|time:"g:i A" }}</span></span>
+  </div>
+  <div class="d-flex justify-content-between mt-3 text-center small">
+    <div style="min-width: 180px;"><div class="sig">{{ slip.person.first_name }} {{ slip.person.last_name }}</div>Employee</div>
+    {% for step in steps %}<div style="min-width: 180px;"><div class="sig">{% if step.status == "done" and not step.from_paper %}{{ step.acted_by.get_full_name|default:step.acted_by.get_username }} (online){% elif step.status == "skipped" %}n/a{% else %}&nbsp;{% endif %}</div>{{ step.get_kind_display }}</div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

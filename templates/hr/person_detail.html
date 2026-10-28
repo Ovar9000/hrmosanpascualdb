@@ -30,6 +30,9 @@
             </ul>
           </div>
         {% endif %}
+        {% if can_manage_records and engagements.first.status == 'active' %}<a href="{% url 'slip_record' person.pk %}" class="btn btn-sm btn-outline-secondary" title="Record a paper pass slip">Pass slip</a>{% endif %}
+        {% if idp %}<a href="{% url 'idp_person' person.pk %}" class="btn btn-sm btn-outline-primary">Development plan</a>{% endif %}
+        {% if separations.manage %}{% with curr=engagements.first %}{% if curr and curr.status == 'active' %}<a href="{% url 'separation_new' person.pk %}" class="btn btn-sm btn-outline-danger">Separation &amp; clearance</a>{% endif %}{% endwith %}{% endif %}
         {% if can_manage_records %}
           <a href="{% url 'person_edit' person.pk %}" class="btn btn-sm btn-outline-primary">
             Edit Details
@@ -210,7 +213,7 @@
           <th>Status</th>
           <th>Plantilla / Project Details</th>
           {% if can_view_rates %}<th>Compensation</th>{% endif %}
-          {% if can_manage_records %}<th class="text-end">Actions</th>{% endif %}
+          {% if can_manage_records or papers %}<th class="text-end">Actions</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -262,14 +265,17 @@
               {% endif %}
             </td>
             {% endif %}
-            {% if can_manage_records %}
+            {% if can_manage_records or papers %}
             <td class="text-end text-nowrap">
+              {% if papers %}<a href="{% url 'engagement_papers' eng.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Papers</a>{% endif %}
+              {% if can_manage_records %}
               <a href="{% url 'engagement_edit' eng.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
               {% if eng.status == 'active' %}
                 <a href="{% url 'engagement_renew' eng.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Renew</a>
                 <a href="{% url 'engagement_end' eng.pk %}" class="btn btn-sm btn-outline-danger py-0 px-2">End</a>
               {% else %}
                 <a href="{% url 'engagement_renew' eng.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">New Appt</a>
+              {% endif %}
               {% endif %}
             </td>
             {% endif %}
@@ -288,6 +294,23 @@
     </div>
   {% endif %}
 </div>
+
+{% if separations.rows %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Separation</div>
+  <ul class="list-group list-group-flush small">
+    {% for sep in separations.rows %}<li class="list-group-item d-flex justify-content-between"><a href="{% url 'separation_detail' sep.pk %}">{{ sep.get_kind_display }} · last day {{ sep.last_day|date:"M d, Y" }}</a><span class="badge {% if sep.status == 'clearing' %}text-bg-warning{% elif sep.status == 'completed' %}text-bg-secondary{% else %}text-bg-light border{% endif %}">{{ sep.get_status_display }}</span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if awards %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Awards and recognition</div>
+  <ul class="list-group list-group-flush small">
+    {% for a in awards %}<li class="list-group-item d-flex justify-content-between"><span><b>{{ a.title }}</b> · {{ a.get_category_display }}{% if a.given_by %} · {{ a.given_by }}{% endif %}</span><span class="text-muted">{{ a.given_on|date:"M d, Y" }}</span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
 
 <!-- Attached Documents / 201-Files: not shown to Office Staff, Executives or Delegates (DECISIONS R4) -->
 {% if can_view_doc_list %}

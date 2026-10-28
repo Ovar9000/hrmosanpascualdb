@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Pass slips waiting for me{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <h1 class="h3 mb-0">Pass slips waiting for your signature</h1>
+  {% if log %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'slip_log' %}">Monthly log →</a>{% endif %}
+</div>
+<div class="card border-0 shadow-sm mb-3">
+  <div class="list-group list-group-flush">
+    {% for s in rows %}{% include "hr/_slip_row.html" with show_person=True %}{% empty %}<div class="list-group-item text-muted small">Nothing is waiting for you.</div>{% endfor %}
+  </div>
+</div>
+{% if log %}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-bold py-2">Out of the office right now ({{ out_now|length }})</div>
+  <div class="list-group list-group-flush">
+    {% for s in out_now %}{% include "hr/_slip_row.html" with show_person=True %}{% empty %}<div class="list-group-item text-muted small">Nobody is out on a pass slip.</div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

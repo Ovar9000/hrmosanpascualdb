@@ -1,0 +1,44 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}ROAI {{ label }}{% endblock %}
+{% block back %}{% url 'roai_report' %}?{{ qs }}{% endblock %}
+{% block page_size %}size: legal landscape;{% endblock %}
+{% block style %}
+  .ro { font-size: 8pt; }
+  .ro th { text-align: center; background: #e7eef8; }
+  .ro td, .ro th { padding: 2px 3px !important; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet landscape ro">
+  <div class="small-print"><i>CS Form No. 2, Revised 2018</i></div>
+  <div class="text-center"><b>REPORT ON APPOINTMENTS ISSUED (RAI)</b><br>For the month of <b>{{ label }}</b></div>
+  <p class="mt-2 mb-1">Agency: <b>Municipal Government of San Pascual, Masbate</b> &nbsp; CSC Resolution No.: <span class="line"></span> &nbsp; CSCFO In-charge: <span class="line"></span></p>
+  <table class="form-table">
+    <thead>
+      <tr><th rowspan="2">Date issued / effectivity</th><th colspan="4">Name of appointee</th><th rowspan="2">Position title</th><th rowspan="2">Item no.</th><th rowspan="2">SG</th><th rowspan="2">Monthly salary</th><th rowspan="2">Employment status</th><th colspan="2">Period of employment</th><th rowspan="2">Nature of appointment</th><th colspan="2">Publication</th><th colspan="3">CSC action</th></tr>
+      <tr><th>Last name</th><th>First name</th><th>Ext.</th><th>Middle name</th><th>From</th><th>To</th><th>Date (from–to)</th><th>Mode</th><th>V / INV</th><th>Date of action</th><th>Date released</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="text-center">{{ r.issued|date:"m/d/Y" }}</td>
+          <td>{{ r.person.last_name }}</td><td>{{ r.person.first_name }}</td><td>{{ r.person.suffix }}</td><td>{{ r.person.middle_name }}</td>
+          <td>{{ r.eng.position_title }}</td><td class="text-nowrap">{{ r.eng.item_number }}</td><td class="text-center">{{ r.eng.salary_grade|default:"" }}</td>
+          <td class="text-end">{{ r.monthly|floatformat:"2g"|default:"" }}</td><td>{{ r.status }}</td>
+          <td class="text-center">{% if r.period %}{{ r.period.0|date:"m/d/Y" }}{% endif %}</td><td class="text-center">{% if r.period %}{{ r.period.1|date:"m/d/Y" }}{% endif %}</td>
+          <td>{{ r.nature }}</td>
+          <td class="text-center">{% if r.vacancy %}{{ r.vacancy.published_on|date:"m/d/Y" }}–{{ r.vacancy.deadline|date:"m/d/Y" }}{% endif %}</td>
+          <td>{% if r.vacancy %}{{ r.vacancy.posted_at|truncatechars:40 }}{% endif %}</td>
+          <td></td><td></td><td></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="18" class="text-center">No appointments issued this month.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="d-flex justify-content-between mt-4">
+    <div style="min-width: 280px;"><div>Certified correct:</div><div class="sig fw-bold text-center">{{ sign.hrmo|upper|default:"&nbsp;" }}</div><div class="small text-center">{{ sign.hrmo_title }}</div></div>
+    <div style="min-width: 280px;"><div>Approved:</div><div class="sig fw-bold text-center">{{ sign.mayor|upper|default:"&nbsp;" }}</div><div class="small text-center">Municipal Mayor</div></div>
+    <div style="min-width: 280px;"><div>Received by CSC Field Office:</div><div class="sig text-center">&nbsp;</div><div class="small text-center">Name, signature and date</div></div>
+  </div>
+</div>
+{% endblock %}

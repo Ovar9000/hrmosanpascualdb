@@ -1,0 +1,23 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Oath of office · {{ person.full_name }}{% endblock %}
+{% block back %}{{ back }}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .oath { font-size: 12pt; line-height: 1.9; }
+  .oath p.body { text-indent: 3em; text-align: justify; }
+  .oath .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 150px; padding: 0 4px; text-align: center; font-weight: bold; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait oath" style="min-height: 0;">
+  <div class="small-print"><i>CS Form No. 32, Revised 2018</i></div>
+  {% include "hr/_paper_header.html" %}
+  <p class="text-center fw-bold fs-4 my-4">OATH OF OFFICE</p>
+  <p class="body">I, <span class="fill" style="min-width: 280px;">{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</span> of <span class="fill" style="min-width: 260px;">{{ person.address|default:"" }}</span> having been {% if eng.type == "elected" %}elected{% else %}appointed{% endif %} to the position of <span class="fill">{{ eng.position_title }}</span> hereby solemnly swear, that I will faithfully discharge to the best of my ability, the duties of my present position and of all others that I may hereafter hold under the Republic of the Philippines; that I will bear true faith and allegiance to the same; that I will obey the laws, legal orders, and decrees promulgated by the duly constituted authorities of the Republic of the Philippines; and that I impose this obligation upon myself voluntarily, without mental reservation or purpose of evasion.</p>
+  <p class="body fw-bold">SO HELP ME GOD.</p>
+  <div class="d-flex justify-content-end mt-4"><div class="text-center" style="min-width: 300px;"><div class="sig">&nbsp;</div><div class="small">Signature over printed name of the {% if eng.type == "elected" %}official{% else %}appointee{% endif %}</div></div></div>
+  <p class="mt-4 small">Government ID: <span class="line"></span> &nbsp; ID number: <span class="line"></span> &nbsp; Date issued: <span class="line"></span></p>
+  <p class="body mt-4">Subscribed and sworn to before me this <span class="fill" style="min-width: 60px;">{% if eng.oath_on %}{{ eng.oath_on.day }}{% endif %}</span> day of <span class="fill">{% if eng.oath_on %}{{ eng.oath_on|date:"F Y" }}{% endif %}</span> in San Pascual, Masbate, Philippines.</p>
+  <div class="d-flex justify-content-end mt-4"><div class="text-center" style="min-width: 300px;"><div class="sig fw-bold">{% if eng.type != "elected" %}{{ sign.mayor|upper|default:"&nbsp;" }}{% else %}&nbsp;{% endif %}</div><div class="small">Person administering oath</div></div></div>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

@@ -15,6 +15,32 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+Added:
+- **Appointment papers**: every plantilla, casual and contractual appointment now has a **Papers** page (person
+  record → Papers) to fill in the nature of appointment, vice, and the signing, oath and assumption dates, and
+  prints **CS Form No. 33** (salary in words, publication and HRMPSB lines from the vacancy for the item), the
+  **Oath of Office**, the **Certificate of Assumption to Duty** and a **position description** (AP1-AP4).
+- **Report on Appointments Issued** for any month, printed for the CSC Field Office or as Excel (Tools →
+  Reports, AP5).
+- **Job order and contract of service papers**: print one contract, or tick many and print them one per page
+  (Tools → Papers), with the no-employer-employee-relationship clauses of the 2017 joint circular; and the
+  semestral **JO/COS list** for the CSC (JC1-JC4).
+- **Salary schedules, NOSA and NOSI**: paste the LGU's salary table; every plantilla appointment then gets a
+  Notice of Salary Adjustment (print all at once, or Excel), and HRMO can update the stored salaries once the
+  NOSAs are signed. A step increment under review prints its Notice of Step Increment with the amounts (NS1-NS4).
+- **Pass slips**: employees file one before leaving the office, HRMO notes it and the Mayor approves it (order
+  set by `PASS_SLIP_STEPS`), then they press **I'm leaving now** and **I'm back**. HRMO sees who is out right now
+  and a monthly log with personal time added up per person (PS1-PS5).
+- **Separation and clearance**: start one from the person's record; HRMO records each clearance signature
+  (Treasurer, Accountant, GSO, office head, HRMO), prints the clearance form, sees a terminal leave estimate, and
+  completing it ends the appointment as resigned, retired or terminated (SE1-SE5).
+- **Awards and recognition** (PRAISE): record an award for many people at once, or from an issued loyalty
+  case, and print a certificate (AW1-AW3).
+- **Individual Development Plans**: employees write theirs, their office head reviews it, and HRMO tracks who
+  has one by office (ID1-ID3).
+- **Workforce profile**: people in active service by sex, appointment type, office, age, length of service, and
+  persons with disability, solo parents and indigenous groups from the PDS, for the GAD plan (WF1-WF2).
+
 ## 1.3.0 (October 27, 2026)
 
 Added:

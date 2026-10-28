@@ -64,6 +64,11 @@ from .permissions import (
     can_manage_projects,
     can_manage_record_of,
     can_manage_salary_actions,
+    can_manage_separations,
+    can_print_papers,
+    can_view_awards,
+    can_view_development_plan,
+    can_view_separations,
     can_view_contacts,
     can_view_document_content,
     can_view_chart_types,
@@ -617,6 +622,13 @@ def person_detail(request, pk):
                 "manage": can_manage_certificate_requests(request.user),
                 "recent": person.certificate_requests.order_by("-filed_at")[:3],
             } if can_view_certificate_requests(request.user) else None,
+            "papers": can_print_papers(request.user),
+            "separations": {
+                "manage": can_manage_separations(request.user) and can_manage_record_of(request.user, person),
+                "rows": person.separations.order_by("-created_at")[:3],
+            } if can_view_separations(request.user) else None,
+            "awards": person.awards.all() if can_view_awards(request.user) else None,
+            "idp": can_view_development_plan(request.user, person),
         },
     )
 

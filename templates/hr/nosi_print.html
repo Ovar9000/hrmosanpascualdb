@@ -1,0 +1,28 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}NOSI · {{ person.full_name }}{% endblock %}
+{% block back %}{% url 'salary_action_detail' case.pk %}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .ns { font-size: 11pt; line-height: 1.6; }
+  .ns p.body { text-indent: 3em; text-align: justify; }
+  .ns table.amounts td { padding: 2px 6px; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait ns" style="min-height: 0;">
+  {% include "hr/_paper_header.html" with office_line="OFFICE OF THE MUNICIPAL MAYOR" %}
+  <p class="text-center fw-bold fs-5 my-3">NOTICE OF STEP INCREMENT</p>
+  <div class="d-flex justify-content-between"><span>{% if case.nosi_number %}No. {{ case.nosi_number }}{% endif %}</span><span>{{ case.signed_on|default:today|date:"F d, Y" }}</span></div>
+  <p class="mb-0 mt-2">{{ honorific }} <b>{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</b><br>{{ eng.position_title }}<br>{{ eng.office.name }}</p>
+  <p class="mt-3">{% if person.sex == "F" %}Madam{% elif person.sex == "M" %}Sir{% else %}Sir/Madam{% endif %}:</p>
+  <p class="body">Pursuant to Joint Civil Service Commission (CSC) and Department of Budget and Management (DBM) Circular No. 1, s. 2012, implementing Section 13 (c) of RA No. 6758, your salary as <b>{{ eng.position_title }}</b>, SG {{ eng.salary_grade }}, is hereby adjusted effective <b>{{ effective|date:"F d, Y" }}</b>, as follows:</p>
+  <table class="amounts mb-3" style="width: 100%;">
+    <tr><td>Basic monthly salary as of {{ day_before|date:"F d, Y" }}, Step {{ case.from_step }}</td><td class="text-end text-nowrap">{% if old %}₱{{ old|floatformat:"2g" }}{% else %}₱ __________{% endif %}</td></tr>
+    <tr><td>Add: {{ steps }} step increment{{ steps|pluralize }} due to length of service</td><td class="text-end text-nowrap">{% if diff is not None %}₱{{ diff|floatformat:"2g" }}{% else %}₱ __________{% endif %}</td></tr>
+    <tr><td><b>Adjusted salary effective {{ effective|date:"F d, Y" }}, Step {{ case.to_step }}</b></td><td class="text-end text-nowrap fw-bold" style="border-top: 1px solid #000;">{% if new %}₱{{ new|floatformat:"2g" }}{% else %}₱ __________{% endif %}</td></tr>
+  </table>
+  {% if not schedule %}<p class="small-print text-danger">No salary schedule covers {{ effective|date:"F d, Y" }}: write in the amounts, or add the schedule under Salary schedules.</p>{% endif %}
+  <p class="body">This step increment is subject to review and post-audit by the Department of Budget and Management, and subject to re-adjustment and refund if found not in order.</p>
+  <div class="d-flex justify-content-end mt-4"><div class="text-center" style="min-width: 300px;">Very truly yours,<div class="sig fw-bold">{{ sign.mayor|upper|default:"&nbsp;" }}</div><div class="small">Municipal Mayor</div></div></div>
+  <p class="small-print mt-4 mb-0">Item no.: {{ eng.item_number }}<br>Copy furnished: GSIS · 201 file · Accounting</p>
+</div>
+{% endblock %}

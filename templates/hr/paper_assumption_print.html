@@ -1,0 +1,23 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Certificate of assumption · {{ person.full_name }}{% endblock %}
+{% block back %}{{ back }}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .asm { font-size: 12pt; line-height: 1.9; }
+  .asm p.body { text-indent: 3em; text-align: justify; }
+  .asm .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 150px; padding: 0 4px; text-align: center; font-weight: bold; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait asm" style="min-height: 0;">
+  <div class="small-print"><i>CS Form No. 4, Revised 2018</i></div>
+  {% include "hr/_paper_header.html" %}
+  <p class="text-center fw-bold fs-4 my-4">CERTIFICATION OF ASSUMPTION TO DUTY</p>
+  <p class="body">This is to certify that {{ honorific }} <span class="fill" style="min-width: 260px;">{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</span> has assumed the duties and responsibilities as <span class="fill">{{ eng.position_title }}</span> of the <span class="fill">{{ eng.office.name }}</span> effective <span class="fill">{{ eng.assumed_on|date:"F d, Y" }}</span>.</p>
+  <p class="body">This certification is issued in connection with the issuance of the appointment of {{ honorific }} {{ person.last_name|upper }} as {{ eng.position_title }}.</p>
+  <p class="body">Done this <span class="fill" style="min-width: 60px;"></span> day of <span class="fill"></span> in San Pascual, Masbate.</p>
+  <div class="d-flex justify-content-end mt-5"><div class="text-center" style="min-width: 300px;"><div class="sig">&nbsp;</div><div class="small">Head of office ({{ eng.office.head_title|default:eng.office.name }})</div></div></div>
+  <div class="mt-5"><div>Attested by:</div><div class="text-center" style="width: 300px;"><div class="sig fw-bold">{{ sign.hrmo|upper|default:"&nbsp;" }}</div><div class="small">{{ sign.hrmo_title }}</div></div></div>
+  <p class="small-print mt-5 mb-0">201 file · Admin · COA · CSC</p>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

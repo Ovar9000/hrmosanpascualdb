@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Separation · {{ person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← Back to {{ person.full_name }}</a></div>
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">Start a separation for {{ person.full_name }}</h1></div>
+  <div class="card-body">
+    <p class="small text-muted">This opens the clearance from money, property and work-related accountabilities. The appointment stays active until every line is signed and you press <b>Complete</b>.</p>
+    <form method="post" novalidate>{% csrf_token %}
+      {% include "hr/_form_fields.html" %}
+      <div class="mt-3 text-end"><button class="btn btn-danger">Start separation</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

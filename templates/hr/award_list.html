@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Awards and recognition {{ year }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Awards and recognition</h1>
+    <div class="text-muted small">Loyalty, performance and special awards given to LGU employees under the PRAISE program.</div>
+  </div>
+  {% if can_manage %}<a class="btn btn-primary" href="{% url 'award_record' %}">Record an award</a>{% endif %}
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="year">Year</label>
+    <select class="form-select form-select-sm" id="year" name="year" onchange="this.form.submit()">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
+  <div><label class="form-label mb-0" for="category">Kind</label>
+    <select class="form-select form-select-sm" id="category" name="category" onchange="this.form.submit()"><option value="">All</option>{% for v, l in categories %}<option value="{{ v }}"{% if category == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+</form>
+<div class="card border-0 shadow-sm">
+  <div class="list-group list-group-flush">
+    {% for a in rows %}
+      <div class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+        <div><b>{{ a.person.first_name }} {{ a.person.last_name }}</b> · {{ a.title }}<div class="small text-muted">{{ a.get_category_display }}{% if a.given_by %} · {{ a.given_by }}{% endif %}{% if a.basis %} · {{ a.basis }}{% endif %}</div>{% if a.notes %}<div class="small">{{ a.notes }}</div>{% endif %}</div>
+        <div class="text-nowrap small text-muted">{{ a.given_on|date:"M d, Y" }}{% if can_manage %} · <a href="{% url 'award_print' a.pk %}">Certificate</a>{% endif %}</div>
+      </div>
+    {% empty %}
+      <div class="list-group-item text-muted small">No awards recorded for {{ year }}.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

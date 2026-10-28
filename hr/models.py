@@ -350,6 +350,32 @@ class Engagement(models.Model):
     )
     notes = models.TextField(blank=True)
 
+    class Nature(models.TextChoices):
+        ORIGINAL = "original", "Original"
+        PROMOTION = "promotion", "Promotion"
+        TRANSFER = "transfer", "Transfer"
+        REEMPLOYMENT = "reemployment", "Reemployment"
+        REAPPOINTMENT = "reappointment", "Reappointment"
+        RECLASSIFICATION = "reclassification", "Reclassification"
+        DEMOTION = "demotion", "Demotion"
+        RENEWAL = "renewal", "Renewal"
+
+    # Appointment papers (DECISIONS AP1-AP4): what CS Form No. 33, the oath, the certificate of
+    # assumption and the ROAI need beyond the appointment itself. All optional; blank prints a line.
+    nature = models.CharField("Nature of appointment", max_length=20, choices=Nature.choices, blank=True)
+    vice_name = models.CharField("Vice", max_length=150, blank=True,
+                                 help_text="Who held the item before, or blank for a new item.")
+    vice_reason = models.CharField("Reason the item became vacant", max_length=100, blank=True,
+                                   help_text="e.g. retired, promoted, resigned, new item")
+    issued_on = models.DateField("Date of signing", null=True, blank=True,
+                                 help_text="When the appointing officer signed the appointment.")
+    oath_on = models.DateField("Oath taken on", null=True, blank=True)
+    assumed_on = models.DateField("Assumed duty on", null=True, blank=True)
+    duties = models.TextField(
+        "Duties / scope of work", blank=True,
+        help_text="Printed on the job order or contract of service, and on the position description.",
+    )
+
     # Concurrency control & audit timestamp (DECISIONS S2)
     version = models.PositiveIntegerField(default=1)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1969,3 +1995,320 @@ class AuditChainStatus(models.Model):
 
     def __str__(self):
         return f"{'OK' if self.is_valid else 'BROKEN'} at {self.verified_at:%Y-%m-%d %H:%M:%S} ({self.record_count} records)"
+
+
+# --- Salary schedules, NOSA and NOSI (DECISIONS NS1-NS4) -----------------------------------------
+
+
+class SalarySchedule(models.Model):
+    """A salary schedule the LGU uses (an SSL tranche at its income-class rate), pasted in by HRMO.
+    The monthly amount for a grade and step comes from here when a NOSA or NOSI is printed."""
+
+    name = models.CharField(max_length=150, help_text="e.g. SSL VI fourth tranche, 4th class municipality")
+    effective_date = models.DateField(unique=True)
+    basis = models.CharField("Legal basis", max_length=200, blank=True,
+                             help_text="e.g. RA 11979, LBC No. ..., SB ordinance no. ...")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-effective_date"]
+
+    def __str__(self):
+        return f"{self.name} (from {self.effective_date:%b %d, %Y})"
+
+
+class SalaryRate(models.Model):
+    schedule = models.ForeignKey(SalarySchedule, on_delete=models.CASCADE, related_name="rates")
+    salary_grade = models.PositiveSmallIntegerField()
+    step = models.PositiveSmallIntegerField()
+    monthly = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        ordering = ["schedule", "salary_grade", "step"]
+        constraints = [
+            models.UniqueConstraint(fields=["schedule", "salary_grade", "step"], name="salaryrate_one_per_cell"),
+            models.CheckConstraint(condition=Q(salary_grade__range=(1, 33)) & Q(step__range=(1, 8)) & Q(monthly__gt=0),
+                                   name="salaryrate_valid_cell"),
+        ]
+
+    def __str__(self):
+        return f"SG {self.salary_grade}-{self.step}: {self.monthly}"
+
+
+# --- Pass slips (DECISIONS PS1-PS5) ---------------------------------------------------------------
+
+
+class PassSlip(models.Model):
+    """Permission to leave the office during working hours, for official business or personal reasons."""
+
+    class Kind(models.TextChoices):
+        OFFICIAL = "official", "Official business"
+        PERSONAL = "personal", "Personal"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting for approval"
+        APPROVED = "approved", "Approved"
+        DISAPPROVED = "disapproved", "Disapproved"
+        CANCELLED = "cancelled", "Cancelled"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="pass_slips")
+    office = models.ForeignKey(Office, null=True, blank=True, on_delete=models.PROTECT, related_name="pass_slips")
+    position_title = models.CharField(max_length=150, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.OFFICIAL)
+    slip_date = models.DateField("Date")
+    time_out = models.TimeField("Time out")
+    expected_back = models.TimeField("Expected back", null=True, blank=True,
+                                     help_text="Leave blank if you will not come back that day.")
+    destination = models.CharField(max_length=200)
+    purpose = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    filed_at = models.DateTimeField(auto_now_add=True)
+    filed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    # When the person actually left and came back (pressed by them, or corrected by HRMO).
+    actual_out = models.TimeField(null=True, blank=True)
+    actual_back = models.TimeField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-slip_date", "-time_out"]
+        constraints = [
+            models.CheckConstraint(condition=Q(expected_back__isnull=True) | Q(expected_back__gt=F("time_out")),
+                                   name="passslip_back_after_out",
+                                   violation_error_message="Expected back must be after the time out."),
+        ]
+
+    def __str__(self):
+        return f"{self.person} – pass slip {self.slip_date} {self.time_out:%H:%M}"
+
+    @property
+    def current_step(self):
+        if self.status != self.Status.PENDING:
+            return None
+        return next((s for s in self.steps.all() if s.status == PassSlipStep.Status.PENDING), None)
+
+    @property
+    def minutes_out(self):
+        """Minutes between leaving and coming back, once both are recorded."""
+        if not (self.actual_out and self.actual_back) or self.actual_back <= self.actual_out:
+            return None
+        return (self.actual_back.hour * 60 + self.actual_back.minute) - (self.actual_out.hour * 60 + self.actual_out.minute)
+
+
+class PassSlipStep(models.Model):
+    class Kind(models.TextChoices):
+        RECOMMEND = "recommend", "Recommended (office head)"
+        NOTE = "note", "Noted (HRMO)"
+        APPROVE = "approve", "Approved (Municipal Mayor)"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting"
+        DONE = "done", "Done"
+        DISAPPROVED = "disapproved", "Disapproved"
+        SKIPPED = "skipped", "Not needed"
+
+    slip = models.ForeignKey(PassSlip, on_delete=models.CASCADE, related_name="steps")
+    order = models.PositiveSmallIntegerField()
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    acted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    acted_at = models.DateTimeField(null=True, blank=True)
+    from_paper = models.BooleanField(default=False)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["slip", "order"]
+        constraints = [
+            models.UniqueConstraint(fields=["slip", "order"], name="passslipstep_one_per_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.slip} · {self.get_kind_display()}: {self.get_status_display()}"
+
+    @property
+    def short_label(self):
+        return {"recommend": "Office head", "note": "HRMO", "approve": "Mayor"}[self.kind]
+
+
+# --- Separation and clearance (DECISIONS SE1-SE5) ---------------------------------------------------
+
+
+class Separation(models.Model):
+    """Someone leaving the LGU: the clearance from accountabilities, then the appointment is ended."""
+
+    class Kind(models.TextChoices):
+        RESIGNATION = "resignation", "Resignation"
+        RETIREMENT_COMPULSORY = "retire_compulsory", "Compulsory retirement"
+        RETIREMENT_OPTIONAL = "retire_optional", "Optional retirement"
+        END_OF_CONTRACT = "end_of_contract", "End of term or contract"
+        TRANSFER = "transfer", "Transfer to another agency"
+        DEATH = "death", "Death"
+        DROPPED = "dropped", "Dropped from the rolls"
+        DISMISSAL = "dismissal", "Dismissal"
+
+    class Status(models.TextChoices):
+        CLEARING = "clearing", "Clearance in progress"
+        COMPLETED = "completed", "Completed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    # What the appointment becomes when the separation is completed (SE3).
+    ENDS_AS = {
+        Kind.RESIGNATION: Engagement.Status.RESIGNED,
+        Kind.RETIREMENT_COMPULSORY: Engagement.Status.RETIRED,
+        Kind.RETIREMENT_OPTIONAL: Engagement.Status.RETIRED,
+        Kind.DROPPED: Engagement.Status.TERMINATED,
+        Kind.DISMISSAL: Engagement.Status.TERMINATED,
+    }
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="separations")
+    engagement = models.ForeignKey(Engagement, on_delete=models.PROTECT, related_name="separations")
+    kind = models.CharField(max_length=30, choices=Kind.choices)
+    last_day = models.DateField("Last day of service")
+    letter_received_on = models.DateField("Letter or notice received on", null=True, blank=True)
+    reason = models.TextField("Details", blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.CLEARING, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["last_day", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["engagement"], condition=Q(status="clearing"),
+                                    name="separation_one_open_per_engagement",
+                                    violation_error_message="A separation is already in progress for this appointment."),
+        ]
+
+    def __str__(self):
+        return f"{self.person} – {self.get_kind_display()} ({self.last_day})"
+
+    @property
+    def is_open(self):
+        return self.status == self.Status.CLEARING
+
+
+class ClearanceItem(models.Model):
+    """One signatory line of the clearance from money, property and work-related accountabilities."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Not yet signed"
+        CLEARED = "cleared", "Cleared"
+        FINDINGS = "findings", "Not cleared (with findings)"
+        NOT_APPLICABLE = "na", "Not applicable"
+
+    separation = models.ForeignKey(Separation, on_delete=models.CASCADE, related_name="clearance_items")
+    order = models.PositiveSmallIntegerField()
+    area = models.CharField("Office / accountability", max_length=200)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    signed_by_name = models.CharField("Signed by", max_length=150, blank=True)
+    signed_on = models.DateField(null=True, blank=True)
+    remarks = models.CharField(max_length=300, blank=True)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        ordering = ["separation", "order"]
+        constraints = [
+            models.UniqueConstraint(fields=["separation", "order"], name="clearance_one_per_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.separation} · {self.area}: {self.get_status_display()}"
+
+
+# --- Awards and development plans (DECISIONS AW1-AW3, ID1-ID3) ---------------------------------------
+
+
+class Award(models.Model):
+    """Recognition given to an employee (PRAISE): loyalty, service, performance and special awards."""
+
+    class Category(models.TextChoices):
+        LOYALTY = "loyalty", "Loyalty award"
+        PERFORMANCE = "performance", "Performance award"
+        SERVICE = "service", "Years-in-service recognition"
+        SPECIAL = "special", "Special citation"
+        SUGGESTION = "suggestion", "Suggestion or innovation"
+        OTHER = "other", "Other"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="awards")
+    category = models.CharField(max_length=20, choices=Category.choices)
+    title = models.CharField(max_length=200, help_text="e.g. Outstanding Employee of the Year 2026")
+    given_on = models.DateField()
+    given_by = models.CharField(max_length=150, blank=True, help_text="e.g. Municipal Mayor, PRAISE Committee")
+    basis = models.CharField(max_length=200, blank=True, help_text="Resolution, office order or citation no.")
+    notes = models.TextField(blank=True)
+    salary_action = models.ForeignKey(SalaryAction, null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name="awards")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-given_on", "person__last_name"]
+
+    def __str__(self):
+        return f"{self.person} – {self.title} ({self.given_on:%Y})"
+
+
+class DevelopmentPlan(models.Model):
+    """An Individual Development Plan for one year: the person's goal and the actions to reach it."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Sent for review"
+        REVIEWED = "reviewed", "Reviewed"
+
+    person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="development_plans")
+    year = models.PositiveSmallIntegerField()
+    career_goal = models.TextField("Career goal", blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-year", "person__last_name"]
+        constraints = [
+            models.UniqueConstraint(fields=["person", "year"], name="idp_one_per_year"),
+        ]
+
+    def __str__(self):
+        return f"{self.person} – development plan {self.year}"
+
+
+class DevelopmentItem(models.Model):
+    plan = models.ForeignKey(DevelopmentPlan, on_delete=models.CASCADE, related_name="items")
+    competency = models.CharField("Competency to develop", max_length=200)
+    objective = models.CharField("Objective", max_length=300, blank=True)
+    activity = models.CharField("Development activity", max_length=300,
+                                help_text="Training, coaching, job rotation, self-study ...")
+    target_date = models.DateField("Target date", null=True, blank=True)
+    support = models.CharField("Support needed", max_length=200, blank=True)
+    done = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["plan", "pk"]
+
+    def __str__(self):
+        return f"{self.plan} · {self.competency}"

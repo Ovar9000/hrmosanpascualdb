@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Development plans {{ year }}{% endblock %}
+
+{% block content %}
+{% include "hr/_tracker_nav.html" %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Individual Development Plans {{ year }}</h1>
+    <div class="text-muted small">Employees who rate under SPMS, by office: who has written a plan, sent it, and had it reviewed.</div>
+  </div>
+  <form method="get"><select class="form-select form-select-sm" name="year" aria-label="Year" onchange="this.form.submit()">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></form>
+</div>
+<div class="row g-2 mb-3 text-center small">
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ totals.reviewed }}</div>reviewed</div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ totals.submitted }}</div>waiting for review</div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ totals.draft }}</div>drafts</div></div></div>
+  <div class="col-6 col-md-3"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0 {% if totals.none %}text-danger{% endif %}">{{ totals.none }}</div>no plan, of {{ people }}</div></div></div>
+</div>
+{% for row in offices %}
+<details class="card border-0 shadow-sm mb-2">
+  <summary class="card-header bg-white d-flex justify-content-between py-2"><span class="fw-bold">{{ row.office.name }}</span><span class="small">{{ row.counts.reviewed }} reviewed · {{ row.counts.submitted }} sent · {{ row.counts.draft }} draft · <span class="{% if row.counts.none %}text-danger{% endif %}">{{ row.counts.none }} none</span></span></summary>
+  <ul class="list-group list-group-flush small">
+    {% for eng, plan in row.people %}
+      <li class="list-group-item d-flex justify-content-between"><a href="{% url 'idp_person' eng.person.pk %}?year={{ year }}">{{ eng.person.full_name }}</a><span>{% if plan %}{{ plan.get_status_display }}{% else %}<span class="text-muted">No plan</span>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+</details>
+{% endfor %}
+{% endblock %}

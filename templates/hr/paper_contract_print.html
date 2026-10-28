@@ -1,0 +1,39 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}{% if items|length == 1 %}{{ items.0.title|title }} · {{ items.0.person.full_name }}{% else %}{{ items|length }} contracts{% endif %}{% endblock %}
+{% block back %}{{ back }}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .ct { font-size: 11pt; line-height: 1.55; }
+  .ct ol li { margin-bottom: 4px; text-align: justify; }
+  .ct .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 120px; padding: 0 4px; font-weight: bold; }
+  .sheet + .sheet { page-break-before: always; }
+{% endblock %}
+{% block sheet %}
+{% for c in items %}
+<div class="sheet portrait ct" style="min-height: 0;">
+  {% include "hr/_paper_header.html" %}
+  <p class="text-center fw-bold fs-5 mb-1">{{ c.title }}</p>
+  <p class="text-center small mb-3">{{ c.eng.office.name }}</p>
+  <p>This contract is entered into by the <b>Municipal Government of San Pascual, Masbate</b>, represented by the Municipal Mayor, {{ c.sign.mayor|default:"__________________" }} (the "LGU"), and <b>{{ c.person.first_name|upper }} {% if c.person.middle_name %}{{ c.person.middle_name|slice:":1"|upper }}. {% endif %}{{ c.person.last_name|upper }}{% if c.person.suffix %} {{ c.person.suffix|upper }}{% endif %}</b>, of legal age, residing at {{ c.person.address|default:"__________________" }} (the "{% if c.eng.type == 'jo' %}worker{% else %}contractor{% endif %}"):</p>
+  <ol>
+    <li><b>Services.</b> The {% if c.eng.type == 'jo' %}worker{% else %}contractor{% endif %} shall render services as <span class="fill">{{ c.eng.position_title }}</span>{% if c.eng.duties %}, namely: {{ c.eng.duties }}{% else %}: <span class="fill" style="min-width: 300px;"></span>{% endif %}</li>
+    <li><b>Period.</b> From <span class="fill">{{ c.eng.start_date|date:"F d, Y" }}</span> to <span class="fill">{% if c.eng.end_date %}{{ c.eng.end_date|date:"F d, Y" }}{% endif %}</span>, unless terminated sooner under item 6.</li>
+    <li><b>Compensation.</b> {% if c.rate %}<span class="fill">{{ c.rate_words }}</span> ({{ c.rate_peso }}) {{ c.basis }}{% else %}<span class="fill" style="min-width: 300px;"></span>{% endif %}, charged to {{ c.fund }}, paid on submission of the accomplishment report or certificate of services rendered, approved by the head of office.</li>
+    <li><b>No employer-employee relationship.</b> This contract does not create an employer-employee relationship between the LGU and the {% if c.eng.type == 'jo' %}worker{% else %}contractor{% endif %}. The services rendered are not considered government service, and the {% if c.eng.type == 'jo' %}worker{% else %}contractor{% endif %} is not entitled to the benefits of government employees, such as PERA, ACA, RATA, leave and the year-end bonus (CSC-COA-DBM Joint Circular No. 1, s. 2017).</li>
+    <li><b>Social protection.</b> The {% if c.eng.type == 'jo' %}worker{% else %}contractor{% endif %} is responsible for their own SSS, PhilHealth and Pag-IBIG coverage.</li>
+    <li><b>Termination.</b> Either party may end this contract by written notice. The LGU may end it at once for unsatisfactory performance, misconduct or the end of the funds or project.</li>
+    <li><b>Renewal.</b> This contract may be renewed, subject to satisfactory performance and the availability of funds.</li>
+  </ol>
+  <p>Signed this <span class="fill" style="min-width: 50px;"></span> day of <span class="fill"></span> at San Pascual, Masbate.</p>
+  <div class="d-flex justify-content-between mt-4">
+    <div class="text-center" style="min-width: 260px;"><div class="small text-start">For the LGU:</div><div class="sig fw-bold">{{ c.sign.mayor|upper|default:"&nbsp;" }}</div><div class="small">Municipal Mayor</div></div>
+    <div class="text-center" style="min-width: 260px;"><div class="small text-start">Conforme:</div><div class="sig fw-bold">{{ c.person.first_name|upper }} {{ c.person.last_name|upper }}</div><div class="small">{% if c.eng.type == 'jo' %}Worker{% else %}Contractor{% endif %}</div></div>
+  </div>
+  <div class="d-flex justify-content-between mt-4">
+    <div class="text-center" style="min-width: 260px;"><div class="small text-start">Funds available:</div><div class="sig fw-bold">{{ c.sign.accountant|upper|default:"&nbsp;" }}</div><div class="small">Municipal Accountant</div></div>
+    <div class="text-center" style="min-width: 260px;"><div class="small text-start">Witnesses:</div><div class="sig">&nbsp;</div><div class="sig">&nbsp;</div></div>
+  </div>
+</div>
+{% endfor %}
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

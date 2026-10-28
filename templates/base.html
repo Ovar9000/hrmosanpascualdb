@@ -31,6 +31,8 @@
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'pds_home' %}">My Personal Data Sheet</a></li>{% endif %}
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_certificates' %}">Service record &amp; certificates{% if board_nav.certificates_ready %} <span class="badge text-bg-success">ready</span>{% endif %}</a></li>{% endif %}
                 {% if board_nav.saln %}<li><a class="dropdown-item" href="{% url 'saln_mine' %}">My SALN</a></li>{% endif %}
+                {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'idp_mine' %}">My development plan</a></li>{% endif %}
+                {% if board_nav.show %}<li><a class="dropdown-item" href="{% url 'award_list' %}">Awards &amp; recognition</a></li>{% endif %}
                 {% if board_nav.saln_office %}<li><a class="dropdown-item" href="{% url 'tracker_saln' %}">SALN filing (my office)</a></li>{% endif %}
                 {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
               </ul>
@@ -38,13 +40,17 @@
           {% endif %}
           {% if board_nav.person or board_nav.approver %}
             <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Leave{% if board_nav.inbox %} <span class="badge rounded-pill text-bg-warning" title="Waiting for your signature">{{ board_nav.inbox }}</span>{% endif %}</a>
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Leave{% if board_nav.inbox or board_nav.slip_inbox %} <span class="badge rounded-pill text-bg-warning" title="Waiting for your signature">{{ board_nav.inbox|add:board_nav.slip_inbox }}</span>{% endif %}</a>
               <ul class="dropdown-menu">
                 {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_leave' %}">My leave</a></li>
                 <li><a class="dropdown-item" href="{% url 'leave_file' %}">File leave</a></li>{% endif %}
                 {% if board_nav.coc %}<li><a class="dropdown-item" href="{% url 'my_leave' %}#coc">Overtime credits &amp; CTO</a></li>{% endif %}
                 {% if board_nav.approver %}<li><a class="dropdown-item" href="{% url 'leave_inbox' %}">Waiting for me{% if board_nav.inbox %} ({{ board_nav.inbox }}){% endif %}</a></li>{% endif %}
                 {% if board_nav.register and perms.hr.manage_hr_records %}<li><a class="dropdown-item" href="{% url 'coc_record' %}">Record overtime (COC)</a></li>{% endif %}
+                <li><hr class="dropdown-divider"></li>
+                {% if board_nav.person %}<li><a class="dropdown-item" href="{% url 'my_slips' %}">My pass slips</a></li>
+                <li><a class="dropdown-item" href="{% url 'slip_new' %}">File a pass slip</a></li>{% endif %}
+                {% if board_nav.approver %}<li><a class="dropdown-item" href="{% url 'slip_inbox' %}">Pass slips waiting for me{% if board_nav.slip_inbox %} ({{ board_nav.slip_inbox }}){% endif %}</a></li>{% endif %}
               </ul>
             </li>
           {% endif %}
@@ -73,12 +79,23 @@
                 <li><a class="dropdown-item" href="{% url 'tracker_learning' %}">Training hours</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_ratings' %}">Performance ratings</a></li>
                 <li><a class="dropdown-item" href="{% url 'tracker_saln' %}">SALN filing</a></li>
+                <li><a class="dropdown-item" href="{% url 'idp_tracker' %}">Development plans</a></li>
                 {% endif %}
                 {% if board_nav.register %}
                 <li><h6 class="dropdown-header">Reports</h6></li>
                 <li><a class="dropdown-item" href="{% url 'leave_register' %}">Leave register</a></li>
                 <li><a class="dropdown-item" href="{% url 'leave_balances' %}">Leave balances list</a></li>
                 {% if board_nav.plantilla %}<li><a class="dropdown-item" href="{% url 'plantilla_report' %}">Plantilla of Personnel</a></li>{% endif %}
+                {% if board_nav.papers %}<li><a class="dropdown-item" href="{% url 'roai_report' %}">Report on Appointments Issued</a></li>
+                <li><a class="dropdown-item" href="{% url 'jo_cos_report' %}">JO/COS list for CSC</a></li>{% endif %}
+                {% if board_nav.workforce %}<li><a class="dropdown-item" href="{% url 'workforce_report' %}">Workforce profile (GAD)</a></li>{% endif %}
+                {% if board_nav.slip_log %}<li><a class="dropdown-item" href="{% url 'slip_log' %}">Pass slip log</a></li>{% endif %}
+                {% endif %}
+                {% if board_nav.papers or board_nav.separations %}
+                <li><h6 class="dropdown-header">Papers</h6></li>
+                {% if board_nav.papers %}<li><a class="dropdown-item" href="{% url 'contract_list' %}">Job order &amp; contract papers</a></li>
+                <li><a class="dropdown-item" href="{% url 'salary_schedule_list' %}">Salary schedules &amp; NOSA</a></li>{% endif %}
+                {% if board_nav.separations %}<li><a class="dropdown-item" href="{% url 'separation_list' %}">Separations &amp; clearance</a></li>{% endif %}
                 {% endif %}
                 {% if board_nav.certificates %}
                 <li><h6 class="dropdown-header">Requests</h6></li>

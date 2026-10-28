@@ -38,9 +38,12 @@ def board_nav(request):
     """Leave, memo and vacancy menu links with their counts (DECISIONS L8, M2). Lazy, like org_nav."""
 
     def links():
-        from . import board, coc, leave, saln
+        from . import board, coc, leave, pass_slips, saln
         from .models import CertificateRequest, PasswordResetRequest, PdsSubmission
-        from .permissions import can_handle_password_resets, is_office_head
+        from .permissions import (
+            can_handle_password_resets, can_print_papers, can_view_pass_slip_log, can_view_separations,
+            can_view_workforce_report, is_office_head,
+        )
 
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
@@ -53,6 +56,11 @@ def board_nav(request):
             "person": person is not None,
             "approver": approver,
             "inbox": len(leave.inbox(user)) if approver else 0,
+            "slip_inbox": len(pass_slips.inbox(user)) if approver else 0,
+            "papers": can_print_papers(user),
+            "separations": can_view_separations(user),
+            "slip_log": can_view_pass_slip_log(user),
+            "workforce": can_view_workforce_report(user),
             "register": can_view_leave_register(user),
             "plantilla": can_view_plantilla_report(user),
             "unread": board.unread_memos(person).count() if person else 0,

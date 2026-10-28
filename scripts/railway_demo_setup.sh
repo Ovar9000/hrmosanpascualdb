@@ -47,4 +47,7 @@ DJANGO_DEBUG=1 manage seed_demo_salary_history | tail -n 1
 echo "==> Leave applications, vacancies and memos"
 DJANGO_DEBUG=1 manage seed_demo_board | tail -n 1
 
+echo "==> Salary schedules, appointment papers, pass slips, a separation, awards"
+DJANGO_DEBUG=1 manage seed_demo_papers | tail -n 1
+
 manage verify_audit_chain >/dev/null && echo "==> Audit hash chain verifies. Done."

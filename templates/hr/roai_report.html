@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Report on Appointments Issued · {{ label }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Report on Appointments Issued</h1>
+    <div class="text-muted small">Plantilla, casual and contractual appointments signed in {{ label }}, for submission to the CSC Field Office within the first 15 days of the next month.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}&export=xlsx">Excel</a>
+    <a class="btn btn-sm btn-primary" href="?{{ qs }}&print=1">Print</a>
+  </div>
+</div>
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3 small">
+  <a class="btn btn-sm btn-outline-secondary" href="?month={{ prev|date:'Y-m' }}">← {{ prev|date:"M Y" }}</a>
+  <form method="get" class="d-flex gap-2"><input type="month" class="form-control form-control-sm" name="month" value="{{ first|date:'Y-m' }}" aria-label="Month" onchange="this.form.submit()"><noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript></form>
+  <a class="btn btn-sm btn-outline-secondary" href="?month={{ next|date:'Y-m' }}">{{ next|date:"M Y" }} →</a>
+</div>
+{% if guessed %}<div class="alert alert-warning small py-2">{{ guessed }} appointment{{ guessed|pluralize }} {{ guessed|pluralize:"has,have" }} no signing date recorded, so the start date is used. Fill it in under <b>Papers</b> on the appointment.</div>{% endif %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Date issued</th><th>Name</th><th>Position</th><th>Item no.</th><th class="text-center">SG</th><th class="text-end">Monthly</th><th>Status</th><th>Period</th><th>Nature</th><th>Publication</th><th></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td class="text-nowrap">{{ r.issued|date:"m/d/Y" }}{% if r.issued_guess %} <span class="badge text-bg-warning" title="Start date: no signing date recorded">?</span>{% endif %}</td>
+            <td><a href="{% url 'person_detail' r.person.pk %}" class="text-decoration-none">{{ r.person.full_name }}</a></td>
+            <td>{{ r.eng.position_title }}<div class="text-muted">{{ r.eng.office.name }}</div></td>
+            <td class="font-monospace text-nowrap">{{ r.eng.item_number|default:"—" }}</td>
+            <td class="text-center">{{ r.eng.salary_grade|default:"" }}</td>
+            <td class="text-end font-monospace">{{ r.monthly|floatformat:"2g"|default:"—" }}</td>
+            <td>{{ r.status }}</td>
+            <td class="text-nowrap">{% if r.period %}{{ r.period.0|date:"m/d/Y" }}–{{ r.period.1|date:"m/d/Y"|default:"" }}{% endif %}</td>
+            <td>{{ r.nature|default:"—" }}</td>
+            <td class="text-nowrap">{% if r.vacancy %}{{ r.vacancy.published_on|date:"m/d/Y" }}–{{ r.vacancy.deadline|date:"m/d/Y" }}{% endif %}</td>
+            <td><a class="btn btn-sm btn-outline-secondary py-0" href="{% url 'engagement_papers' r.eng.pk %}">Papers</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="11" class="text-center text-muted py-3">No appointments issued in {{ label }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

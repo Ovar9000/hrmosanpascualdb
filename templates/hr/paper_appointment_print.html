@@ -1,0 +1,45 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Appointment · {{ person.full_name }}{% endblock %}
+{% block back %}{{ back }}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .ap { font-size: 11.5pt; line-height: 1.7; }
+  .ap .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 160px; padding: 0 4px; text-align: center; font-weight: bold; }
+  .ap .cap { font-size: 8pt; text-align: center; display: block; line-height: 1.1; }
+  .ap p.body { text-indent: 3em; text-align: justify; }
+  .ap .back { border: 1px solid #000; padding: 8px 12px; margin-top: 10px; font-size: 10pt; line-height: 1.5; }
+  .sheet + .sheet { page-break-before: always; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait ap" style="min-height: 0;">
+  <div class="d-flex justify-content-between small-print"><i>{{ form_label }}</i><span>(Stamp of date of receipt)</span></div>
+  {% include "hr/_paper_header.html" %}
+  <p class="mt-3">{{ honorific }} <span class="fill" style="min-width: 320px;">{{ person.first_name|upper }} {% if person.middle_name %}{{ person.middle_name|slice:":1"|upper }}. {% endif %}{{ person.last_name|upper }}{% if person.suffix %} {{ person.suffix|upper }}{% endif %}</span></p>
+  <p class="body">You are hereby appointed as <span class="fill">{{ eng.position_title }}</span> (SG <span class="fill" style="min-width: 50px;">{{ eng.salary_grade|default:"" }}</span>) under <span class="fill">{{ status }}</span> status at the <span class="fill">{{ eng.office.name }}</span> with a compensation rate of <span class="fill" style="min-width: 320px;">{{ monthly_words|default:"" }}</span> ({{ monthly_peso|default:"₱ __________" }}) pesos per month.</p>
+  <p class="body">The nature of this appointment is <span class="fill">{{ eng.get_nature_display|default:"" }}</span> vice <span class="fill">{{ eng.vice_name|default:"" }}</span>, who <span class="fill">{{ eng.vice_reason|default:"" }}</span>{% if eng.item_number %} with Plantilla Item No. <span class="fill">{{ eng.item_number }}</span>{% endif %}.</p>
+  {% if eng.type != "plantilla" %}<p class="body">This appointment is for the period <span class="fill">{{ eng.start_date|date:"F d, Y" }}</span> to <span class="fill">{% if eng.end_date %}{{ eng.end_date|date:"F d, Y" }}{% endif %}</span>, unless sooner terminated.</p>{% endif %}
+  <p class="body">This appointment shall take effect on the date of signing by the appointing officer/authority.</p>
+
+  <div class="d-flex justify-content-end mt-4">
+    <div class="text-center" style="min-width: 300px;">
+      Very truly yours,
+      <div class="sig fw-bold">{{ sign.mayor|upper|default:"&nbsp;" }}</div>
+      <div class="small">Municipal Mayor (Appointing Officer)</div>
+      <div class="mt-3"><span class="fill" style="min-width: 200px;">{{ eng.issued_on|date:"F d, Y" }}</span><span class="cap">Date of signing</span></div>
+    </div>
+  </div>
+
+  <div class="back">
+    <p class="mb-2"><b>Certification</b><br>This is to certify that all requirements and supporting papers pursuant to the Omnibus Rules on Appointments and Other Human Resource Actions have been complied with, reviewed and found to be in order.
+    {% if eng.type == "plantilla" %}The position was published at <span class="line">{{ vacancy.posted_at|default:"" }}</span> from <span class="line">{{ vacancy.published_on|date:"M d, Y" }}</span> to <span class="line">{{ vacancy.deadline|date:"M d, Y" }}</span> in consonance with RA No. 7041.{% endif %}</p>
+    <div class="d-flex justify-content-end"><div class="text-center" style="min-width: 260px;"><div class="sig fw-bold">{{ sign.hrmo|upper|default:"&nbsp;" }}</div><div class="small">{{ sign.hrmo_title }}</div></div></div>
+    <p class="mb-2 mt-3"><b>Certification</b><br>This is to certify that the appointee has been screened and found qualified by at least the majority of the Human Resource Merit Promotion and Selection Board (HRMPSB) during the deliberation held on <span class="line">{{ vacancy.board_met_on|date:"M d, Y" }}</span>.</p>
+    <div class="d-flex justify-content-end"><div class="text-center" style="min-width: 260px;"><div class="sig">&nbsp;</div><div class="small">Chairperson, HRMPSB</div></div></div>
+    <p class="mb-1 mt-3"><b>CSC notation</b></p>
+    <div style="height: 40px; border: 1px dashed #999;"></div>
+    <p class="mb-0 mt-3"><b>Acknowledgement</b><br>Received original / photocopy of appointment on <span class="line"></span></p>
+    <div class="d-flex justify-content-end"><div class="text-center" style="min-width: 260px;"><div class="sig">&nbsp;</div><div class="small">Appointee</div></div></div>
+  </div>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

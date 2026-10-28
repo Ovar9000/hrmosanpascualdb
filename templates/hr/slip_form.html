@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Pass slip{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if by_hrmo %}{% url 'person_detail' person.pk %}{% else %}{% url 'my_slips' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a></div>
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">{% if by_hrmo %}Record a paper pass slip for {{ person.full_name }}{% else %}File a pass slip{% endif %}</h1></div>
+  <div class="card-body">
+    <p class="small text-muted">Signed by: {{ steps|join:", then " }}.{% if by_hrmo %} Record each signature from the paper slip on the next page.{% endif %}</p>
+    <form method="post" novalidate>{% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <div class="mb-3">
+        <div class="form-label fw-semibold">Kind</div>
+        {% for radio in form.kind %}<div class="form-check form-check-inline">{{ radio.tag }} <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label></div>{% endfor %}
+      </div>
+      <div class="row g-3">
+        {% for field in form %}{% if field.name != "kind" %}
+          <div class="col-12 {% if field.name == 'slip_date' or field.name == 'time_out' or field.name == 'expected_back' %}col-md-4{% endif %}">
+            <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="text-danger" aria-hidden="true">*</span>{% endif %}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+          </div>
+        {% endif %}{% endfor %}
+      </div>
+      <div class="mt-3 text-end"><button class="btn btn-primary">{% if by_hrmo %}Record{% else %}Send for signature{% endif %}</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Pass slip log · {{ first|date:"F Y" }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Pass slip log</h1>
+    <div class="text-muted small">Approved pass slips in {{ first|date:"F Y" }}. Personal time out is added up per person, from the times pressed or corrected from the logbook.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}&export=xlsx">Excel</a>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="month">Month</label><input type="month" class="form-control form-control-sm" id="month" name="month" value="{{ first|date:'Y-m' }}" onchange="this.form.submit()"></div>
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+</form>
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">By person</div>
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Name</th><th>Office</th><th class="text-center">Official</th><th class="text-center">Personal</th><th class="text-end">Personal time</th><th class="text-center">Out, not back</th></tr></thead>
+      <tbody>
+        {% for r in totals %}
+          <tr><td><a class="text-decoration-none" href="{% url 'person_detail' r.person.pk %}">{{ r.person.full_name }}</a></td><td>{{ r.office.acronym|default:r.office.name|default:"" }}</td>
+            <td class="text-center">{{ r.official }}</td><td class="text-center">{{ r.personal }}</td>
+            <td class="text-end">{% if r.personal_minutes %}{{ r.personal_minutes }} min{% else %}—{% endif %}</td>
+            <td class="text-center">{% if r.not_back %}<span class="badge text-bg-warning">{{ r.not_back }}</span>{% endif %}</td></tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-3">No approved pass slips this month.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-bold py-2">Every slip ({{ slips|length }})</div>
+  <div class="list-group list-group-flush">
+    {% for s in slips %}{% include "hr/_slip_row.html" with show_person=True %}{% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -15,7 +15,11 @@
     <div><a href="{% url 'person_detail' case.person.pk %}">{{ case.person.full_name }}</a>
       · {{ case.engagement.position_title }} · {{ case.engagement.office.name }}</div>
   </div>
-  <span class="badge fs-6 {% if case.status == 'issued' %}bg-success{% elif case.status == 'not_eligible' %}bg-secondary{% elif case.status == 'due' %}bg-warning text-dark{% else %}bg-primary{% endif %}">{{ case.get_status_display }}</span>
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    {% if case.kind == "step" and case.status in "review signature issued" %}<a class="btn btn-sm btn-outline-primary" href="{% url 'nosi_print' case.pk %}">Print NOSI</a>{% endif %}
+    {% if case.kind == "loyalty" and case.status == "issued" and can_manage %}<a class="btn btn-sm btn-outline-primary" href="{% url 'award_record' %}?salary_action={{ case.pk }}">Record the award</a>{% endif %}
+    <span class="badge fs-6 {% if case.status == 'issued' %}bg-success{% elif case.status == 'not_eligible' %}bg-secondary{% elif case.status == 'due' %}bg-warning text-dark{% else %}bg-primary{% endif %}">{{ case.get_status_display }}</span>
+  </div>
 </div>
 
 <div class="row g-3 mb-3">

@@ -1,0 +1,34 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}JO/COS list {{ label }}{% endblock %}
+{% block back %}{% url 'jo_cos_report' %}?{{ qs }}{% endblock %}
+{% block page_size %}size: legal landscape;{% endblock %}
+{% block style %}
+  .jc { font-size: 8pt; }
+  .jc th { text-align: center; background: #e7eef8; }
+  .jc td, .jc th { padding: 2px 3px !important; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet landscape jc">
+  <div class="text-center"><b>REPORT ON CONTRACT OF SERVICE AND JOB ORDER WORKERS</b><br>{{ label }}{% if office %} · {{ office.name }}{% endif %}<br>Municipal Government of San Pascual, Masbate</div>
+  <p class="mt-2 mb-1">Total: <b>{{ counts.total }}</b> (female {{ counts.female }}, male {{ counts.male }})</p>
+  <table class="form-table">
+    <thead><tr><th>No.</th><th>Last name</th><th>First name</th><th>Middle name</th><th>Sex</th><th>Designation</th><th>Nature of work</th><th>Office</th><th>Type</th><th>From</th><th>To</th><th>Rate</th><th>Basis</th><th>Fund source</th></tr></thead>
+    <tbody>
+      {% for e in rows %}
+        <tr>
+          <td class="text-center">{{ forloop.counter }}</td><td>{{ e.person.last_name }}</td><td>{{ e.person.first_name }}</td><td>{{ e.person.middle_name }}</td>
+          <td class="text-center">{{ e.person.sex }}</td><td>{{ e.position_title }}</td><td>{{ e.duties|truncatechars:60 }}</td><td>{{ e.office.acronym|default:e.office.name }}</td>
+          <td>{{ e.get_type_display }}</td><td class="text-center">{{ e.start_date|date:"m/d/Y" }}</td><td class="text-center">{{ e.end_date|date:"m/d/Y" }}</td>
+          <td class="text-end">{{ e.rate|floatformat:"2g"|default:"" }}</td><td>{{ e.get_rate_basis_display }}</td><td>{{ e.fund }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="14" class="text-center">None.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="d-flex justify-content-between mt-4">
+    <div style="min-width: 300px;"><div>Prepared by:</div><div class="sig fw-bold text-center">{{ sign.hrmo|upper|default:"&nbsp;" }}</div><div class="small text-center">{{ sign.hrmo_title }}</div></div>
+    <div style="min-width: 300px;"><div>Approved:</div><div class="sig fw-bold text-center">{{ sign.mayor|upper|default:"&nbsp;" }}</div><div class="small text-center">Municipal Mayor</div></div>
+  </div>
+</div>
+{% endblock %}

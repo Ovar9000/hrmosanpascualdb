@@ -1,0 +1,39 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Clearance · {{ sep.person.full_name }}{% endblock %}
+{% block back %}{% url 'separation_detail' sep.pk %}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .cl { font-size: 10.5pt; line-height: 1.5; }
+  .cl .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 140px; padding: 0 4px; font-weight: bold; }
+  .cl table.form-table td, .cl table.form-table th { font-size: 10pt; height: 14mm; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait cl" style="min-height: 0;">
+  <div class="small-print"><i>Clearance from money, property and work-related accountabilities (CS Form No. 7, Revised 2018)</i></div>
+  {% include "hr/_paper_header.html" %}
+  <p class="text-center fw-bold fs-5 my-2">CLEARANCE</p>
+  <table class="form-table mb-3">
+    <tr><td style="height: auto;"><b>Name</b><br>{{ sep.person.full_name }}</td><td style="height: auto;"><b>Position</b><br>{{ sep.engagement.position_title }}</td><td style="height: auto;"><b>Office</b><br>{{ sep.engagement.office.name }}</td></tr>
+    <tr><td style="height: auto;"><b>Purpose</b><br>{{ sep.get_kind_display }}</td><td style="height: auto;"><b>Last day of service</b><br>{{ sep.last_day|date:"F d, Y" }}</td><td style="height: auto;"><b>Date filed</b><br>{{ sep.created_at|date:"F d, Y" }}</td></tr>
+  </table>
+  <p>This is to certify that the above-named employee is cleared of money, property and work-related accountabilities from this office:</p>
+  <table class="form-table">
+    <thead><tr><th style="width: 40%;">Office / accountability</th><th>Cleared</th><th>Not cleared</th><th>Signature over printed name</th><th>Date</th></tr></thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>{{ item.area }}</td>
+          <td class="text-center align-middle"><span class="box{% if item.status == 'cleared' %} on{% endif %}"></span></td>
+          <td class="text-center align-middle"><span class="box{% if item.status == 'findings' %} on{% endif %}"></span></td>
+          <td class="align-bottom small">{{ item.signed_by_name }}{% if item.remarks %}<div class="text-muted">{{ item.remarks }}</div>{% endif %}</td>
+          <td class="align-bottom small text-nowrap">{{ item.signed_on|date:"m/d/Y" }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="d-flex justify-content-between mt-5">
+    <div style="min-width: 280px;"><div>Certified by:</div><div class="sig fw-bold text-center">{{ sign.hrmo|upper|default:"&nbsp;" }}</div><div class="small text-center">{{ sign.hrmo_title }}</div></div>
+    <div style="min-width: 280px;"><div>Approved:</div><div class="sig fw-bold text-center">{{ sign.mayor|upper|default:"&nbsp;" }}</div><div class="small text-center">Municipal Mayor</div></div>
+  </div>
+</div>
+{% endblock %}

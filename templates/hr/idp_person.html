@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Development plan {{ year }} · {{ person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'person_detail' person.pk %}" class="btn btn-sm btn-outline-secondary">← {{ person.full_name }}</a></div>
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Individual Development Plan {{ year }}</h1>
+    <div class="text-muted small">{{ person.full_name }}. What you want to learn this year and how. Your office head reviews it; HRMO uses the plans for the training calendar.</div>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <form method="get"><select class="form-select form-select-sm" name="year" aria-label="Year" onchange="this.form.submit()">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></form>
+    {% if plan %}<span class="badge fs-6 {% if plan.status == 'reviewed' %}bg-success{% elif plan.status == 'submitted' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ plan.get_status_display }}</span>{% endif %}
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">Career goal</div>
+  <div class="card-body">
+    {% if can_edit %}
+      <form method="post">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="action" value="goal">
+        {{ goal_form.career_goal }}<div class="text-end mt-2"><button class="btn btn-sm btn-outline-primary">Save goal</button></div></form>
+    {% else %}
+      {{ plan.career_goal|linebreaksbr|default:"—" }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">Development activities</div>
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Competency</th><th>Objective</th><th>Activity</th><th>Target</th><th>Support needed</th><th class="text-center">Done</th>{% if can_edit %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for item in plan.items.all %}
+          <tr>
+            <td>{{ item.competency }}</td><td>{{ item.objective }}</td><td>{{ item.activity }}</td>
+            <td class="text-nowrap">{{ item.target_date|date:"M Y"|default:"" }}</td><td>{{ item.support }}</td>
+            <td class="text-center">{% if can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="item" value="{{ item.pk }}"><button class="btn btn-sm py-0 {% if item.done %}btn-success{% else %}btn-outline-secondary{% endif %}" name="action" value="toggle" aria-label="Mark done">{% if item.done %}✓{% else %}–{% endif %}</button></form>{% elif item.done %}✓{% endif %}</td>
+            {% if can_edit %}<td><form method="post" onsubmit="return confirm('Remove this activity?');">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="item" value="{{ item.pk }}"><button class="btn btn-sm btn-link text-danger py-0" name="action" value="remove">Remove</button></form></td>{% endif %}
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-3">No activities yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if can_edit %}
+  <div class="card-body border-top">
+    <form method="post" class="row g-2">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="action" value="add">
+      <div class="col-md-3"><input class="form-control form-control-sm" name="competency" placeholder="Competency, e.g. Records management" aria-label="Competency" required></div>
+      <div class="col-md-3"><input class="form-control form-control-sm" name="objective" placeholder="Objective" aria-label="Objective"></div>
+      <div class="col-md-3"><input class="form-control form-control-sm" name="activity" placeholder="Activity, e.g. CSC training, coaching" aria-label="Activity" required></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" type="date" name="target_date" aria-label="Target date"></div>
+      <div class="col-md-1"><button class="btn btn-sm btn-primary w-100">Add</button></div>
+      <div class="col-md-11"><input class="form-control form-control-sm" name="support" placeholder="Support needed from the office or HRMO (optional)" aria-label="Support needed"></div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+{% if plan.review_note or plan.reviewed_at %}<div class="alert alert-success small">Reviewed {{ plan.reviewed_at|date:"M d, Y" }}{% if plan.reviewed_by %} by {{ plan.reviewed_by.get_full_name|default:plan.reviewed_by.get_username }}{% endif %}{% if plan.review_note %}: {{ plan.review_note }}{% endif %}</div>{% endif %}
+
+<div class="d-flex flex-wrap gap-2 mb-3">
+  {% if can_edit and plan and plan.status == "draft" %}<form method="post">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><button class="btn btn-primary" name="action" value="submit">Send for review</button></form>{% endif %}
+  {% if can_review %}
+    <form method="post" class="d-flex gap-2 flex-grow-1">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}">
+      <input class="form-control" name="review_note" placeholder="Comments for the employee (optional)" aria-label="Review comments">
+      <button class="btn btn-success" name="action" value="review">Mark reviewed</button></form>
+  {% endif %}
+</div>
+
+{% if trainings %}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-bold py-2">Trainings attended in {{ year }} (from the PDS)</div>
+  <ul class="list-group list-group-flush small">{% for t in trainings %}<li class="list-group-item d-flex justify-content-between"><span>{{ t.title }}</span><span class="text-muted">{{ t.date_from|date:"M d" }}{% if t.hours %} · {{ t.hours }} h{% endif %}</span></li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% endblock %}

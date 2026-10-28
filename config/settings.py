@@ -203,6 +203,28 @@ COC_RESTDAY_RATE = os.environ.get("COC_RESTDAY_RATE", "1.5")
 COC_MONTHLY_CAP = int(os.environ.get("COC_MONTHLY_CAP", "40"))
 COC_BALANCE_CAP = int(os.environ.get("COC_BALANCE_CAP", "120"))
 COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
+# Appointment papers (DECISIONS AP1): the form number printed on the appointment, and the working days
+# a month used to turn a daily rate into a monthly one.
+APPOINTMENT_FORM_LABEL = os.environ.get("APPOINTMENT_FORM_LABEL", "CS Form No. 33-B, Revised 2018")
+WORKING_DAYS_PER_MONTH = int(os.environ.get("WORKING_DAYS_PER_MONTH", "22"))
+# Job order and contract of service papers (DECISIONS JC1): the fund charged when the contract has no
+# project, and the accountant who certifies funds (blank prints a line).
+CONTRACT_FUND_SOURCE = os.environ.get("CONTRACT_FUND_SOURCE", "General Fund")
+CONTRACT_ACCOUNTANT = os.environ.get("CONTRACT_ACCOUNTANT", "")
+# Pass slip signatures in order (DECISIONS PS1): any of recommend (office head), note (HRMO) and
+# approve (Mayor); approve must be one of them. The survey reported employee -> HRMO -> Mayor.
+PASS_SLIP_STEPS = _types("PASS_SLIP_STEPS", "note,approve")
+# Clearance signatories, in order (DECISIONS SE2): one line each on the clearance form.
+CLEARANCE_AREAS = [
+    s.strip() for s in os.environ.get(
+        "CLEARANCE_AREAS",
+        "Head of office: work, files and documents turned over;"
+        "Municipal Treasurer: cash and money accountabilities;"
+        "Municipal Accountant: cash advances liquidated;"
+        "General Services Office: property and equipment returned;"
+        "MHRMO: ID, records and leave",
+    ).split(";") if s.strip()
+]
 
 # Login rate limiting: 5 failures for the same username+IP -> 15 min lockout.
 # Keyed on the pair so one attacker can't lock a real user out from everywhere.

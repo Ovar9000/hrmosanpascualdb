@@ -1,0 +1,14 @@
+{% comment %}One table of the workforce profile. Pass `title` and `rows`: [(group, Counter of F / M / U / total)].{% endcomment %}
+<div class="card border-0 shadow-sm h-100">
+  <div class="card-header bg-white fw-bold py-2">{{ title }}</div>
+  <div class="table-responsive">
+    <table class="table table-sm small mb-0">
+      <thead class="table-light"><tr><th></th><th class="text-end">Female</th><th class="text-end">Male</th><th class="text-end">Not recorded</th><th class="text-end">Total</th></tr></thead>
+      <tbody>
+        {% for label, c in rows %}
+          <tr><td>{{ label }}</td><td class="text-end">{{ c.F }}</td><td class="text-end">{{ c.M }}</td><td class="text-end text-muted">{{ c.U }}</td><td class="text-end fw-bold">{{ c.total }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

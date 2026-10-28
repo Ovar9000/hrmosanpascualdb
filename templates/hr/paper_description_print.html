@@ -1,0 +1,31 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Position description · {{ eng.position_title }}{% endblock %}
+{% block back %}{{ back }}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .pd td, .pd th { font-size: 10pt; }
+  .pd .label { font-size: 8pt; color: #333; display: block; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait pd" style="min-height: 0;">
+  <div class="small-print"><i>Position description (based on DBM-CSC Form No. 1)</i></div>
+  {% include "hr/_paper_header.html" %}
+  <p class="text-center fw-bold fs-5 my-3">POSITION DESCRIPTION</p>
+  <table class="form-table">
+    <tr><td colspan="2"><span class="label">1. Position title</span>{{ eng.position_title }}</td><td><span class="label">2. Item number</span>{{ eng.item_number|default:"—" }}</td><td><span class="label">3. Salary grade</span>{{ eng.salary_grade|default:"—" }}</td></tr>
+    <tr><td colspan="2"><span class="label">4. Office / department</span>{{ eng.office.name }}</td><td colspan="2"><span class="label">5. Incumbent</span>{{ person.full_name }}</td></tr>
+    <tr><td colspan="2"><span class="label">6. Immediate supervisor</span>{% if supervisor %}{{ supervisor.position_title }} ({{ supervisor.person.full_name }}){% else %}{{ eng.office.head_title|default:"" }}{% endif %}</td><td colspan="2"><span class="label">7. Next higher supervisor</span>{% if supervisor.reports_to %}{{ supervisor.reports_to.position_title }}{% endif %}</td></tr>
+    <tr><td colspan="4"><span class="label">8. Employment status</span>{{ status }}</td></tr>
+    <tr><th colspan="4" class="text-start">9. Qualification standards</th></tr>
+    <tr><td><span class="label">Education</span>{{ vacancy.education|default:"" }}</td><td><span class="label">Experience</span>{{ vacancy.experience|default:"" }}</td><td><span class="label">Training</span>{{ vacancy.training|default:"" }}</td><td><span class="label">Eligibility</span>{{ vacancy.eligibility|default:"" }}</td></tr>
+    <tr><th colspan="4" class="text-start">10. Duties and responsibilities</th></tr>
+    <tr><td colspan="4" style="height: 120mm;">{{ eng.duties|linebreaks|default:"" }}</td></tr>
+  </table>
+  <div class="d-flex justify-content-between mt-4">
+    <div class="text-center" style="min-width: 220px;"><div class="sig">&nbsp;</div><div class="small">Incumbent</div></div>
+    <div class="text-center" style="min-width: 220px;"><div class="sig">&nbsp;</div><div class="small">Immediate supervisor</div></div>
+    <div class="text-center" style="min-width: 220px;"><div class="sig">&nbsp;</div><div class="small">Head of office</div></div>
+  </div>
+</div>
+{% if autoprint %}<script>window.addEventListener("load", () => window.print());</script>{% endif %}
+{% endblock %}

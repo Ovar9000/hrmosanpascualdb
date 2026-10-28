@@ -32,8 +32,8 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
    - JO/COS generally do not earn paid leave; controlled explicitly via `Engagement.leave_eligible`.
 6. **Attendance / DTR (Out of Scope):**
    - DTR is not strictly recorded in HRMO; pay is salary-based. No attendance module in Phase 1.
-7. **Pass Slip (Deferred):**
-   - Pass slip workflow: Employee → HRMO → Mayor's Office (or representative). Currently on a separate Excel sheet; deferred, but approval engine designed generically to support it.
+7. **Pass Slip (built, PS1-PS5):**
+   - Pass slip workflow: Employee → HRMO → Mayor's Office (or representative). Was on a separate Excel sheet; now built in this order (configurable), see PS1-PS5.
 8. **Parking Lot (To clarify later):**
    - Specific "Other" tasks mentioned by HRMO Head; Google Sheets leave and attendance coordination.
 
@@ -154,7 +154,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | SA4 | **Who sees it:** steps are pay data (R6), so the tracker, cases, person-page milestones and the calendar's *Salary* entries are for HRMO (`manage_salary_actions`, works cases) and Auditor (`view_salary_actions`, read-only). Office roles, executives, delegates, employees and System Admin get nothing. The menu shows only a small dot when any case is due; the counts are on the tracker. | **Likely** (should the Mayor see the Awaiting signature list?) |
 | SA5 | **Scheduling:** the check runs (1) after every deploy's migrations (`prepare_database`; a failure is reported but never blocks the deploy), (2) whenever HRMO or Auditor opens the tracker or the calendar and the last run is over 20 hours old, and (3) optionally at 06:00 Philippine time from a Railway cron service (README 6b). A PostgreSQL advisory lock lets only one run work at a time, so overlapping runs never open the same case twice. Runs are recorded in `SalaryCheckRun` and shown as "Last checked". *Proven by* `SalaryCheckSchedulingTestCase`. | No |
 | SA6 | **Demo data:** `seed_demo_salary_history` (DEBUG only, run by both demo setup scripts) gives four department heads an earlier, ended Casual appointment so their 10-year mark falls between a month ago and two months from now, adds one sample leave without pay, then runs the check. Tagged `[demo]` and added once. | No |
-| SA7 | **Not built yet (plan phases B-D):** printable NOSI and award certificate, signed-scan upload, Excel export (B); employee notices and an email outbox, with no amounts in messages (C); stored performance ratings and LWOP imports so the checklist fills itself (D). | No |
+| SA7 | **Not built yet (plan phases B-D):** ~~printable NOSI and award certificate~~ (built: NS3, AW3), signed-scan upload, Excel export (B); employee notices and an email outbox, with no amounts in messages (C); stored performance ratings and LWOP imports so the checklist fills itself (D). | No |
 
 ## Reminder lists
 
@@ -268,6 +268,73 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | CT3 | **Expiry:** each credit lasts `COC_VALID_MONTHS` (12) from the day worked; CTO uses the credit that expires first. The employee's home page warns 30 days before hours expire; My leave shows the balance and the next expiry. | **Likely** (confirm the validity period) |
 | CT4 | **CTO is filed as leave** (type "Compensatory time-off", printed under "Others" on CS Form No. 6) and follows the same approval chain. Hours on hold while it is signed; on approval the days with pay times 8 hours are used; cancelling approved CTO marks the use void so the hours count again (the ledger is never edited). Not enough credit is a warning, as for other leave. *Proven by* `TalentTrackersTestCase`. | Maybe |
 | CT5 | **Who sees it:** the COC card (`/leave/coc/<person>/`) has the same audience as the leave card (L, R4); only HRMO credits overtime. | No |
+
+## Appointment papers and the ROAI
+
+| # | Decision | Survey? |
+|---|---|---|
+| AP1 | **Which papers:** plantilla, casual and contractual appointments print **CS Form No. 33** (label from `APPOINTMENT_FORM_LABEL`, default "CS Form No. 33-B, Revised 2018": confirm whether the LGU uses 33-A or 33-B, and whether casuals still go on a plantilla of casual appointment), the **Oath of Office** (CS Form No. 32), the **Certificate of Assumption to Duty** (CS Form No. 4) and a **position description** laid out on DBM-CSC Form No. 1; elected officials print only the oath. JO, COS and project-based workers get a contract instead (JC1). | **Likely** (form versions) |
+| AP2 | **What the papers need** is stored on the appointment (`Engagement.nature`, `vice_name`, `vice_reason`, `issued_on`, `oath_on`, `assumed_on`, `duties`), filled in on its own **Papers** page so the appointment form stays short. All optional: anything blank prints as a line to write on, and the page lists what is missing for CS Form No. 33. The monthly salary is the stored rate (a daily rate × `WORKING_DAYS_PER_MONTH`, default 22), written in words. **Publication** and the HRMPSB date come from the vacancy for the same item number published before the appointment (V1). | Maybe |
+| AP3 | **Signatories:** the Mayor's name is `LEAVE_FORM_MAYOR`, the HRMO's `CERTIFICATE_SIGNATORY` (L6, CR1); blank prints an empty line. The HRMPSB chair and heads of office are titles only (V4). | Maybe |
+| AP4 | **Who:** HRMO and Auditor see and print the papers (they show pay, R6); only HRMO fills them in, never on their own record (R10). Every print is logged as `EXPORT`. *Proven by* `AppointmentPapersTestCase`. | No |
+| AP5 | **ROAI** (`/reports/roai/`, CS Form No. 2): appointments signed in the month, by `issued_on`; an appointment with no signing date is listed by its start date and flagged, so nothing is missed while the dates are filled in. The CSC action columns print blank. Print and Excel. *Proven by* `RoaiAndContractsTestCase`. | Maybe |
+| AP6 | **Not built:** CSC's own systems (e.g. the online submission of appointments) are not connected; the ROAI is printed or exported and sent as the LGU does now. | No |
+
+## Job order and contract of service papers
+
+| # | Decision | Survey? |
+|---|---|---|
+| JC1 | **One contract per worker**, titled JOB ORDER or CONTRACT OF SERVICE, with the services (`Engagement.duties`), period, rate in words and figures, fund (the project and its funding reference, else `CONTRACT_FUND_SOURCE`, default "General Fund"), and the clauses of CSC-COA-DBM Joint Circular No. 1, s. 2017: no employer-employee relationship, not government service, no PERA, RATA, leave or year-end bonus, own SSS/PhilHealth/Pag-IBIG. Funds certified by the Municipal Accountant (`CONTRACT_ACCOUNTANT`). The wording is a starting point for the LGU's legal officer. | **Likely** (the LGU's contract template) |
+| JC2 | **Batch printing** (`/papers/contracts/`): active contracts, or those starting in the next 60 days, by office; tick any (up to 300) and they print one per page. Renewal stays on the person's record (`engagement_renew`), so the new period prints. | Maybe |
+| JC3 | **JO/COS list** (`/reports/jo-cos/`): everyone under a job order, contract of service or project at any time in a semester, with sex, designation, nature of work, period, rate and fund, for the semestral report to the CSC Field Office. Print and Excel. | Maybe (CSC's exact columns) |
+| JC4 | **Who:** as AP4. *Proven by* `RoaiAndContractsTestCase`. | No |
+
+## Salary schedules, NOSA and NOSI
+
+| # | Decision | Survey? |
+|---|---|---|
+| NS1 | **Pasted, not typed:** HRMO pastes the table the LGU uses (the SSL tranche at its income-class rate) from Excel or the circular: one line per grade, 8 amounts. Numbers below ₱1,000 on a line are labels, so a "Step 1 … Step 8" header or a leading grade number is read correctly; amounts that go down from one step or grade to the next are warned about, not refused. One schedule per effective date (`SalarySchedule`, `SalaryRate`). The schedule in force on a day is the latest one on or before it. No SSL table ships with the app: the LGU's figures depend on its income class and ordinance. | Maybe |
+| NS2 | **NOSA** per active plantilla appointment that started by the effective date: the amount for its grade and step in the previous schedule (else the stored rate) against the new one; printed all at once (one per page, by office) or as Excel. **Update stored salaries** (HRMO, once the schedule has taken effect) sets each appointment's monthly rate to the new amount and notes it on the appointment; each change is a normal save, so audit-logged. | Maybe |
+| NS3 | **NOSI** for a step increment case under review, awaiting signature or issued (SA3), with the old and new step amounts from the schedule in force on the effective date (the stored rate for the old step if no schedule covers it); blank lines when there is no schedule. This was SA7 phase B. | No |
+| NS4 | **Who:** as AP4. Demo data: `seed_demo_papers` adds two made-up schedules marked "(sample, not the SSL table)". *Proven by* `SalaryScheduleTestCase`, `WordsAndScheduleTestCase`. | No |
+
+## Pass slips
+
+| # | Decision | Survey? |
+|---|---|---|
+| PS1 | **Signed in the order of `PASS_SLIP_STEPS`** (default `note,approve`: HRMO notes, the Mayor or a delegate approves, as the survey reported; add `recommend` for the office head). The office head's step is skipped when the employee heads the office. Built like the leave chain (L1) but kept separate, so neither can break the other. | **Likely** (survey item 7) |
+| PS2 | **Filed online** by the employee for today or later, or recorded by HRMO from paper for any date (each signature then recorded "from paper", L6). Nobody signs their own. The employee can cancel until they go out; HRMO can cancel any open one. | Maybe |
+| PS3 | **Times replace the guard's logbook:** on the day, the employee presses **I'm leaving now** and **I'm back**; HRMO can type the times from the logbook. HRMO sees who is out right now. | Maybe |
+| PS4 | **Monthly log** (`/pass-slips/log/`, HRMO and Auditor): approved slips with personal minutes out added up per person, and slips out but not back. It does not deduct anything from leave: whether personal time is charged as undertime is HRMO's decision (no DTR, survey item 6). Excel. | **Likely** |
+| PS5 | **Who sees a slip:** the employee, and whoever sees their leave (L9). Demo data: `seed_demo_papers` adds today's slips at each stage. *Proven by* `PassSlipTestCase`. | No |
+
+## Separation and clearance
+
+| # | Decision | Survey? |
+|---|---|---|
+| SE1 | **A separation** (`Separation`) is started by HRMO from the person's record for one active appointment: resignation, compulsory or optional retirement, end of term, transfer, death, dropped from the rolls or dismissal, with the last day of service. One in progress per appointment (database constraint). | Maybe |
+| SE2 | **Clearance lines** come from `CLEARANCE_AREAS` (default: head of office, Municipal Treasurer, Municipal Accountant, GSO, MHRMO). HRMO records each from the signed form: cleared (signer and date required), not cleared (findings required) or not applicable. The clearance form prints filled in for the wet signatures. | **Likely** (the LGU's own clearance signatories) |
+| SE3 | **Completing** needs every line cleared or not applicable; it ends the appointment as resigned, retired or terminated (else ended) on the last day, notes it, and hands over direct reports on the org chart like ending an appointment (O2). Cancelling leaves the appointment active. | No |
+| SE4 | **Terminal leave estimate** for plantilla and casual service: vacation and sick leave on the last day from the ledger × the highest monthly salary on record × 0.0481927 (S × D × CF). Shown as an estimate; Accounting computes the payment. | Maybe |
+| SE5 | **Who:** HRMO (records, never their own) and Auditor (reads). Demo data: one retirement with two lines signed. *Proven by* `SeparationTestCase`. | No |
+
+## Awards and development plans
+
+| # | Decision | Survey? |
+|---|---|---|
+| AW1 | **Awards** (`Award`): loyalty, performance, years in service, special citation, suggestion or other, with who gave it and the basis (resolution or office order). HRMO records one award for everyone ticked, or from an issued loyalty case, which fills in the title, date and number. | Maybe |
+| AW2 | **Public inside the app:** everyone with HR access sees the awards list (recognition is meant to be seen); only HRMO records them. | Maybe |
+| AW3 | **Certificate of recognition** printed by HRMO, or by the awardee for their own. *Proven by* `AwardsPlansWorkforceTestCase`. | No |
+| ID1 | **Individual Development Plan** per person per year: a career goal and activities (competency, objective, activity, target date, support, done). Written by the employee or HRMO, sent for review, and reviewed by the head of the person's office or HRMO. Changing a reviewed plan sends it back to draft. | Maybe |
+| ID2 | **Who sees a plan:** the person, HRMO, Auditor and the head of their office. Trainings attended that year (PDS section VII) show under the plan. | Maybe |
+| ID3 | **Tracker** (`/tracker/development-plans/`): SPMS-rated employees (SP1) by office, with no plan, draft, sent or reviewed. | No |
+
+## Workforce profile
+
+| # | Decision | Survey? |
+|---|---|---|
+| WF1 | **Counts by sex** of people in active service (one row per person, their latest appointment): appointment type, office, age band, years since their first appointment in the LGU, and from PDS question 40 persons with disability, solo parents and members of indigenous groups (only people with a PDS here are counted, and the page says how many). For the GAD plan and database and the CSC. Excel. | Maybe |
+| WF2 | **HRMO and Auditor only:** counts of small groups can point to a person, and question 40 is sensitive (PD5). | No |
 
 ## Import / export
 
@@ -432,5 +499,6 @@ The system currently runs in a prototype profile with synthetic test data. Prior
 - **Step 8c:** Service records and certificates of employment, requested online or at the counter, for current and former employees (CR1-CR6). *(Done)*
 - **Step 8d:** Personal Data Sheet online: sections filled in by the employee or encoded by HRMO, verified by HRMO, printed as CS Form No. 212 (PD1-PD7). *(Done)*
 - **Step 8e:** Licences and eligibility, training hours, SPMS ratings, SALN filing, and overtime credits with CTO (EL1-EL3, LD1-LD3, SP1-SP5, SN1-SN4, CT1-CT5). *(Done)*
+- **Step 8f:** Appointment papers and the ROAI, JO/COS papers and list, salary schedules with NOSA and NOSI, pass slips, separation and clearance, awards, development plans and the workforce profile (AP1-AP6, JC1-JC4, NS1-NS4, PS1-PS5, SE1-SE5, AW1-AW3, ID1-ID3, WF1-WF2). *(Done)*
 - **Step 9:** Excel import/export (configurable columns, row-by-row error report).
 - **Step 10:** Mobile employee self-service (my profile, leave filing, one-time passwords).

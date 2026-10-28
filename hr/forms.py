@@ -8,7 +8,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, Applicant, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest, LeaveType,
+    FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest,
+    LeaveType, PassSlip, SalarySchedule, Separation,
     MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
     PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
 )
@@ -1216,3 +1217,149 @@ class DismissResetRequestForm(forms.Form):
         max_length=255, label="Why dismiss it",
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. not ours, they remembered it, duplicate"}),
     )
+
+
+# --- Appointment papers, salary schedules, pass slips, separations, awards, development plans ------
+
+_DATE = {"type": "date", "class": "form-control"}
+_TIME = {"type": "time", "class": "form-control"}
+_TEXT = {"class": "form-control"}
+_SELECT = {"class": "form-select"}
+
+
+class EngagementPapersForm(forms.ModelForm):
+    """What the appointment papers need beyond the appointment itself (AP1-AP3)."""
+
+    version = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
+    class Meta:
+        model = Engagement
+        fields = ["nature", "vice_name", "vice_reason", "issued_on", "oath_on", "assumed_on", "duties"]
+        widgets = {
+            "nature": forms.Select(attrs=_SELECT),
+            "vice_name": forms.TextInput(attrs=_TEXT),
+            "vice_reason": forms.TextInput(attrs=_TEXT),
+            "issued_on": forms.DateInput(attrs=_DATE),
+            "oath_on": forms.DateInput(attrs=_DATE),
+            "assumed_on": forms.DateInput(attrs=_DATE),
+            "duties": forms.Textarea(attrs={**_TEXT, "rows": 5}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["version"].initial = self.instance.version
+
+    def clean(self):
+        cleaned = super().clean()
+        issued, oath, assumed = cleaned.get("issued_on"), cleaned.get("oath_on"), cleaned.get("assumed_on")
+        if issued and assumed and assumed < issued:
+            self.add_error("assumed_on", "Duty is assumed on or after the date the appointment was signed.")
+        if issued and oath and oath < issued:
+            self.add_error("oath_on", "The oath is taken on or after the date the appointment was signed.")
+        return cleaned
+
+
+class SalaryScheduleForm(forms.Form):
+    name = forms.CharField(max_length=150, widget=forms.TextInput(attrs={
+        **_TEXT, "placeholder": "e.g. SSL VI fourth tranche, 4th class municipality"}))
+    effective_date = forms.DateField(widget=forms.DateInput(attrs=_DATE))
+    basis = forms.CharField(label="Legal basis", max_length=200, required=False, widget=forms.TextInput(attrs={
+        **_TEXT, "placeholder": "e.g. RA 11979; DBM Local Budget Circular no. ...; SB ordinance no. ..."}))
+    table = forms.CharField(
+        label="Salary table", widget=forms.Textarea(attrs={**_TEXT, "rows": 12, "class": "form-control font-monospace"}),
+        help_text="Copy the table from Excel or the circular and paste it here: one line per salary grade, the 8 "
+                  "step amounts in order. Lines may start with the grade number; header lines are skipped.",
+    )
+
+    def clean_effective_date(self):
+        day = self.cleaned_data["effective_date"]
+        if SalarySchedule.objects.filter(effective_date=day).exists():
+            raise ValidationError("A schedule already takes effect on this date.")
+        return day
+
+    def clean_table(self):
+        from .papers import ScheduleError, parse_schedule
+
+        try:
+            self.cells = parse_schedule(self.cleaned_data["table"])
+        except ScheduleError as error:
+            raise ValidationError(str(error))
+        return self.cleaned_data["table"]
+
+
+class PassSlipForm(forms.ModelForm):
+    class Meta:
+        model = PassSlip
+        fields = ["kind", "slip_date", "time_out", "expected_back", "destination", "purpose"]
+        widgets = {
+            "kind": forms.RadioSelect(attrs={"class": "form-check-input"}),
+            "slip_date": forms.DateInput(attrs=_DATE),
+            "time_out": forms.TimeInput(attrs=_TIME),
+            "expected_back": forms.TimeInput(attrs=_TIME),
+            "destination": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. Municipal Treasurer's Office, DBP Masbate"}),
+            "purpose": forms.Textarea(attrs={**_TEXT, "rows": 3}),
+        }
+
+    def __init__(self, *args, by_hrmo=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.by_hrmo = by_hrmo
+
+    def clean_slip_date(self):
+        from django.utils import timezone
+
+        day = self.cleaned_data["slip_date"]
+        if not self.by_hrmo and day < timezone.localdate():
+            raise ValidationError("File the pass slip before you go out. HRMO can record a past one from paper.")
+        return day
+
+    def clean(self):
+        cleaned = super().clean()
+        out, back = cleaned.get("time_out"), cleaned.get("expected_back")
+        if out and back and back <= out:
+            self.add_error("expected_back", "Must be after the time out.")
+        return cleaned
+
+
+class SeparationForm(forms.ModelForm):
+    class Meta:
+        model = Separation
+        fields = ["engagement", "kind", "last_day", "letter_received_on", "reason"]
+        widgets = {
+            "engagement": forms.Select(attrs=_SELECT),
+            "kind": forms.Select(attrs=_SELECT),
+            "last_day": forms.DateInput(attrs=_DATE),
+            "letter_received_on": forms.DateInput(attrs=_DATE),
+            "reason": forms.Textarea(attrs={**_TEXT, "rows": 3}),
+        }
+
+    def __init__(self, *args, person=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        field = self.fields["engagement"]
+        field.queryset = person.engagements.filter(status=Engagement.Status.ACTIVE).select_related("office")
+        field.label = "Appointment or contract"
+        field.empty_label = None
+        field.label_from_instance = lambda e: f"{e.position_title} · {e.office.name} ({e.get_type_display()})"
+
+    def clean(self):
+        cleaned = super().clean()
+        eng, last_day = cleaned.get("engagement"), cleaned.get("last_day")
+        if eng and last_day and last_day < eng.start_date:
+            self.add_error("last_day", "Cannot be before the appointment started.")
+        return cleaned
+
+
+class AwardForm(forms.Form):
+    category = forms.ChoiceField(choices=Award.Category.choices, widget=forms.Select(attrs=_SELECT))
+    title = forms.CharField(max_length=200, widget=forms.TextInput(attrs={
+        **_TEXT, "placeholder": "e.g. Outstanding Employee of the Year 2026"}))
+    given_on = forms.DateField(label="Given on", widget=forms.DateInput(attrs=_DATE))
+    given_by = forms.CharField(label="Given by", max_length=150, required=False, widget=forms.TextInput(attrs={
+        **_TEXT, "placeholder": "e.g. Municipal Mayor, PRAISE Committee"}))
+    basis = forms.CharField(label="Basis", max_length=200, required=False, widget=forms.TextInput(attrs={
+        **_TEXT, "placeholder": "Resolution, office order or citation no."}))
+    notes = forms.CharField(label="Citation / notes", required=False, widget=forms.Textarea(attrs={**_TEXT, "rows": 3}))
+
+
+class DevelopmentPlanForm(forms.Form):
+    career_goal = forms.CharField(label="Career goal", required=False, widget=forms.Textarea(attrs={
+        **_TEXT, "rows": 3, "placeholder": "Where you want to be in 2 to 3 years, e.g. qualify for Administrative Officer IV"}))

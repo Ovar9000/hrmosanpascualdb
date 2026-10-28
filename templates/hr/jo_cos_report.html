@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}JO/COS list · {{ label }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Job order and contract of service workers</h1>
+    <div class="text-muted small">Everyone engaged under a job order, contract of service or project at any time from {{ label }}, for the semestral report to the CSC Field Office.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}&export=xlsx">Excel</a>
+    <a class="btn btn-sm btn-primary" href="?{{ qs }}&print=1">Print</a>
+  </div>
+</div>
+<form method="get" class="d-flex flex-wrap gap-2 align-items-end mb-3 small">
+  <div><label class="form-label mb-0" for="year">Year</label>
+    <select class="form-select form-select-sm" id="year" name="year" onchange="this.form.submit()">{% for y in years %}<option{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
+  <div><label class="form-label mb-0" for="half">Semester</label>
+    <select class="form-select form-select-sm" id="half" name="half" onchange="this.form.submit()"><option value="1"{% if half == 1 %} selected{% endif %}>January–June</option><option value="2"{% if half == 2 %} selected{% endif %}>July–December</option></select></div>
+  <div><label class="form-label mb-0" for="office">Office</label>
+    <select class="form-select form-select-sm" id="office" name="office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></div>
+  <noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript>
+</form>
+<div class="row g-2 mb-3 text-center small">
+  <div class="col-4 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ counts.total }}</div>workers</div></div></div>
+  <div class="col-4 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ counts.female }}</div>female</div></div></div>
+  <div class="col-4 col-md-2"><div class="card border-0 shadow-sm"><div class="card-body py-2"><div class="h5 mb-0">{{ counts.male }}</div>male</div></div></div>
+</div>
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>#</th><th>Name</th><th>Sex</th><th>Designation</th><th>Office</th><th>Type</th><th>Period</th><th class="text-end">Rate</th><th>Fund</th></tr></thead>
+      <tbody>
+        {% for e in rows %}
+          <tr>
+            <td class="text-muted">{{ forloop.counter }}</td>
+            <td><a class="text-decoration-none" href="{% url 'person_detail' e.person.pk %}">{{ e.person.full_name }}</a></td>
+            <td>{{ e.person.sex }}</td>
+            <td>{{ e.position_title }}</td>
+            <td>{{ e.office.acronym|default:e.office.name }}</td>
+            <td>{{ e.get_type_display }}</td>
+            <td class="text-nowrap">{{ e.start_date|date:"m/d/Y" }}–{{ e.end_date|date:"m/d/Y"|default:"open" }}</td>
+            <td class="text-end font-monospace text-nowrap">{% if e.rate %}{{ e.rate|floatformat:"2g" }} <span class="text-muted">/ {{ e.get_rate_basis_display|lower }}</span>{% else %}—{% endif %}</td>
+            <td>{{ e.fund }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="9" class="text-center text-muted py-3">No job order or contract of service workers in this semester.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

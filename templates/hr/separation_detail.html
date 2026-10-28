@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Separation · {{ sep.person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% url 'separation_list' %}" class="btn btn-sm btn-outline-secondary">← Separations</a>
+  <a href="{% url 'separation_print' sep.pk %}" class="btn btn-sm btn-outline-primary">Print clearance form</a>
+</div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ sep.get_kind_display }}</h1>
+    <div><a href="{% url 'person_detail' sep.person.pk %}">{{ sep.person.full_name }}</a> · {{ sep.engagement.position_title }} · {{ sep.engagement.office.name }}</div>
+    <div class="small text-muted">Last day of service {{ sep.last_day|date:"F d, Y" }}{% if sep.letter_received_on %} · letter received {{ sep.letter_received_on|date:"M d, Y" }}{% endif %}</div>
+  </div>
+  <span class="badge fs-6 {% if sep.status == 'clearing' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ sep.get_status_display }}</span>
+</div>
+{% if sep.reason %}<p class="small">{{ sep.reason|linebreaksbr }}</p>{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">Clearance</div>
+      <ul class="list-group list-group-flush small">
+        {% for item in items %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between gap-2">
+              <span><b>{{ item.area }}</b></span>
+              <span class="badge {% if item.status == 'cleared' %}text-bg-success{% elif item.status == 'findings' %}text-bg-danger{% elif item.status == 'na' %}text-bg-light border{% else %}text-bg-warning{% endif %}">{{ item.get_status_display }}</span>
+            </div>
+            {% if item.signed_by_name or item.remarks %}<div class="text-muted">{% if item.signed_by_name %}{{ item.signed_by_name }}, {{ item.signed_on|date:"M d, Y" }}{% endif %}{% if item.remarks %} · {{ item.remarks }}{% endif %}</div>{% endif %}
+            {% if manage %}
+            <details class="mt-1"{% if item.status == "pending" and forloop.first %} open{% endif %}>
+              <summary class="text-primary">Record from the signed form</summary>
+              <form method="post" class="row g-2 mt-1">{% csrf_token %}
+                <input type="hidden" name="version" value="{{ sep.version }}"><input type="hidden" name="action" value="item"><input type="hidden" name="item" value="{{ item.pk }}">
+                <div class="col-md-3"><select class="form-select form-select-sm" name="status" aria-label="Status">{% for v, l in statuses %}<option value="{{ v }}"{% if item.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+                <div class="col-md-3"><input class="form-control form-control-sm" name="signed_by_name" placeholder="Signed by" value="{{ item.signed_by_name }}" aria-label="Signed by"></div>
+                <div class="col-md-2"><input class="form-control form-control-sm" type="date" name="signed_on" value="{{ item.signed_on|date:'Y-m-d'|default:today|date:'Y-m-d' }}" aria-label="Signed on"></div>
+                <div class="col-md-3"><input class="form-control form-control-sm" name="remarks" placeholder="Remarks / findings" value="{{ item.remarks }}" aria-label="Remarks"></div>
+                <div class="col-md-1"><button class="btn btn-sm btn-primary w-100">Save</button></div>
+              </form>
+            </details>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if manage %}
+      <div class="card-footer bg-white d-flex flex-wrap gap-2 align-items-center">
+        <form method="post" onsubmit="return confirm('End the appointment as {{ sep.get_kind_display|lower }}, last day {{ sep.last_day|date:"M d, Y" }}?');">{% csrf_token %}<input type="hidden" name="version" value="{{ sep.version }}"><button class="btn btn-danger" name="action" value="complete"{% if outstanding %} disabled title="Every line must be signed or not applicable"{% endif %}>Complete: end the appointment</button></form>
+        {% if outstanding %}<span class="small text-muted">{{ outstanding|length }} line{{ outstanding|pluralize }} still to sign.</span>{% endif %}
+        <form method="post" class="ms-auto" onsubmit="return confirm('Cancel this separation? The appointment stays active.');">{% csrf_token %}<input type="hidden" name="version" value="{{ sep.version }}"><button class="btn btn-outline-secondary" name="action" value="cancel">Cancel separation</button></form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-4">
+    {% if terminal %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Terminal leave (estimate)</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-7">Vacation leave on the last day</dt><dd class="col-5 text-end">{{ terminal.vl }}</dd>
+          <dt class="col-7">Sick leave on the last day</dt><dd class="col-5 text-end">{{ terminal.sl }}</dd>
+          <dt class="col-7">Days (D)</dt><dd class="col-5 text-end">{{ terminal.days }}</dd>
+          <dt class="col-7">Highest monthly salary (S)</dt><dd class="col-5 text-end">{% if terminal.highest %}₱{{ terminal.highest|floatformat:"2g" }}{% else %}—{% endif %}</dd>
+          <dt class="col-7">Factor (CF)</dt><dd class="col-5 text-end">{{ terminal.factor }}</dd>
+          <dt class="col-7">S × D × CF</dt><dd class="col-5 text-end fw-bold">{% if terminal.benefit is not None %}₱{{ terminal.benefit|floatformat:"2g" }}{% else %}—{% endif %}</dd>
+        </dl>
+        <div class="text-muted mt-2">From the leave ledger here. Check it against the leave card before the claim; Accounting computes the payment. Leave of 30 days or more and terminal leave need this clearance.</div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="card border-0 shadow-sm small">
+      <div class="card-body">
+        Started {{ sep.created_at|date:"M d, Y" }}{% if sep.created_by %} by {{ sep.created_by.get_username }}{% endif %}.
+        {% if sep.completed_at %}<br>Completed {{ sep.completed_at|date:"M d, Y" }}{% if sep.completed_by %} by {{ sep.completed_by.get_username }}{% endif %}.{% endif %}
+        <div class="mt-2"><a href="{% url 'person_document_preview' sep.person.pk 'service_record' %}">Service record</a> · <a href="{% url 'person_document_preview' sep.person.pk 'coe' %}">Certificate of employment</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

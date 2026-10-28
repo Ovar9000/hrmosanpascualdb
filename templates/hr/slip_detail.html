@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Pass slip · {{ slip.person.full_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% if is_person %}{% url 'my_slips' %}{% else %}{% url 'slip_inbox' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← Back</a>
+  <a href="{% url 'slip_print' slip.pk %}" class="btn btn-sm btn-outline-primary">Print</a>
+</div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Pass slip: {{ slip.get_kind_display|lower }}</h1>
+    <div><a href="{% url 'person_detail' slip.person.pk %}">{{ slip.person.full_name }}</a> · {{ slip.position_title }}{% if slip.office %} · {{ slip.office.name }}{% endif %}</div>
+  </div>
+  <span class="badge fs-6 {% if slip.status == 'approved' %}bg-success{% elif slip.status == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ slip.get_status_display }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-5">Date</dt><dd class="col-7">{{ slip.slip_date|date:"l, F d, Y" }}</dd>
+          <dt class="col-5">Time out</dt><dd class="col-7">{{ slip.time_out|time:"g:i A" }}</dd>
+          <dt class="col-5">Expected back</dt><dd class="col-7">{{ slip.expected_back|time:"g:i A"|default:"Not coming back today" }}</dd>
+          <dt class="col-5">Destination</dt><dd class="col-7">{{ slip.destination }}</dd>
+          <dt class="col-5">Purpose</dt><dd class="col-7">{{ slip.purpose|linebreaksbr }}</dd>
+          {% if slip.decision_note %}<dt class="col-5">Reason</dt><dd class="col-7">{{ slip.decision_note }}</dd>{% endif %}
+          <dt class="col-5">Actually out</dt><dd class="col-7">{{ slip.actual_out|time:"g:i A"|default:"—" }}</dd>
+          <dt class="col-5">Actually back</dt><dd class="col-7">{{ slip.actual_back|time:"g:i A"|default:"—" }}{% if slip.minutes_out %} <span class="text-muted">({{ slip.minutes_out }} min)</span>{% endif %}</dd>
+        </dl>
+      </div>
+      {% if can_press or can_cancel %}
+      <div class="card-footer bg-white d-flex flex-wrap gap-2">
+        {% if can_press and not slip.actual_out %}<form method="post">{% csrf_token %}<input type="hidden" name="version" value="{{ slip.version }}"><button class="btn btn-primary" name="action" value="out">I'm leaving now</button></form>{% endif %}
+        {% if can_press and slip.actual_out and not slip.actual_back %}<form method="post">{% csrf_token %}<input type="hidden" name="version" value="{{ slip.version }}"><button class="btn btn-success" name="action" value="back">I'm back</button></form>{% endif %}
+        {% if can_cancel %}<form method="post" class="ms-auto" onsubmit="return confirm('Cancel this pass slip?');">{% csrf_token %}<input type="hidden" name="version" value="{{ slip.version }}"><button class="btn btn-outline-danger" name="action" value="cancel">Cancel pass slip</button></form>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Signatures</div>
+      <ul class="list-group list-group-flush small">
+        {% for step in steps %}
+          <li class="list-group-item d-flex justify-content-between gap-2">
+            <span>{{ step.get_kind_display }}{% if step.note %} <span class="text-muted">· {{ step.note }}</span>{% endif %}</span>
+            <span class="text-nowrap">{% if step.status == "done" %}<span class="text-success">✓ {{ step.acted_by.get_full_name|default:step.acted_by.get_username }}</span>{% if step.from_paper %} <span class="badge text-bg-light border">from paper</span>{% endif %}{% elif step.status == "disapproved" %}<span class="text-danger">Disapproved</span>{% else %}{{ step.get_status_display }}{% endif %}</span>
+          </li>
+        {% endfor %}
+      </ul>
+      {% if can_act %}
+      <div class="card-body border-top">
+        <form method="post">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ slip.version }}">
+          {% if paper_only %}<div class="small text-muted mb-2">You are recording the <b>{{ current.short_label }}</b>'s signature from the paper slip.</div>{% endif %}
+          <label class="form-label small" for="note">Note (required to disapprove)</label>
+          <input class="form-control form-control-sm mb-2" id="note" name="note" maxlength="300">
+          <div class="d-flex gap-2"><button class="btn btn-success" name="action" value="done">{% if current.kind == "approve" %}Approve{% elif current.kind == "note" %}Noted{% else %}Recommend{% endif %}</button><button class="btn btn-outline-danger" name="action" value="disapproved">Disapprove</button></div>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% if can_fix_times %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">Correct the times (from the guard's logbook)</div>
+      <div class="card-body">
+        <form method="post" class="row g-2 align-items-end">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ slip.version }}">
+          <div class="col-5"><label class="form-label small" for="t-out">Out</label><input class="form-control form-control-sm" type="time" id="t-out" name="out" value="{{ slip.actual_out|time:'H:i' }}"></div>
+          <div class="col-5"><label class="form-label small" for="t-back">Back</label><input class="form-control form-control-sm" type="time" id="t-back" name="back" value="{{ slip.actual_back|time:'H:i' }}"></div>
+          <div class="col-2"><button class="btn btn-sm btn-outline-primary w-100" name="action" value="times">Save</button></div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

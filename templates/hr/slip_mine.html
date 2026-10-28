@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}My pass slips{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">My pass slips</h1>
+    <div class="text-muted small">File one before you leave the office during working hours. Press <b>I'm leaving now</b> and <b>I'm back</b> on the day, instead of the logbook.</div>
+  </div>
+  <a class="btn btn-primary" href="{% url 'slip_new' %}">File a pass slip</a>
+</div>
+
+{% if today_slips %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">Today</div>
+  <div class="list-group list-group-flush">
+    {% for s in today_slips %}{% include "hr/_slip_row.html" %}{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-bold py-2">Other days</div>
+  <div class="list-group list-group-flush">
+    {% for s in page %}{% include "hr/_slip_row.html" %}{% empty %}<div class="list-group-item text-muted small">No other pass slips.</div>{% endfor %}
+  </div>
+  {% if page.has_other_pages %}
+  <div class="card-footer bg-white small d-flex justify-content-between">
+    {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}">← Newer</a>{% else %}<span></span>{% endif %}
+    {% if page.has_next %}<a href="?page={{ page.next_page_number }}">Older →</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

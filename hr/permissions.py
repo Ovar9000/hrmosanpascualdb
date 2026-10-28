@@ -556,3 +556,64 @@ def password_reset_blocker(user, target):
     if not Person.objects.filter(user_profile__user=target).exists():
         return "This account is not linked to a personnel record, so only the emergency superuser can reset it."
     return None
+
+
+# --- Papers, pass slips, separations, awards and development plans ------------------------------
+
+
+def can_print_papers(user):
+    """Appointment papers, contracts, the ROAI, the JO/COS list, NOSA and NOSI show pay (R6): HRMO
+    and Auditor (AP4)."""
+    return not _no_hr_access(user) and can_view_plantilla_report(user)
+
+
+def can_manage_papers(user):
+    """Fill in appointment details, paste salary schedules and update rates: HRMO (AP4, NS1)."""
+    return can_print_papers(user) and can_manage_hr_records(user)
+
+
+def can_view_pass_slip_log(user):
+    """The pass slip log of every office: HRMO and Auditor (PS4)."""
+    return not _no_hr_access(user) and (user.is_superuser or is_hrmo(user) or is_auditor(user))
+
+
+def can_view_separations(user):
+    """Separations and clearances: HRMO and Auditor (SE5)."""
+    return can_view_pass_slip_log(user)
+
+
+def can_manage_separations(user):
+    return can_view_separations(user) and can_manage_hr_records(user)
+
+
+def can_view_awards(user):
+    """Everyone in active service sees the awards list: recognition is meant to be public (AW2)."""
+    return not _no_hr_access(user)
+
+
+def can_manage_awards(user):
+    return not _no_hr_access(user) and can_manage_hr_records(user)
+
+
+def can_view_development_plan(user, person):
+    """The person, HRMO, Auditor and the head of the person's office (ID2)."""
+    if _no_hr_access(user):
+        return False
+    if is_self(user, person) or user.is_superuser or is_hrmo(user) or is_auditor(user):
+        return True
+    office = get_user_office(user)
+    return bool(is_office_head(user) and office and person.engagements.filter(
+        office=office, status=Engagement.Status.ACTIVE).exists())
+
+
+def can_review_development_plan(user, person):
+    """The head of the person's office, or HRMO; never one's own plan (ID2)."""
+    if is_self(user, person) or not can_view_development_plan(user, person):
+        return False
+    return is_office_head(user) or can_manage_hr_records(user)
+
+
+def can_view_workforce_report(user):
+    """Counts by sex, age, disability and tenure: HRMO and Auditor, since small groups can identify
+    people and disability comes from the PDS (WF2)."""
+    return can_view_pass_slip_log(user)

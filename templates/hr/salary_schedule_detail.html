@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ schedule.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'salary_schedule_list' %}" class="btn btn-sm btn-outline-secondary">← Salary schedules</a></div>
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ schedule.name }}</h1>
+    <div class="text-muted small">Takes effect {{ schedule.effective_date|date:"F d, Y" }}{% if schedule.basis %} · {{ schedule.basis }}{% endif %}{% if previous %} · replaces {{ previous.name }}{% endif %}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="?{{ qs }}{% if qs %}&{% endif %}export=xlsx">NOSA list (Excel)</a>
+    <a class="btn btn-sm btn-primary" href="?{{ qs }}{% if qs %}&{% endif %}print=nosa" target="_blank">Print {{ rows|length }} NOSA{{ rows|length|pluralize }}</a>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+    <span class="fw-bold">Notices of salary adjustment</span>
+    <form method="get" class="d-flex gap-2 small"><select class="form-select form-select-sm" name="office" aria-label="Office" onchange="this.form.submit()"><option value="">All offices</option>{% for o in offices %}<option value="{{ o.pk }}"{% if office and o.pk == office.pk %} selected{% endif %}>{{ o.name }}</option>{% endfor %}</select><noscript><button class="btn btn-sm btn-outline-primary">Show</button></noscript></form>
+  </div>
+  {% if missing %}<div class="alert alert-warning small m-2 py-2">{{ missing }} appointment{{ missing|pluralize }} {{ missing|pluralize:"has a grade and step,have grades and steps" }} not in this table; their notices print with a line for the amount.</div>{% endif %}
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Name</th><th>Position</th><th class="text-center">SG-step</th><th class="text-end">Before</th><th class="text-end">Adjusted</th><th class="text-end">Adjustment</th><th class="text-end">Stored now</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td><a class="text-decoration-none" href="{% url 'person_detail' r.person.pk %}">{{ r.person.full_name }}</a></td>
+            <td>{{ r.eng.position_title }}<div class="text-muted">{{ r.eng.office.acronym|default:r.eng.office.name }}</div></td>
+            <td class="text-center">{{ r.eng.salary_grade }}-{{ r.eng.step }}</td>
+            <td class="text-end font-monospace">{{ r.old|floatformat:"2g"|default:"—" }}</td>
+            <td class="text-end font-monospace">{{ r.new|floatformat:"2g"|default:"—" }}</td>
+            <td class="text-end font-monospace">{{ r.diff|floatformat:"2g"|default:"—" }}</td>
+            <td class="text-end font-monospace{% if r.new and r.stored != r.new %} text-warning-emphasis{% endif %}">{{ r.stored|floatformat:"2g"|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-3">No active plantilla appointments.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if can_apply and to_update %}
+  <div class="card-footer bg-light d-flex flex-wrap justify-content-between align-items-center gap-2 small">
+    <span>{{ to_update }} stored salar{{ to_update|pluralize:"y differs,ies differ" }} from this schedule. Update them once the NOSAs are signed.</span>
+    <form method="post" onsubmit="return confirm('Update the stored monthly salary of {{ to_update }} appointment(s) to this schedule?');">{% csrf_token %}<input type="hidden" name="action" value="apply"><button class="btn btn-sm btn-warning">Update stored salaries</button></form>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white fw-bold py-2">The table (monthly, ₱)</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped small mb-0 font-monospace">
+      <thead class="table-light"><tr><th>SG</th>{% for s in "12345678" %}<th class="text-end">Step {{ s }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for grade, amounts in grid %}
+          <tr><th>{{ grade }}</th>{% for a in amounts %}<td class="text-end">{{ a|floatformat:"2g"|default:"" }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
