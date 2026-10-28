@@ -66,6 +66,10 @@ The init script in `docker/db-init/` only runs on an **empty** database volume.
 If you change `APP_DB_USER` / `APP_DB_PASSWORD` after the first start, run
 `docker compose down -v` to recreate the database.
 
+Two-step login codes come from the clock, so the PC's clock must be right: with Windows Time stopped a
+PC can drift a minute or more and every code is refused (the page then says how far off it is). Turn on
+*Settings → Time & language → Date & time → Set time automatically*, press **Sync now**, and restart Docker Desktop.
+
 ## Run it on a DigitalOcean droplet (review demo)
 
 A public copy for the HRMO officer to try during the review period (until

@@ -6432,6 +6432,9 @@ class MfaTestCase(TestCase):
         self.assertEqual(self.mfa.code_at(secret, 1111111109 // 30), "081804")
         self.assertEqual(self.mfa.matching_step(secret, "081 804", now=1111111109), 1111111109 // 30)
         self.assertIsNone(self.mfa.matching_step(secret, "081804", now=1111111109 + 120))
+        # Pasted from a phone, a code can carry a non-breaking or thin space instead of a plain one.
+        self.assertEqual(self.mfa.matching_step(secret, "081\u00a0804", now=1111111109), 1111111109 // 30)
+        self.assertEqual(self.mfa.matching_step(secret, " 081\u2009804\n", now=1111111109), 1111111109 // 30)
 
     def test_required_roles_must_set_up_before_anything_else(self):
         for user in (self.hrmo_user, self.auditor_user, self.sysadmin, self.superuser):
@@ -6498,7 +6501,87 @@ class MfaTestCase(TestCase):
         self.assertEqual(self.client.post("/accounts/two-step/code/", {"code": code}).status_code, 302)
         other = self.client_class()
         other.force_login(self.hrmo_user)
-        self.assertContains(other.post("/accounts/two-step/code/", {"code": code}), "not right")
+        self.assertContains(other.post("/accounts/two-step/code/", {"code": code}), "just used")
+        self.assertEqual(other.get("/people/").status_code, 302)
+
+    def test_full_flow_set_up_log_out_then_a_code_then_a_recovery_code(self):
+        """The first thing anyone does after setup: log out and straight back in with the code still showing."""
+        from hr.models import MfaDevice
+
+        login = {"username": "hrmo", "password": "hrmopass123"}
+        self.client.post("/accounts/login/", login)
+        self.assertRedirects(self.client.get("/people/"), "/accounts/two-step/setup/", fetch_redirect_response=False)
+        self.client.get("/accounts/two-step/setup/")
+        secret = self.client.session[self.mfa.SESSION_PENDING_SECRET]
+        setup_code = self._code(secret)
+        codes = self.client.post("/accounts/two-step/setup/", {"code": setup_code}).context["codes"]
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+        self.client.post("/accounts/logout/")
+        self.client.post("/accounts/login/", login)
+        # The app still shows the setup code: refused, but said plainly and not counted as a wrong guess.
+        for _ in range(self.mfa.MAX_FAILURES):
+            again = self.client.post("/accounts/two-step/code/", {"code": setup_code, "next": "/people/"})
+            self.assertContains(again, "just used")
+            self.assertNotContains(again, "not right")
+        self.assertEqual(MfaDevice.objects.get(user=self.hrmo_user).failures, 0)
+        ok = self.client.post("/accounts/two-step/code/", {"code": self._code(secret, 1), "next": "/people/"})
+        self.assertRedirects(ok, "/people/", fetch_redirect_response=False)
+        self.assertEqual(self.client.get("/people/").status_code, 200)
+
+        self.client.post("/accounts/logout/")
+        self.client.post("/accounts/login/", login)
+        self.assertEqual(self.client.get("/people/").status_code, 302)
+        ok = self.client.post("/accounts/two-step/code/", {"code": codes[0], "next": "/people/"})
+        self.assertRedirects(ok, "/people/", fetch_redirect_response=False)
+        self.assertEqual(self.mfa.recovery_codes_left(self.hrmo_user), 9)
+
+    def test_a_code_from_a_clock_that_is_off_says_so(self):
+        """A server clock 93 s slow (Windows Time stopped) refused every code from the phone as "not right"."""
+        from hr.models import AuditLog, MfaDevice
+
+        self.client.force_login(self.hrmo_user)
+        self.client.get("/accounts/two-step/setup/")
+        secret = self.client.session[self.mfa.SESSION_PENDING_SECRET]
+        page = self.client.post("/accounts/two-step/setup/", {"code": self._code(secret, 3)})
+        self.assertContains(page, "for a time 90 seconds ahead of this server")
+        self.assertNotContains(page, "not right")
+        self.assertContains(self.client.post("/accounts/two-step/setup/", {"code": self._code(secret, -20)}),
+                            "10 minutes behind this server")
+        # Further off than 10 minutes it is just a wrong code.
+        self.assertContains(self.client.post("/accounts/two-step/setup/", {"code": self._code(secret, 25)}), "not right")
+        self.assertFalse(MfaDevice.objects.filter(user=self.hrmo_user).exists())
+        self.assertEqual(self.mfa.clock_offset(secret, self.mfa.code_at(secret, 1003), now=1000 * 30), 90)
+        self.assertIsNone(self.mfa.clock_offset(secret, self.mfa.code_at(secret, 1001), now=1000 * 30))
+
+        # At login too: refused, said plainly, and not counted towards the lock.
+        self.client.post("/accounts/two-step/setup/", {"code": self._code(secret)})
+        other = self.client_class()
+        other.force_login(self.hrmo_user)
+        for _ in range(self.mfa.MAX_FAILURES):
+            self.assertContains(other.post("/accounts/two-step/code/", {"code": self._code(secret, 3)}), "ahead of")
+        self.assertEqual(MfaDevice.objects.get(user=self.hrmo_user).failures, 0)
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.MFA_FAILED, changes__reason="clocks differ by 90 s").exists())
+
+    def test_the_login_code_typed_again_on_two_step_login_says_so(self):
+        from hr.models import AuditLog, MfaDevice
+
+        secret = self._enroll(self.hrmo_user)
+        self.mfa.new_recovery_codes(self.hrmo_user)
+        old = set(self.hrmo_user.mfa_recovery_codes.values_list("code_hash", flat=True))
+        self.client.force_login(self.hrmo_user)
+        code = self._code(secret)
+        self.client.post("/accounts/two-step/code/", {"code": code})
+        page = self.client.post("/accounts/two-step/", {"action": "codes", "code": code})
+        self.assertContains(page, "just used")
+        self.assertEqual(set(self.hrmo_user.mfa_recovery_codes.values_list("code_hash", flat=True)), old)
+        self.assertEqual(MfaDevice.objects.get(user=self.hrmo_user).failures, 0)
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.MFA_FAILED, changes__reason="code already used").exists())
+        # A wrong code still counts.
+        self.assertContains(self.client.post("/accounts/two-step/", {"action": "codes", "code": "000000"}), "not right")
+        self.assertEqual(MfaDevice.objects.get(user=self.hrmo_user).failures, 1)
 
     def test_logging_in_again_needs_the_second_step_again(self):
         secret = self._enroll(self.hrmo_user)

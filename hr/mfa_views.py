@@ -18,6 +18,21 @@ def _next_url(request):
     return settings.LOGIN_REDIRECT_URL
 
 
+# The app shows a code for 30 seconds, so logging out and straight back in brings up the one just used.
+CODE_USED = "That code was just used. Wait for the app to show a new one (up to 30 seconds), then type that."
+# Codes that keep failing usually mean the phone's clock is off: they are worked out from the time.
+CLOCK_HINT = "Still not working? Set the phone's date and time to automatic."
+
+
+def _clock_off(offset):
+    """For a right code from a clock that is off (mfa.clock_offset): says which way, and what to fix."""
+    amount = f"{abs(offset)} seconds" if abs(offset) < 120 else f"{round(abs(offset) / 60)} minutes"
+    way = "ahead of" if offset > 0 else "behind"
+    return (f"That code is right, but for a time {amount} {way} this server's clock, so it cannot be accepted. "
+            "Set the phone's date and time to automatic. If it already is, this server's clock is wrong: "
+            "tell the system administrator.")
+
+
 def _no_store(response):
     response["Cache-Control"] = "no-store"
     return response
@@ -41,6 +56,10 @@ def mfa_verify(request):
     if request.method == "POST":
         try:
             method = mfa.check_code(request.user, request.POST.get("code"))
+        except mfa.CodeUsed:
+            method, error = None, CODE_USED
+        except mfa.ClockOff as off:
+            method, error = None, _clock_off(off.offset)
         except mfa.Locked:
             logout(request)
             messages.error(request, f"Too many wrong codes. Try again in {mfa.LOCK_MINUTES} minutes.")
@@ -55,7 +74,7 @@ def mfa_verify(request):
             if request.POST.get("remember"):
                 mfa.remember_browser(response, request.user)
             return response
-        error = "That code is not right. Check the app shows San Pascual HR and type the newest code."
+        error = error or f"That code is not right. Check the app shows San Pascual HR and type the newest code. {CLOCK_HINT}"
     return render(request, "registration/mfa_verify.html", {
         "error": error, "next": _next_url(request), "remember_days": settings.MFA_REMEMBER_DAYS,
     })
@@ -78,7 +97,10 @@ def mfa_setup(request):
             if request.POST.get("remember"):
                 mfa.remember_browser(response, request.user)
             return response
-        error = "That code is not right. Scan the picture again, or type the key, and use the newest code."
+        offset = mfa.clock_offset(secret, request.POST.get("code"))
+        error = _clock_off(offset) if offset is not None else (
+            f"That code is not right. Scan the picture again, or type the key, and use the newest code. {CLOCK_HINT}"
+        )
     uri = mfa.provisioning_uri(secret, request.user.get_username())
     return _no_store(render(request, "registration/mfa_setup.html", {
         "qr": mfa.qr_data_uri(uri), "secret": mfa.grouped(secret), "error": error,
@@ -103,12 +125,16 @@ def mfa_settings(request):
         action = request.POST.get("action")
         try:
             ok = mfa.check_code(request.user, request.POST.get("code"), allow_recovery=False)
+        except mfa.CodeUsed:
+            ok, error = None, CODE_USED
+        except mfa.ClockOff as off:
+            ok, error = None, _clock_off(off.offset)
         except mfa.Locked:
             logout(request)
             messages.error(request, f"Too many wrong codes. Try again in {mfa.LOCK_MINUTES} minutes.")
             return redirect("login")
         if not ok:
-            error = "That code is not right. Type the newest code from the app."
+            error = error or f"That code is not right. Type the newest code from the app. {CLOCK_HINT}"
         elif action == "codes":
             return _show_recovery_codes(request, mfa.replace_recovery_codes(request.user))
         elif action == "off" and not required:

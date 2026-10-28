@@ -36,6 +36,9 @@ STEP_SECONDS = 30
 DIGITS = 6
 # Codes from the window before or after are accepted too: phone clocks drift.
 DRIFT_STEPS = 1
+# A refused code that matches a window up to this far off (10 minutes) means a wrong clock, on the
+# phone or the server: the page says so instead of "not right". Such codes are still refused.
+CLOCK_CHECK_STEPS = 20
 # Wrong codes in a row before the account's second step locks for LOCK_MINUTES. The lock is per
 # account, not per session: a fresh password login does not buy more guesses.
 MAX_FAILURES = 5
@@ -172,7 +175,8 @@ def code_at(secret, step):
 
 
 def clean_code(raw):
-    return "".join(ch for ch in (raw or "") if ch not in " -").lower()
+    # Any space, not just " ": a code copied from some apps or phones comes with a non-breaking one.
+    return "".join(ch for ch in (raw or "") if not ch.isspace() and ch != "-").lower()
 
 
 def matching_step(secret, raw_code, after_step=0, now=None):
@@ -184,6 +188,39 @@ def matching_step(secret, raw_code, after_step=0, now=None):
     for candidate in range(step - DRIFT_STEPS, step + DRIFT_STEPS + 1):
         if candidate > after_step and hmac.compare_digest(code_at(secret, candidate), code):
             return candidate
+    return None
+
+
+def used_already(secret, raw_code, last_used_step, now=None):
+    """True for a right code from a window already used, such as the one just typed at setup or login.
+
+    Still refused (a code works once), but it is no wrong guess: the app keeps showing that code for
+    up to 30 seconds, so someone who logs out and straight back in types it again.
+    """
+    code = clean_code(raw_code)
+    if len(code) != DIGITS or not code.isdigit():
+        return False
+    step = current_step(now)
+    return any(
+        candidate <= last_used_step and hmac.compare_digest(code_at(secret, candidate), code)
+        for candidate in range(step - DRIFT_STEPS, step + DRIFT_STEPS + 1)
+    )
+
+
+def clock_offset(secret, raw_code, now=None):
+    """Seconds the app's clock is ahead of the server's (negative: behind), or None.
+
+    Only for a code outside the accepted windows that matches one within CLOCK_CHECK_STEPS: then the
+    code is right but the phone and the server disagree on the time. Never accepted, only explained.
+    """
+    code = clean_code(raw_code)
+    if len(code) != DIGITS or not code.isdigit():
+        return None
+    step = current_step(now)
+    for distance in range(DRIFT_STEPS + 1, CLOCK_CHECK_STEPS + 1):
+        for candidate in (step + distance, step - distance):
+            if hmac.compare_digest(code_at(secret, candidate), code):
+                return (candidate - step) * STEP_SECONDS
     return None
 
 
@@ -275,11 +312,25 @@ class Locked(Exception):
         self.until = until
 
 
+class CodeUsed(Exception):
+    """The right code, but its window was used already: wait for the next one. Not counted as wrong."""
+
+
+class ClockOff(Exception):
+    """The right code for a time `offset` seconds away: a clock is wrong. Refused, not counted as wrong."""
+
+    def __init__(self, offset):
+        super().__init__(offset)
+        self.offset = offset
+
+
 def check_code(user, raw_code, allow_recovery=True):
     """Checks a code from the app (or a recovery code) and records the outcome.
 
     Returns "app" or "recovery code" when accepted, None when not. Raises Locked while the
-    account's second step is locked, without looking at the code.
+    account's second step is locked, without looking at the code, CodeUsed for a code that was
+    already used and ClockOff for a code from a clock up to 10 minutes off (both refused, but not
+    counted towards the lock).
     """
     with transaction.atomic():
         device = MfaDevice.objects.select_for_update().get(user=user)
@@ -304,15 +355,32 @@ def check_code(user, raw_code, allow_recovery=True):
                 object_repr=f"{user.get_username()} passed the second login step ({method})", **target,
             )
             return method
-        device.failures += 1
-        locked = device.failures >= MAX_FAILURES
-        if locked:
-            device.failures, device.locked_until = 0, now + timedelta(minutes=LOCK_MINUTES)
-        device.save()
-        log_audit_event(
-            action=AuditLog.Action.MFA_FAILED, changes={"locked": locked},
-            object_repr=f"Wrong second-step code for {user.get_username()}" + (" (locked)" if locked else ""), **target,
-        )
+        used, locked = used_already(device.secret, raw_code, device.last_used_step), False
+        offset = None if used else clock_offset(device.secret, raw_code)
+        if used:
+            log_audit_event(
+                action=AuditLog.Action.MFA_FAILED, changes={"locked": False, "reason": "code already used"},
+                object_repr=f"Second-step code used again for {user.get_username()}", **target,
+            )
+        elif offset is not None:
+            log_audit_event(
+                action=AuditLog.Action.MFA_FAILED, changes={"locked": False, "reason": f"clocks differ by {offset} s"},
+                object_repr=f"Second-step code from a clock {offset:+d} s off for {user.get_username()}", **target,
+            )
+        else:
+            device.failures += 1
+            locked = device.failures >= MAX_FAILURES
+            if locked:
+                device.failures, device.locked_until = 0, now + timedelta(minutes=LOCK_MINUTES)
+            device.save()
+            log_audit_event(
+                action=AuditLog.Action.MFA_FAILED, changes={"locked": locked},
+                object_repr=f"Wrong second-step code for {user.get_username()}" + (" (locked)" if locked else ""), **target,
+            )
+    if used:
+        raise CodeUsed()
+    if offset is not None:
+        raise ClockOff(offset)
     if locked:
         raise Locked(device.locked_until)
     return None

@@ -56,6 +56,13 @@ Changed:
 Fixed:
 - **Plantilla of Personnel**: an item whose holder retired or resigned no longer drops off the report when no
   vacancy has been drafted for it; it shows as vacant until filled or abolished (PI3).
+- **Two-step login**: logging out and straight back in (the usual way to try it after setup) refused the code
+  the app still showed as "not right" and counted it towards the 15-minute lock. A code still works only once,
+  but now the page says it was just used and to wait for the next one, and it no longer counts as a wrong code.
+  Codes pasted with an unusual space are accepted (A5).
+- **Two-step login**: when the phone's and the server's clocks disagree (a PC whose clock had drifted 93 seconds
+  refused every code), the page now says the code is right but for a time N seconds ahead or behind, and what
+  to fix, instead of "not right". Such codes are still refused, but no longer count towards the lock (A5).
 
 ## 1.3.0 (October 27, 2026)
 
