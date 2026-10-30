@@ -113,6 +113,7 @@ def separation_detail(request, pk):
         "outstanding": [i for i in items if i.status not in separations.DONE_STATUSES],
         "statuses": ClearanceItem.Status.choices, "terminal": separations.terminal_leave(sep),
         "today": timezone.localdate(),
+        "panel": official_email.panel(),
         "email_accounts": official_email.to_hand_over(sep)
         if modules.enabled("official_email") and can_view_email_register(request.user) else [],
     })

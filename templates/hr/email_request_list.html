@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Email account requests{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div class="me-3" style="max-width: 46rem">
+    <h1 class="h3 mb-1">Email account requests</h1>
+    <div class="text-muted small">An office asks for an account; the Mayor's office approves it; the Email Admin makes it in {{ panel }} and gives it to the person. Closing an account goes straight to the Email Admin.</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if manage %}<a href="{% url 'email_list' %}" class="btn btn-sm btn-outline-secondary">Register</a>{% endif %}
+    {% if can_request %}<a href="{% url 'email_request_new' %}" class="btn btn-sm btn-primary">Ask for an account</a>{% endif %}
+  </div>
+</div>
+
+{% if to_approve %}
+<div class="card border-0 shadow-sm mb-3 border-start border-warning border-4">
+  <div class="card-header bg-white fw-bold py-2">Waiting for your approval ({{ to_approve|length }})</div>
+  <ul class="list-group list-group-flush small">
+    {% for r in to_approve %}
+      <li class="list-group-item d-flex flex-wrap align-items-center gap-2">
+        <a class="fw-semibold" href="{% url 'email_request_detail' r.pk %}">{{ r.number }}</a>
+        <span>{{ r.get_kind_display }}{% if r.office %} · {{ r.office.acronym|default:r.office.name }}{% endif %}{% if r.person %} · for {{ r.person.full_name }}{% endif %}</span>
+        <span class="text-muted ms-auto">{{ r.requested_at|date:"M d, Y" }}</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if to_make %}
+<div class="card border-0 shadow-sm mb-3 border-start border-primary border-4">
+  <div class="card-header bg-white fw-bold py-2">To do in {{ panel }} ({{ to_make|length }})</div>
+  <ul class="list-group list-group-flush small">
+    {% for r in to_make %}
+      <li class="list-group-item d-flex flex-wrap align-items-center gap-2">
+        <span class="badge {% if r.type == 'close' %}text-bg-danger{% else %}text-bg-primary{% endif %}">{% if r.type == 'close' %}Close{% else %}Make{% endif %}</span>
+        <a class="fw-semibold" href="{% url 'email_request_detail' r.pk %}">{% if r.account %}{{ r.account.address }}{% else %}{{ r.address|default:r.number }}{% endif %}</a>
+        <span class="text-muted">{{ r.get_kind_display }}{% if r.office %} · {{ r.office.acronym|default:r.office.name }}{% endif %}{% if r.person %} · give to {{ r.person.full_name }}{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<ul class="nav nav-pills small mb-2">
+  <li class="nav-item"><a class="nav-link{% if show == 'open' %} active{% endif %}" href="?show=open">Open</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'done' %} active{% endif %}" href="?show=done">Done</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'declined' %} active{% endif %}" href="?show=declined">Declined</a></li>
+  <li class="nav-item"><a class="nav-link{% if show == 'all' %} active{% endif %}" href="?show=all">All</a></li>
+</ul>
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover small align-middle mb-0">
+      <thead class="table-light"><tr><th>No.</th><th>Request</th><th>Office</th><th>For</th><th>Asked by</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td class="text-nowrap"><a class="text-decoration-none" href="{% url 'email_request_detail' r.pk %}">{{ r.number }}</a><div class="text-muted">{{ r.requested_at|date:"M d, Y" }}</div></td>
+            <td>{% if r.type == 'close' %}Close {{ r.account.address }}{% else %}New {{ r.get_kind_display|lower }}{% if r.account %}: {{ r.account.address }}{% elif r.address %}: {{ r.address }}{% endif %}{% endif %}</td>
+            <td>{% if r.office %}<span title="{{ r.office.name }}">{{ r.office.acronym|default:r.office.name }}</span>{% else %}—{% endif %}</td>
+            <td>{{ r.person.full_name|default:"—" }}</td>
+            <td>{{ r.requested_by.get_full_name|default:r.requested_by.get_username }}</td>
+            <td><span class="badge {% if r.status == 'pending' %}text-bg-warning{% elif r.status == 'approved' %}text-bg-primary{% elif r.status == 'done' %}text-bg-success{% else %}text-bg-light border{% endif %}">{{ r.get_status_display }}</span></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-3">None.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

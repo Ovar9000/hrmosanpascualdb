@@ -15,6 +15,7 @@ from hr.models import (
 )
 from hr.permissions import (
     ROLE_AUDITOR,
+    ROLE_EMAIL_ADMIN,
     ROLE_EXECUTIVE,
     ROLE_HRMO,
     ROLE_OFFICE_HEAD,
@@ -132,5 +133,11 @@ class Command(BaseCommand):
                 codename__in=["manage_projects", "add_project", "change_project", "view_project"],
             ) | Permission.objects.filter(content_type=office_ct, codename="view_office")
             maintainer_group.permissions.set(maintainer_perms)
+
+            # 8. Email Admin
+            # Runs the LGU's gov.ph mail: the official email register and its request queue (EM4). No
+            # personnel access: the register shows names, offices and addresses only.
+            email_group, _ = Group.objects.get_or_create(name=ROLE_EMAIL_ADMIN)
+            email_group.permissions.set(Permission.objects.filter(content_type=office_ct, codename="view_office"))
 
             self.stdout.write(self.style.SUCCESS("System roles configured successfully."))

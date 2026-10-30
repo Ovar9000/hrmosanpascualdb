@@ -4,7 +4,8 @@
 {% block content %}
 <div class="mb-3 d-flex flex-wrap gap-2">
   <a href="{% url 'email_list' %}" class="btn btn-sm btn-outline-secondary">← Email register</a>
-  {% if manage %}<a href="{% url 'email_edit' account.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>{% endif %}
+  {% if manage %}<a href="{% url 'email_edit' account.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+  {% if account.holder %}<a href="{% url 'email_slip' account.pk %}" class="btn btn-sm btn-outline-primary">Print hand-over slip</a>{% endif %}{% endif %}
 </div>
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
   <div>
@@ -18,11 +19,11 @@
 {% if due %}
   <div class="alert alert-danger small">
     <b>{{ account.holder.full_name }}</b> {% if due.left_on %}left on {{ due.left_on|date:"F d, Y" }}{% else %}has no active appointment{% endif %}{% if account.office and account.kind != 'personal' %} in {{ account.office.name }}{% endif %}.
-    {% if due.action == 'close' %}Close the account in GovMail, then record it below.{% else %}Reset the password in GovMail today, then record who holds it now.{% endif %}
+    {% if due.action == 'close' %}Close the account in {{ panel }}, then record it below.{% else %}Reset the password in {{ panel }} today, then record who holds it now.{% endif %}
   </div>
 {% elif upcoming %}
   <div class="alert alert-warning small">
-    {{ account.holder.full_name }}'s <a href="{% url 'separation_detail' upcoming.sep.pk %}">separation</a> is in progress, last day {{ upcoming.sep.last_day|date:"F d, Y" }}.
+    {{ account.holder.full_name }}'s {% if perms.hr.view_hr_records %}<a href="{% url 'separation_detail' upcoming.sep.pk %}">separation</a>{% else %}separation{% endif %} is in progress, last day {{ upcoming.sep.last_day|date:"F d, Y" }}.
     {% if upcoming.action == 'close' %}Close the account{% else %}Reset the password{% endif %} on that day.
   </div>
 {% endif %}
@@ -32,8 +33,9 @@
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body small">
         <dl class="row mb-0">
-          <dt class="col-5">Holder now</dt><dd class="col-7">{% if account.holder %}<a href="{% url 'person_detail' account.holder.pk %}">{{ account.holder.full_name }}</a>{% else %}<span class="text-muted">No one</span>{% endif %}</dd>
+          <dt class="col-5">Holder now</dt><dd class="col-7">{% if account.holder %}{% if perms.hr.view_hr_records %}<a href="{% url 'person_detail' account.holder.pk %}">{{ account.holder.full_name }}</a>{% else %}{{ account.holder.full_name }}{% endif %}{% else %}<span class="text-muted">No one</span>{% endif %}</dd>
           <dt class="col-5">Password last reset</dt><dd class="col-7">{{ account.password_reset_on|date:"F d, Y"|default:"—" }}</dd>
+          {% for r in requests %}<dt class="col-5">{% if r.type == 'new' %}Requested by{% else %}Closing asked by{% endif %}</dt><dd class="col-7"><a href="{% url 'email_request_detail' r.pk %}">{{ r.number }}</a> · {{ r.requested_by.get_full_name|default:r.requested_by.get_username }}</dd>{% endfor %}
           {% if account.notes %}<dt class="col-5">Notes</dt><dd class="col-7">{{ account.notes|linebreaksbr }}</dd>{% endif %}
         </dl>
       </div>
@@ -58,7 +60,7 @@
   {% if manage %}
   <div class="col-lg-5">
     <div class="card border-0 shadow-sm mb-3">
-      <div class="card-header bg-white fw-bold py-2">Record what you did in GovMail</div>
+      <div class="card-header bg-white fw-bold py-2">Record what you did in {{ panel }}</div>
       <div class="card-body small">
         {% if not personal %}
         <form method="post" class="mb-3">{% csrf_token %}

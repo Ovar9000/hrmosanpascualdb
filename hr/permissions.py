@@ -11,11 +11,13 @@ Roles (Django Groups):
 - Executive Delegate: Dynamic role granted via time-bound Delegate model on behalf of an Executive.
 - Project Maintainer: Creates and edits LGU projects (dates, status, funding reference). Sees project
   headcounts, never personnel records. Assigned to HRMO, Planning or Budget staff by LGU decision (P1).
+- Email Admin: The administrator of the LGU's gov.ph mail. Keeps the official email register and works the
+  queue of approved requests; sees names, offices and addresses only, never personnel records (EM4).
 """
 
 from django.db.models import Q
 from django.utils import timezone
-from .models import Delegate, Engagement, Office, Person
+from .models import Delegate, EmailRequest, Engagement, Office, Person
 
 # Group name constants
 ROLE_SYSADMIN = "System Admin"
@@ -25,6 +27,7 @@ ROLE_OFFICE_STAFF = "Office Staff"
 ROLE_EXECUTIVE = "Executive"
 ROLE_AUDITOR = "Auditor"
 ROLE_PROJECT_MAINTAINER = "Project Maintainer"
+ROLE_EMAIL_ADMIN = "Email Admin"
 
 # Every role that grants access to HR records. Only the emergency superuser may assign
 # these or edit their members, so System Admin cannot escalate into HR data (DECISIONS R3).
@@ -35,6 +38,7 @@ PROTECTED_ROLES = [
     ROLE_OFFICE_HEAD,
     ROLE_OFFICE_STAFF,
     ROLE_PROJECT_MAINTAINER,  # controls which projects HRMO can hire into
+    ROLE_EMAIL_ADMIN,  # sees who works in which office
     "Executive Delegate",
     "Delegate",
 ]
@@ -613,15 +617,51 @@ def can_review_development_plan(user, person):
     return is_office_head(user) or can_manage_hr_records(user)
 
 
-def can_view_email_register(user):
-    """The official email register: HRMO and Auditor (EM4)."""
-    return can_view_pass_slip_log(user)
+def is_email_admin(user):
+    """The Email Admin role. Granted only by the emergency superuser (R3), so it counts even on an IT account
+    that is also System Admin: the register holds names, offices and addresses, not personnel records (EM4)."""
+    return bool(user and user.is_authenticated) and (user.is_superuser or is_in_group(user, ROLE_EMAIL_ADMIN))
 
 
 def can_manage_email_register(user):
-    """Add accounts and record resets, handovers and closings: HRMO (EM4). An account the user holds is
-    recorded by another HRMO staff member (R10)."""
-    return can_view_email_register(user) and can_manage_hr_records(user)
+    """Add accounts, record resets, handovers and closings, and work the request queue: the Email Admin (EM4)."""
+    return is_email_admin(user)
+
+
+def can_view_email_register(user):
+    """The official email register: the Email Admin, and HRMO and Auditor to read (EM4)."""
+    return is_email_admin(user) or can_view_pass_slip_log(user)
+
+
+def can_approve_email_requests(user):
+    """Approve new email accounts: the Executives (Mayor, Administrator) and their delegates, standing in
+    for the Agency CIO of ICT Memorandum Circular 2015-002 (EM7)."""
+    return not _no_hr_access(user) and (user.is_superuser or is_executive(user))
+
+
+def can_request_email(user):
+    """Ask for a new account or for one to be closed: office heads for their office; Executives, HRMO and
+    the Email Admin for any office (EM7)."""
+    if can_manage_email_register(user):
+        return True
+    if _no_hr_access(user):
+        return False
+    if can_approve_email_requests(user) or is_hrmo(user):
+        return True
+    return is_office_head(user) and get_user_office(user) is not None
+
+
+def email_request_scope(user):
+    """The requests a user sees: all for HRMO, Auditor and Executives; an office head, their office's
+    and their own (EM7)."""
+    if can_view_email_register(user) or can_approve_email_requests(user):
+        return EmailRequest.objects.all()
+    if _no_hr_access(user):
+        return EmailRequest.objects.none()
+    office = get_user_office(user)
+    if is_office_head(user) and office is not None:
+        return EmailRequest.objects.filter(Q(office=office) | Q(requested_by=user))
+    return EmailRequest.objects.none()
 
 
 def can_view_workforce_report(user):

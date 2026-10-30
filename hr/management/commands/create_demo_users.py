@@ -15,6 +15,7 @@ from hr.audit import disable_audit
 from hr.models import Office, Person, UserProfile
 from hr.permissions import (
     ROLE_AUDITOR,
+    ROLE_EMAIL_ADMIN,
     ROLE_EXECUTIVE,
     ROLE_HRMO,
     ROLE_OFFICE_HEAD,
@@ -95,6 +96,15 @@ class Command(BaseCommand):
                     "office": None,
                     "person": None,
                     "description": "Planning / Budget: creates and edits projects, no personnel access",
+                },
+                {
+                    "username": "demo_email",
+                    "role_name": "Email Admin",
+                    "group": ROLE_EMAIL_ADMIN,
+                    "is_staff": False,
+                    "office": None,
+                    "person": None,
+                    "description": "Runs the gov.ph mail: email register and account requests",
                 },
                 {
                     "username": "demo_admin",

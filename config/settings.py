@@ -211,6 +211,10 @@ HR_MODULES = _types("HR_MODULES", "")
 # Official email register (DECISIONS EM1): the LGU's gov.ph domain. Addresses in the register must be at it;
 # blank accepts any address.
 OFFICIAL_EMAIL_DOMAIN = os.environ.get("OFFICIAL_EMAIL_DOMAIN", "sanpascualmasbate.gov.ph")
+# Where the Email Admin makes, resets and closes the mailboxes, as named on the screens (EM1), and the webmail
+# address printed on the hand-over slip (EM9; blank prints a line to write it on).
+OFFICIAL_EMAIL_PANEL = os.environ.get("OFFICIAL_EMAIL_PANEL", "the GWHS cPanel")
+OFFICIAL_EMAIL_WEBMAIL = os.environ.get("OFFICIAL_EMAIL_WEBMAIL", "")
 # Appointment papers (DECISIONS AP1): the date the CSC accredited the LGU, as YYYY-MM-DD. Blank means the CSC
 # regulates its appointments (San Pascual, confirmed 2026-10-28). Appointments signed before the date keep
 # the regulated forms (CS Form No. 33-A, 34-A); those signed on or after it get the accredited ones (33-B, 34-B).

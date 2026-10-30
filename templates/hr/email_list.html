@@ -5,9 +5,10 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
   <div class="me-3" style="max-width: 46rem">
     <h1 class="h3 mb-1">Official email register</h1>
-    <div class="text-muted small">Every account at <b>{{ domain|default:"the LGU's domain" }}</b>: who holds it, who approved it, and when its password was last reset. The mailboxes are on GovMail: create, reset and close them in its admin console, then record it here.</div>
+    <div class="text-muted small">Every account at <b>{{ domain|default:"the LGU's domain" }}</b>: who holds it, who approved it, and when its password was last reset. Make, reset and close the mailboxes in {{ panel }}, then record it here.</div>
   </div>
   <div class="d-flex gap-2">
+    <a href="{% url 'email_request_list' %}" class="btn btn-sm btn-outline-primary">Requests{% if manage and to_make %} <span class="badge text-bg-warning">{{ to_make }} to make</span>{% endif %}</a>
     <a href="?show={{ show }}&amp;kind={{ kind }}&amp;format=xlsx" class="btn btn-sm btn-outline-secondary">Excel</a>
     {% if manage %}<a href="{% url 'email_new' %}" class="btn btn-sm btn-primary">Add account</a>{% endif %}
   </div>
@@ -43,7 +44,7 @@
       <li class="list-group-item d-flex flex-wrap align-items-center gap-2"{% if forloop.first %} id="upcoming"{% endif %}>
         <span class="badge text-bg-warning">{% if r.action == 'close' %}Close{% else %}Reset{% endif %} {{ r.sep.last_day|date:"M d" }}</span>
         <a class="fw-semibold" href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a>
-        <span class="text-muted">{{ r.account.holder.full_name }}'s last day is <a href="{% url 'separation_detail' r.sep.pk %}">{{ r.sep.last_day|date:"M d, Y" }}</a></span>
+        <span class="text-muted">{{ r.account.holder.full_name }}'s last day is {% if perms.hr.view_hr_records %}<a href="{% url 'separation_detail' r.sep.pk %}">{{ r.sep.last_day|date:"M d, Y" }}</a>{% else %}{{ r.sep.last_day|date:"M d, Y" }}{% endif %}</span>
       </li>
     {% endfor %}
   </ul>
@@ -80,7 +81,7 @@
               {% if need %}<span class="badge text-bg-danger ms-1">{% if need == 'close' %}close now{% else %}reset now{% endif %}</span>{% endif %}
             </td>
             <td>{% if a.office %}<span title="{{ a.office.name }}">{{ a.office.acronym|default:a.office.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if a.holder %}<a class="text-decoration-none" href="{% url 'person_detail' a.holder.pk %}">{{ a.holder.full_name }}</a>{% else %}<span class="text-muted">No one</span>{% endif %}</td>
+            <td>{% if a.holder %}{% if perms.hr.view_hr_records %}<a class="text-decoration-none" href="{% url 'person_detail' a.holder.pk %}">{{ a.holder.full_name }}</a>{% else %}{{ a.holder.full_name }}{% endif %}{% else %}<span class="text-muted">No one</span>{% endif %}</td>
             <td>{{ a.approval_ref|default:"—" }}<div class="text-muted">{{ a.approved_by }}</div></td>
             <td class="text-nowrap">{{ a.issued_on|date:"M d, Y" }}</td>
             <td class="text-nowrap">{% if a.password_reset_on %}{{ a.password_reset_on|date:"M d, Y" }}{% else %}<span class="text-muted">never</span>{% endif %}</td>
@@ -99,7 +100,7 @@
 <details class="card border-0 shadow-sm" id="missing">
   <summary class="card-header bg-white fw-bold py-2">Offices with no office account yet ({{ missing|length }})</summary>
   <div class="card-body">
-    <p class="small text-muted mb-2">Suggested addresses use the office's acronym. Add the account here once it exists in GovMail.</p>
+    <p class="small text-muted mb-2">Suggested addresses use the office's acronym. Add the account here once it exists in {{ panel }}.</p>
     <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-2 small">
       {% for office, address in missing %}
         <div class="col"><div class="border rounded px-2 py-1 h-100 d-flex align-items-center gap-2">

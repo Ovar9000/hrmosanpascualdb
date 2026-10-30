@@ -8,9 +8,10 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, EmailAccount, Engagement, LeaveCredit,
+    FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, EmailAccount, EmailRequest, Engagement,
+    LeaveCredit,
     LeaveRequest,
-    LeaveType, PassSlip, PlantillaItem, SalarySchedule, Separation,
+    LeaveType, Office, PassSlip, PlantillaItem, SalarySchedule, Separation,
     MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
     PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
 )
@@ -1453,6 +1454,74 @@ class EmailAccountForm(forms.ModelForm):
         issued, reset = cleaned.get("issued_on"), cleaned.get("password_reset_on")
         if issued and reset and reset < issued:
             self.add_error("password_reset_on", "Cannot be before the account was issued.")
+        return cleaned
+
+
+
+class EmailRequestForm(forms.ModelForm):
+    """Ask for a new account or mailing list, or for one to be closed (EM6). An office head asks only for
+    their own office (EM7)."""
+
+    class Meta:
+        model = EmailRequest
+        fields = ["type", "kind", "office", "person", "address", "account", "reason"]
+        widgets = {
+            "type": forms.RadioSelect,
+            "kind": forms.Select(attrs=_SELECT),
+            "office": forms.Select(attrs=_SELECT),
+            "person": forms.Select(attrs=_SELECT),
+            "address": forms.TextInput(attrs=_TEXT),
+            "account": forms.Select(attrs=_SELECT),
+            "reason": forms.Textarea(attrs={**_TEXT, "rows": 3}),
+        }
+        labels = {"type": "What is needed", "person": "Who will hold it", "account": "Account to close"}
+
+    def __init__(self, *args, office=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .official_email import domain
+
+        offices = Office.objects.all() if office is None else Office.objects.filter(pk=office.pk)
+        people = Person.objects.filter(engagements__status=Engagement.Status.ACTIVE)
+        accounts = EmailAccount.objects.filter(status=EmailAccount.Status.ACTIVE)
+        if office is not None:
+            people = people.filter(engagements__office=office)
+            accounts = accounts.filter(Q(office=office) | Q(holder__in=people))
+        self.fields["office"].queryset = offices
+        self.fields["person"].queryset = people.distinct().order_by("last_name", "first_name")
+        self.fields["account"].queryset = accounts.distinct().select_related("office")
+        self.fields["account"].label_from_instance = lambda a: f"{a.address} ({a.get_kind_display().lower()})"
+        self.fields["office"].empty_label = "Choose the office" if office is None else None
+        self.fields["person"].empty_label = "No one yet"
+        self.fields["account"].empty_label = "Choose the account"
+        self.fields["type"].choices = EmailRequest.Type.choices
+        if domain():
+            self.fields["address"].help_text = (f"e.g. hrmo@{domain()}. Leave blank to let the Email Admin "
+                                                "choose.")
+
+    def clean_address(self):
+        from .official_email import domain
+
+        address = self.cleaned_data["address"].strip().lower()
+        if address and domain() and not address.endswith("@" + domain()):
+            raise ValidationError(f"Official addresses are at {domain()}.")
+        if address and EmailAccount.objects.filter(address=address).exists():
+            raise ValidationError("This address is already in the register.")
+        return address
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("type") == EmailRequest.Type.CLOSE:
+            if not cleaned.get("account"):
+                self.add_error("account", "Choose the account to close.")
+            return cleaned
+        kind, office, person = cleaned.get("kind"), cleaned.get("office"), cleaned.get("person")
+        if kind != EmailAccount.Kind.PERSONAL and not office:
+            self.add_error("office", "An office account or mailing list belongs to an office.")
+        if kind == EmailAccount.Kind.PERSONAL and not person:
+            self.add_error("person", "A personal account is for one person: choose them.")
+        if kind != EmailAccount.Kind.PERSONAL and office and person and not person.engagements.filter(
+                office=office, status=Engagement.Status.ACTIVE).exists():
+            self.add_error("person", f"{person.full_name} has no active appointment in {office.name}.")
         return cleaned
 
 

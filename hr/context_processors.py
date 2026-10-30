@@ -41,7 +41,7 @@ def board_nav(request):
         from . import board, coc, leave, pass_slips, saln
         from .models import CertificateRequest, PasswordResetRequest, PdsSubmission
         from .modules import enabled
-        from .permissions import can_handle_password_resets, is_office_head
+        from .permissions import can_handle_password_resets, can_request_email, is_office_head
 
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated or (is_sysadmin(user) and not user.is_superuser):
@@ -68,6 +68,7 @@ def board_nav(request):
             "saln": bool(person and saln.is_covered(person)),
             "coc": bool(person and coc.earns_coc(person)),
             "saln_office": is_office_head(user) and not can_view_leave_register(user),
+            "email_requests": is_office_head(user) and can_request_email(user),
             "password_resets": can_handle_password_resets(user),
             "password_requests": PasswordResetRequest.objects.filter(
                 status=PasswordResetRequest.Status.PENDING).count() if can_handle_password_resets(user) else 0,

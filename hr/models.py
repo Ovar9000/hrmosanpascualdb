@@ -2377,8 +2377,9 @@ class DevelopmentItem(models.Model):
 
 
 class EmailAccount(models.Model):
-    """One gov.ph mailbox in the register the GovMail administrator keeps (EM1). The mail itself is on
-    GovMail; this records who holds each account, who approved it, and when its password was last reset."""
+    """One gov.ph mailbox in the register the Email Admin keeps (EM1). The mail itself is on the mail panel
+    (GWHS cPanel or GovMail); this records who holds each account, who approved it, and when its password was
+    last reset. No password is ever stored here."""
 
     class Kind(models.TextChoices):
         OFFICE = "office", "Office account"
@@ -2466,3 +2467,65 @@ class EmailHandover(models.Model):
 
     def __str__(self):
         return f"{self.account} · {self.get_action_display()} ({self.done_on})"
+
+
+class EmailRequest(models.Model):
+    """A request for a new gov.ph account or mailing list, or to close one (EM6). A new account needs an
+    Executive's approval, as ICT Memorandum Circular 2015-002 asks of the Agency CIO; a closing goes straight to
+    the Email Admin. Done means it was done in the mail panel and the register updated."""
+
+    class Type(models.TextChoices):
+        NEW = "new", "New account"
+        CLOSE = "close", "Close an account"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting for approval"
+        APPROVED = "approved", "Approved: to make"
+        DONE = "done", "Done"
+        DECLINED = "declined", "Declined"
+        WITHDRAWN = "withdrawn", "Withdrawn"
+
+    OPEN = [Status.PENDING, Status.APPROVED]
+
+    type = models.CharField(max_length=10, choices=Type.choices, default=Type.NEW)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    kind = models.CharField("Kind of account", max_length=20, choices=EmailAccount.Kind.choices,
+                            default=EmailAccount.Kind.OFFICE)
+    office = models.ForeignKey(Office, null=True, blank=True, on_delete=models.PROTECT, related_name="email_requests")
+    person = models.ForeignKey(
+        Person, null=True, blank=True, on_delete=models.PROTECT, related_name="email_requests",
+        help_text="Who will hold it: the owner of a personal account, or who runs an office account.",
+    )
+    address = models.CharField("Address wanted", max_length=150, blank=True,
+                               help_text="Leave blank to let the Email Admin choose.")
+    account = models.ForeignKey(EmailAccount, null=True, blank=True, on_delete=models.PROTECT,
+                                related_name="requests", help_text="The account to close, or the one created.")
+    reason = models.TextField("Why it is needed")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=255, blank=True)
+    done_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name="+")
+    done_at = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-requested_at"]
+        constraints = [
+            models.CheckConstraint(condition=~Q(type="close") | Q(account__isnull=False), name="email_request_close_account",
+                                   violation_error_message="Choose the account to close."),
+        ]
+
+    def __str__(self):
+        return f"{self.number}: {self.get_type_display()} ({self.get_status_display().lower()})"
+
+    @property
+    def number(self):
+        return f"ER-{self.requested_at:%Y}-{self.pk:04d}" if self.pk and self.requested_at else "ER (new)"
+
+    @property
+    def is_open(self):
+        return self.status in self.OPEN

@@ -33,6 +33,7 @@
                 {% if board_nav.saln %}<li><a class="dropdown-item" href="{% url 'saln_mine' %}">My SALN</a></li>{% endif %}
                 {% if board_nav.person and modules.development_plans %}<li><a class="dropdown-item" href="{% url 'idp_mine' %}">My development plan</a></li>{% endif %}
                 {% if board_nav.show and modules.awards %}<li><a class="dropdown-item" href="{% url 'award_list' %}">Awards &amp; recognition</a></li>{% endif %}
+                {% if board_nav.email_requests and modules.official_email %}<li><a class="dropdown-item" href="{% url 'email_request_list' %}">Email account requests</a></li>{% endif %}
                 {% if board_nav.saln_office %}<li><a class="dropdown-item" href="{% url 'tracker_saln' %}">SALN filing (my office)</a></li>{% endif %}
                 {% if org_nav.tree %}<li><a class="dropdown-item" href="{% url 'office_tree' %}">Org Chart</a></li>{% endif %}
               </ul>

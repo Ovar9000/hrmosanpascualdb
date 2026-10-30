@@ -1,0 +1,44 @@
+{% extends "hr/_print_base.html" %}
+{% block title %}Hand-over slip · {{ account.address }}{% endblock %}
+{% block back %}{% url 'email_detail' account.pk %}{% endblock %}
+{% block page_size %}size: A4 portrait;{% endblock %}
+{% block style %}
+  .slip { font-size: 10.5pt; line-height: 1.5; }
+  .slip .part { border: 1px solid #000; padding: 6mm 8mm; }
+  .slip .cut { border-top: 1px dashed #000; margin: 8mm 0; text-align: center; font-size: 8pt; }
+  .slip .cut span { position: relative; top: -0.8em; background: #fff; padding: 0 6px; }
+  .slip .value { font-family: monospace; font-size: 12pt; font-weight: bold; }
+  .slip .write { border-bottom: 1px solid #000; display: inline-block; min-width: 70mm; height: 1.4em; }
+{% endblock %}
+{% block sheet %}
+<div class="sheet portrait slip" style="min-height: 0;">
+  <div class="part">
+    {% include "hr/_paper_header.html" with office_line="Official email account" %}
+    <p class="text-center fw-bold fs-5 my-2">YOUR OFFICIAL EMAIL ACCOUNT</p>
+    <table class="form-table mb-3">
+      <tr><td style="height: auto;"><b>Given to</b><br>{{ account.holder.full_name }}</td><td style="height: auto;"><b>Office</b><br>{{ account.office.name|default:"—" }}</td></tr>
+      <tr><td style="height: auto;"><b>Email address</b><br><span class="value">{{ account.address }}</span></td><td style="height: auto;"><b>Kind</b><br>{{ account.get_kind_display }}</td></tr>
+    </table>
+    <p class="mb-1"><b>Log in at:</b> {% if webmail %}<span class="value">{{ webmail }}</span>{% else %}<span class="write"></span>{% endif %}</p>
+    <p class="mb-3"><b>Temporary password:</b> <span class="write"></span> <span class="small">(written by the Email Admin)</span></p>
+    <ol class="small mb-0">
+      <li>Log in today and change the temporary password. Keep the new one to yourself.</li>
+      {% if account.kind == 'personal' %}<li>This account is for you only. It is closed when you leave the LGU.</li>
+      {% else %}<li>This account belongs to the office, not to you. When you leave the office, its password is reset and given to the next person; its mail stays with the office.</li>{% endif %}
+      <li>Use it for official business only. Do not set it to forward everything to a personal Gmail or Yahoo account.</li>
+      <li>You can add it to the Gmail or Mail app on your phone as an IMAP account.</li>
+      <li>Forgot the password? Ask the Email Admin to reset it.</li>
+    </ol>
+  </div>
+  <div class="cut"><span>cut here: the Email Admin keeps the part below</span></div>
+  <div class="part">
+    <p class="fw-bold mb-2">RECEIPT · {{ account.address }}</p>
+    <p class="small">I received the address and temporary password of this official email account on the date below, and I will change the password when I first log in.</p>
+    <div class="d-flex justify-content-between mt-4">
+      <div style="min-width: 260px;"><div class="sig fw-bold">{{ account.holder.full_name|upper }}</div><div class="small text-center">Signature over printed name</div></div>
+      <div style="min-width: 160px;"><div class="sig">&nbsp;</div><div class="small text-center">Date received</div></div>
+    </div>
+    <div class="small mt-3">Given by: <span class="write" style="min-width: 60mm;"></span> (Email Admin) · Printed {{ today|date:"F d, Y" }}</div>
+  </div>
+</div>
+{% endblock %}

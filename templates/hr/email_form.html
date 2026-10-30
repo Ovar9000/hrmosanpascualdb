@@ -6,7 +6,8 @@
 <div class="card shadow-sm border-0 mb-4">
   <div class="card-header bg-white py-3"><h1 class="h4 mb-0">{% if account %}Edit {{ account.address }}{% else %}Add an email account{% endif %}</h1></div>
   <div class="card-body p-4">
-    {% if not account %}<p class="small text-muted">Add it here once it exists in GovMail. Use an office account (hrmo@, mto@) unless the account is for an elected official or a department head: an office account is handed over by resetting one password, and the office keeps its mail.</p>{% endif %}
+    {% if req %}<div class="alert alert-info small">From request <a href="{% url 'email_request_detail' req.pk %}">{{ req.number }}</a>, approved by {{ req.decided_by.get_full_name|default:req.decided_by.get_username }} on {{ req.decided_at|date:"M d, Y" }}. Make the account in {{ panel }} first, then save it here: the request is marked done.</div>{% endif %}
+    {% if not account %}<p class="small text-muted">Add it here once it exists in {{ panel }}. Use an office account (hrmo@, mto@) unless the account is for an elected official or a department head: an office account is handed over by resetting one password, and the office keeps its mail.</p>{% endif %}
     <form method="post" novalidate class="sp-form">{% csrf_token %}
       {% if account %}<input type="hidden" name="version" value="{{ account.version }}">{% endif %}
       <fieldset class="form-section">

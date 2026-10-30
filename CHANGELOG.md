@@ -15,6 +15,20 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+Added:
+- **Email account requests** (Tools → HR Desk, or People → Email account requests for office heads): an office
+  head asks for an office account, personal account or mailing list, or for one to be closed. The Mayor or
+  Administrator approves new accounts; the Email Admin then sees them in a "to do" queue, makes the mailbox in
+  the GWHS cPanel and saves it to the register from a form already filled in from the request (EM6-EM8).
+- **Email Admin role** for the person who runs the gov.ph mail: the register and the request queue, without
+  access to personnel records (EM4).
+- **Hand-over slip**: printed for the person receiving an account, with the address, a line for the temporary
+  password written by hand, the rules, and a receipt they sign (EM9).
+
+Changed:
+- The register now names the GWHS cPanel (the `OFFICIAL_EMAIL_PANEL` setting) instead of GovMail, and HRMO reads
+  it rather than keeping it: the Email Admin does.
+
 ## 1.5.0 (October 31, 2026)
 
 Added:

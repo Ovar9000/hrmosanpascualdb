@@ -16,7 +16,8 @@ from .models import (
 from .permissions import (
     can_handle_password_resets, can_manage_hr_records, can_print_papers, can_view_awards, can_view_certificate_requests,
     can_view_leave_register, can_view_pass_slip_log, can_view_plantilla_report, can_view_salary_actions,
-    can_view_email_register, can_view_separations, can_view_trackers, can_view_workforce_report,
+    can_approve_email_requests, can_manage_email_register, can_view_email_register, can_view_separations,
+    can_view_trackers, can_view_workforce_report,
 )
 from .reminders import COMPULSORY_AGE, GSIS_TYPES
 from .salary_actions import add_years
@@ -50,6 +51,10 @@ CARDS = [
          lambda u, t: CertificateRequest.objects.filter(status=CertificateRequest.Status.PENDING).count(), "to prepare"),
         ("Personal Data Sheets to verify", "pds_queue", can_view_certificate_requests,
          lambda u, t: PdsSubmission.objects.filter(status=PdsSubmission.Status.SUBMITTED).count(), "to verify"),
+        ("Email account requests", "email_request_list",
+         ("official_email", lambda u: can_approve_email_requests(u) or can_view_email_register(u)),
+         lambda u, t: official_email.waiting_for(u, can_approve_email_requests(u), can_manage_email_register(u)),
+         "waiting"),
         ("Forgotten passwords", "reset_request_list", can_handle_password_resets,
          lambda u, t: PasswordResetRequest.objects.filter(status=PasswordResetRequest.Status.PENDING).count(), "waiting"),
     ]),
@@ -86,7 +91,7 @@ CARDS = [
         ("Separations & clearance", "separation_list", can_view_separations,
          lambda u, t: Separation.objects.filter(status=Separation.Status.CLEARING).count(), "in progress"),
         ("Official email accounts", "email_list", ("official_email", can_view_email_register),
-         lambda u, t: official_email.attention_count(), "to reset or close"),
+         lambda u, t: official_email.attention_count() if can_manage_email_register(u) else 0, "to reset or close"),
     ]),
     ("Records", "Reports about the whole workforce, and the audit trail.", [
         ("Workforce profile (GAD)", "workforce_report", ("workforce", can_view_workforce_report), None, ""),

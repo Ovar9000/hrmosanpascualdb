@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Request {{ req.number }}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'email_request_list' %}" class="btn btn-sm btn-outline-secondary">← Requests</a></div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{% if req.type == 'close' %}Close {{ req.account.address }}{% else %}New {{ req.get_kind_display|lower }}{% endif %}</h1>
+    <div class="small text-muted">{{ req.number }} · asked by {{ req.requested_by.get_full_name|default:req.requested_by.get_username }} on {{ req.requested_at|date:"F d, Y" }}</div>
+  </div>
+  <span class="badge fs-6 {% if req.status == 'pending' %}text-bg-warning{% elif req.status == 'approved' %}text-bg-primary{% elif req.status == 'done' %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ req.get_status_display }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body small">
+        <dl class="row mb-0">
+          {% if req.type == 'new' %}
+          <dt class="col-5">Kind</dt><dd class="col-7">{{ req.get_kind_display }}</dd>
+          <dt class="col-5">Office</dt><dd class="col-7">{{ req.office.name|default:"—" }}</dd>
+          <dt class="col-5">Who will hold it</dt><dd class="col-7">{{ req.person.full_name|default:"No one yet" }}</dd>
+          <dt class="col-5">Address wanted</dt><dd class="col-7">{{ req.address|default:"Email Admin to choose" }}</dd>
+          {% else %}
+          <dt class="col-5">Account</dt><dd class="col-7">{% if manage %}<a href="{% url 'email_detail' req.account.pk %}">{{ req.account.address }}</a>{% else %}{{ req.account.address }}{% endif %}</dd>
+          <dt class="col-5">Held by</dt><dd class="col-7">{{ req.person.full_name|default:"No one" }}</dd>
+          {% endif %}
+          <dt class="col-5">Why</dt><dd class="col-7">{{ req.reason|linebreaksbr }}</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">Steps</div>
+      <ul class="list-group list-group-flush small">
+        <li class="list-group-item d-flex justify-content-between"><span>Asked by {{ req.requested_by.get_full_name|default:req.requested_by.get_username }}</span><span class="text-muted">{{ req.requested_at|date:"M d, Y" }}</span></li>
+        {% if req.type == 'new' %}
+        <li class="list-group-item d-flex justify-content-between"><span>{% if req.decided_by %}{% if req.status == 'declined' and not req.done_by %}Declined{% else %}Approved{% endif %} by {{ req.decided_by.get_full_name|default:req.decided_by.get_username }}{% if req.decision_note and not req.done_by %} · {{ req.decision_note }}{% endif %}{% elif req.status == 'pending' %}<span class="text-muted">Waiting for approval by the Mayor's office</span>{% else %}<span class="text-muted">Not approved</span>{% endif %}</span><span class="text-muted">{{ req.decided_at|date:"M d, Y" }}</span></li>
+        {% endif %}
+        <li class="list-group-item d-flex justify-content-between"><span>{% if req.status == 'done' %}{% if req.type == 'close' %}Closed{% else %}Made: {% if manage %}<a href="{% url 'email_detail' req.account.pk %}">{{ req.account.address }}</a>{% else %}{{ req.account.address }}{% endif %}{% endif %} by {{ req.done_by.get_full_name|default:req.done_by.get_username }}{% elif req.done_by %}Not done by {{ req.done_by.get_full_name|default:req.done_by.get_username }} · {{ req.decision_note }}{% elif req.status == 'approved' %}<span class="text-muted">With the Email Admin, to do in {{ panel }}</span>{% elif req.status == 'withdrawn' %}Withdrawn{% else %}<span class="text-muted">Email Admin</span>{% endif %}</span><span class="text-muted">{{ req.done_at|date:"M d, Y" }}</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    {% if can_decide %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Approve this account?</div>
+      <div class="card-body small">
+        <form method="post">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ req.version }}">
+          <input class="form-control form-control-sm mb-2" name="note" placeholder="Note (needed to decline)" aria-label="Note">
+          <button class="btn btn-sm btn-success" name="action" value="approve">Approve</button>
+          <button class="btn btn-sm btn-outline-danger" name="action" value="decline">Decline</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+    {% if can_make %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Do it in {{ panel }}</div>
+      <div class="card-body small">
+        {% if req.type == 'new' %}
+          <p>Make the mailbox in {{ panel }}{% if req.address %} as <b>{{ req.address }}</b>{% endif %}, then add it to the register. The form starts filled in from this request, and saving it marks the request done.</p>
+          <a class="btn btn-sm btn-primary" href="{% url 'email_new' %}?request={{ req.pk }}">Made it: add to the register</a>
+        {% else %}
+          <p>Close <b>{{ req.account.address }}</b> in {{ panel }}, then record it here.</p>
+          <form method="post" class="row g-2">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ req.version }}">
+            <div class="col-5"><input class="form-control form-control-sm" type="date" name="done_on" value="{{ today|date:'Y-m-d' }}" aria-label="Closed on"></div>
+            <div class="col-7"><button class="btn btn-sm btn-danger" name="action" value="close_done">Closed it</button></div>
+          </form>
+        {% endif %}
+        <details class="mt-3"><summary class="text-muted">Cannot do it?</summary>
+          <form method="post" class="mt-2">{% csrf_token %}
+            <input type="hidden" name="version" value="{{ req.version }}">
+            <input class="form-control form-control-sm mb-2" name="note" placeholder="Why, e.g. the address is taken" aria-label="Why">
+            <button class="btn btn-sm btn-outline-secondary" name="action" value="not_done">Mark as not done</button>
+          </form>
+        </details>
+      </div>
+    </div>
+    {% endif %}
+    {% if can_withdraw %}
+    <form method="post" onsubmit="return confirm('Withdraw this request?');">{% csrf_token %}
+      <input type="hidden" name="version" value="{{ req.version }}">
+      <button class="btn btn-sm btn-outline-secondary" name="action" value="withdraw">Withdraw request</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Ask for an email account{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% url 'email_request_list' %}" class="btn btn-sm btn-outline-secondary">← Requests</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">Ask for an email account</h1></div>
+  <div class="card-body p-4">
+    <p class="small text-muted">A new account goes to the Mayor's office for approval, then to the Email Admin, who makes it and gives the person the address and a temporary password. Ask for an <b>office account</b> (e.g. mto@) unless it is for an elected official or a department head: an office account stays with the office when people change.{% if office %} You are asking for {{ office.name }}.{% endif %}</p>
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">What is needed</legend>
+        {% for choice in form.type %}<div class="form-check form-check-inline">{{ choice.tag }} <label class="form-check-label" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label></div>{% endfor %}
+      </fieldset>
+      <fieldset class="form-section" data-type="new">
+        <legend class="form-section-title">The new account</legend>
+        <div class="row g-3">
+          {% for field in form %}{% if field.name in "kind office person address" %}
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+            </div>
+          {% endif %}{% endfor %}
+        </div>
+      </fieldset>
+      <fieldset class="form-section" data-type="close">
+        <legend class="form-section-title">The account to close</legend>
+        <label class="form-label fw-semibold" for="{{ form.account.id_for_label }}">{{ form.account.label }}</label>
+        {{ form.account }}
+        {% for error in form.account.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </fieldset>
+      <fieldset class="form-section">
+        <legend class="form-section-title">{{ form.reason.label }} <span class="text-danger" aria-hidden="true">*</span></legend>
+        {{ form.reason }}
+        {% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </fieldset>
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% url 'email_request_list' %}">Cancel</a>
+        <button class="btn btn-primary">Send request</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function () {
+  var radios = document.querySelectorAll("input[name=type]");
+  function sync() {
+    var value = (document.querySelector("input[name=type]:checked") || {}).value || "new";
+    document.querySelectorAll("fieldset[data-type]").forEach(function (f) { f.hidden = f.dataset.type !== value; });
+  }
+  radios.forEach(function (r) { r.addEventListener("change", sync); });
+  sync();
+})();
+</script>
+{% endblock %}

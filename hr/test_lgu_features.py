@@ -4,15 +4,17 @@ separation and clearance, awards, development plans, the workforce profile and t
 from datetime import date, time, timedelta
 from decimal import Decimal
 
+from django.contrib.auth.models import Group, User
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from hr import desk, official_email, papers, pass_slips, separations
 from hr.models import (
-    Award, ClearanceItem, DevelopmentPlan, EmailAccount, EmailHandover, Engagement, LeaveCredit, LeaveType, PassSlip,
+    Award, ClearanceItem, DevelopmentPlan, EmailAccount, EmailHandover, EmailRequest, Engagement, LeaveCredit, LeaveType, PassSlip,
     Person, SalaryAction, SalaryRate, SalarySchedule, Separation, UserProfile, Vacancy,
 )
+from hr.permissions import ROLE_EMAIL_ADMIN, ROLE_EXECUTIVE, ROLE_SYSADMIN
 from hr.tests import Step4CSecurityAndRolesTestCase
 
 ALL_MODULES = ["pass_slips", "development_plans", "awards", "workforce", "official_email"]
@@ -450,13 +452,13 @@ class AwardsPlansWorkforceTestCase(LguBase):
         self.assertContains(page, "Separation &amp; clearance")
 
 
+@override_settings(HR_MODULES=[])  # whatever the local .env switches on
 class ModulesAndDeskTestCase(LguBase):
     """MD1-MD3, DK1-DK3: optional modules stay hidden until switched on; the HR Desk holds every tool."""
 
     MODULE_URLS = ["/pass-slips/", "/pass-slips/log/", "/awards/", "/development-plan/", "/tracker/development-plans/",
-                   "/reports/workforce/", "/email-accounts/"]
+                   "/reports/workforce/", "/email-accounts/", "/email-requests/"]
 
-    @override_settings(HR_MODULES=[])  # whatever the local .env switches on
     def test_modules_off_by_default_answer_not_found_and_leave_no_links(self):
         for url in self.MODULE_URLS:
             with self.subTest(url=url):
@@ -599,6 +601,11 @@ class FormVersionsAndPlantillaItemsTestCase(LguBase):
 class EmailRegisterTestCase(LguBase):
     """EM1-EM5: the register of gov.ph accounts, and the resets and closings it asks for when a holder leaves."""
 
+    def setUp(self):
+        super().setUp()
+        self.email_admin = User.objects.create_user("email_admin", "it@test.com", "itpass123456")
+        self.email_admin.groups.add(Group.objects.get(name=ROLE_EMAIL_ADMIN))
+
     def _account(self, address="mo@sanpascual.test", kind=EmailAccount.Kind.OFFICE, office=None, holder=None):
         return EmailAccount.objects.create(address=address, kind=kind, office=office or self.office_a,
                                            holder=holder or self.person_a, issued_on=date(2026, 1, 5),
@@ -610,7 +617,7 @@ class EmailRegisterTestCase(LguBase):
 
     def _post(self, account, **data):
         account.refresh_from_db()
-        return self.post(self.hrmo_user, f"/email-accounts/{account.pk}/", {"version": account.version, **data})
+        return self.post(self.email_admin, f"/email-accounts/{account.pk}/", {"version": account.version, **data})
 
     def test_office_account_asks_for_a_reset_when_its_holder_leaves_and_a_handover_clears_it(self):
         account = self._account()
@@ -618,9 +625,9 @@ class EmailRegisterTestCase(LguBase):
         self._leave(self.eng_a)
         [row] = official_email.due()
         self.assertEqual((row["account"], row["action"], row["left_on"]), (account, "reset", date(2026, 10, 15)))
-        item = next(i for c in desk.cards(self.hrmo_user) for i in c["items"] if i["name"] == "email_list")
+        item = next(i for c in desk.cards(self.email_admin) for i in c["items"] if i["name"] == "email_list")
         self.assertEqual(item["count"], 1)
-        self.assertContains(self.get(self.hrmo_user, "/email-accounts/"), "Reset now")
+        self.assertContains(self.get(self.email_admin, "/email-accounts/"), "Reset now")
         self._post(account, action="handover", to_holder=self.jo_person.pk, done_on=str(timezone.localdate()))
         account.refresh_from_db()
         self.assertEqual((account.holder, account.password_reset_on), (self.jo_person, timezone.localdate()))
@@ -663,7 +670,7 @@ class EmailRegisterTestCase(LguBase):
     def test_separation_in_progress_lists_the_accounts_to_hand_over(self):
         account = self._account()
         sep = separations.start(Separation(engagement=self.eng_a, kind="resignation", last_day=date(2026, 11, 30)),
-                                self.hrmo_user)
+                                self.email_admin)
         [row] = official_email.upcoming()
         self.assertEqual((row["account"], row["sep"]), (account, sep))
         self.assertContains(self.get(self.hrmo_user, f"/separations/{sep.pk}/"), "Official email to hand over")
@@ -672,35 +679,131 @@ class EmailRegisterTestCase(LguBase):
     def test_adding_an_account_checks_the_domain_and_the_holder(self):
         data = {"address": "mayor.office@gmail.com", "kind": "office", "office": self.office_a.pk,
                 "holder": self.person_a.pk, "issued_on": "2026-10-01", "approved_by": "Agency CIO"}
-        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "Official addresses are at")
+        self.assertContains(self.post(self.email_admin, "/email-accounts/new/", data), "Official addresses are at")
         data.update(address="MO@sanpascual.test", holder=self.person_b.pk)
-        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "no active appointment")
+        self.assertContains(self.post(self.email_admin, "/email-accounts/new/", data), "no active appointment")
         data.update(holder=self.person_a.pk)
-        self.post(self.hrmo_user, "/email-accounts/new/", data)
+        self.post(self.email_admin, "/email-accounts/new/", data)
         self.assertEqual(EmailAccount.objects.get().address, "mo@sanpascual.test")
-        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "already in the register")
+        self.assertContains(self.post(self.email_admin, "/email-accounts/new/", data), "already in the register")
 
     def test_offices_without_an_account_get_a_suggested_address(self):
         self._account()
         missing = dict(official_email.offices_without_account())
         self.assertNotIn(self.office_a, missing)
         self.assertTrue(missing[self.office_b].endswith("@sanpascual.test"))
-        page = self.get(self.hrmo_user, "/email-accounts/new/", office=self.office_b.pk)
+        page = self.get(self.email_admin, "/email-accounts/new/", office=self.office_b.pk)
         self.assertEqual(page.context["form"].initial["address"], missing[self.office_b])
 
     def test_excel_export(self):
         self._account()
-        resp = self.get(self.hrmo_user, "/email-accounts/", format="xlsx")
+        resp = self.get(self.email_admin, "/email-accounts/", format="xlsx")
         self.assertEqual(resp["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     def test_who_can_do_what(self):
         account = self._account(holder=self.jo_person)
-        self.assertEqual(self.get(self.auditor_user, f"/email-accounts/{account.pk}/").status_code, 200)
-        self.assertEqual(self.post(self.auditor_user, f"/email-accounts/{account.pk}/",
-                                   {"action": "close"}).status_code, 403)
-        for user in (self.head_a, self.emp_a_user, self.mayor):
+        for user in (self.auditor_user, self.hrmo_user):  # read only
+            with self.subTest(user=user.username):
+                self.assertEqual(self.get(user, f"/email-accounts/{account.pk}/").status_code, 200)
+                self.assertEqual(self.post(user, f"/email-accounts/{account.pk}/", {"action": "close"}).status_code, 403)
+                self.assertEqual(self.get(user, "/email-accounts/new/").status_code, 403)
+        for user in (self.head_a, self.emp_a_user, self.mayor, self.sysadmin):
             with self.subTest(user=user.username):
                 self.assertEqual(self.get(user, "/email-accounts/").status_code, 403)
-        UserProfile.objects.create(user=self.hrmo_user, person=self.jo_person)  # HRMO holds it: another records (R10)
-        self.assertEqual(self._post(account, action="reset", done_on=str(timezone.localdate())).status_code, 403)
-        self.assertFalse(self.get(self.hrmo_user, f"/email-accounts/{account.pk}/").context["manage"])
+        # The Email Admin works the register but never opens personnel records, even with System Admin too.
+        self.email_admin.groups.add(Group.objects.get(name=ROLE_SYSADMIN))
+        self.assertEqual(self._post(account, action="reset", done_on=str(timezone.localdate())).status_code, 302)
+        self.assertEqual(EmailHandover.objects.count(), 1)
+        self.assertIn(self.get(self.email_admin, f"/people/{self.jo_person.pk}/").status_code, (302, 403))
+        self.assertNotContains(self.get(self.email_admin, "/email-accounts/"), f"/people/{self.jo_person.pk}/")
+
+    def test_hand_over_slip_never_holds_a_password(self):
+        account = self._account()
+        slip = self.get(self.email_admin, f"/email-accounts/{account.pk}/slip/")
+        self.assertContains(slip, "mo@sanpascual.test")
+        self.assertContains(slip, "Temporary password")
+        self.assertContains(slip, "RECEIPT")
+        self.assertEqual(self.get(self.hrmo_user, f"/email-accounts/{account.pk}/slip/").status_code, 403)
+
+
+@override_settings(HR_MODULES=["official_email"], OFFICIAL_EMAIL_DOMAIN="sanpascual.test")
+class EmailRequestTestCase(LguBase):
+    """EM6-EM8: an office asks, an Executive approves, the Email Admin makes it and the register fills in."""
+
+    def setUp(self):
+        super().setUp()
+        self.email_admin = User.objects.create_user("email_admin", "it@test.com", "itpass123456")
+        self.email_admin.groups.add(Group.objects.get(name=ROLE_EMAIL_ADMIN))
+        self.mayor.first_name, self.mayor.last_name = "Juan", "Alcalde"
+        self.mayor.save()
+
+    def _ask(self, user, **data):
+        payload = {"type": "new", "kind": "office", "office": self.office_a.pk, "person": self.person_a.pk,
+                   "address": "", "reason": "The Mayor's office needs one address for letters."}
+        payload.update(data)
+        return self.post(user, "/email-requests/new/", payload)
+
+    def _act(self, user, req, **data):
+        req.refresh_from_db()
+        return self.post(user, f"/email-requests/{req.pk}/", {"version": req.version, **data})
+
+    def test_office_head_asks_mayor_approves_email_admin_makes_it(self):
+        self._ask(self.head_a)
+        req = EmailRequest.objects.get()
+        self.assertEqual((req.status, req.requested_by), ("pending", self.head_a))
+        approve = next(i for c in desk.cards(self.mayor) for i in c["items"] if i["name"] == "email_request_list")
+        self.assertEqual(approve["count"], 1)
+        self.assertEqual(self._act(self.head_a, req, action="approve").status_code, 403)
+        self._act(self.mayor, req, action="approve")
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.decided_by), ("approved", self.mayor))
+        todo = next(i for c in desk.cards(self.email_admin) for i in c["items"] if i["name"] == "email_request_list")
+        self.assertEqual(todo["count"], 1)
+        form = self.get(self.email_admin, "/email-accounts/new/", request=req.pk).context["form"]
+        self.assertEqual((form.initial["approved_by"], form.initial["approval_ref"]), ("Juan Alcalde", req.number))
+        self.assertEqual(form.initial["holder"], self.person_a.pk)
+        resp = self.post(self.email_admin, f"/email-accounts/new/?request={req.pk}", {
+            "address": form.initial["address"], "kind": "office", "office": self.office_a.pk,
+            "holder": self.person_a.pk, "issued_on": str(timezone.localdate()), "approved_by": "Juan Alcalde",
+            "approval_ref": req.number})
+        account = EmailAccount.objects.get()
+        self.assertRedirects(resp, f"/email-accounts/{account.pk}/", fetch_redirect_response=False)
+        req.refresh_from_db()
+        self.assertEqual((req.status, req.account, req.done_by), ("done", account, self.email_admin))
+        self.assertEqual(account.approval_ref, req.number)
+
+    def test_decline_needs_a_reason_and_no_one_approves_their_own(self):
+        self._ask(self.mayor)
+        req = EmailRequest.objects.get()
+        self._act(self.mayor, req, action="approve")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "pending")
+        delegate = User.objects.create_user("administrator", "adm@test.com", "admpass123456")
+        delegate.groups.add(Group.objects.get(name=ROLE_EXECUTIVE))
+        self._act(delegate, req, action="decline")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "pending")
+        self._act(delegate, req, action="decline", note="Use the existing mo@ account.")
+        req.refresh_from_db()
+        self.assertEqual(req.status, "declined")
+
+    def test_office_head_asks_only_for_their_office_and_sees_only_its_requests(self):
+        self.assertContains(self._ask(self.head_a, office=self.office_b.pk, person=""), "Select a valid choice")
+        self._ask(self.hrmo_user, office=self.office_b.pk, person=self.person_b.pk)
+        other = EmailRequest.objects.get()
+        self.assertEqual(self.get(self.head_a, f"/email-requests/{other.pk}/").status_code, 404)
+        for user in (self.staff_a, self.emp_a_user):
+            with self.subTest(user=user.username):
+                self.assertEqual(self.get(user, "/email-requests/").status_code, 403)
+
+    def test_closing_goes_straight_to_the_email_admin(self):
+        account = EmailAccount.objects.create(address="mo@sanpascual.test", kind="office", office=self.office_a,
+                                              holder=self.person_a, issued_on=date(2026, 1, 5), approved_by="CIO")
+        self._ask(self.head_a, type="close", account=account.pk, reason="Office renamed; the old address is unused.")
+        req = EmailRequest.objects.get()
+        self.assertEqual((req.status, req.account), ("approved", account))
+        self.assertContains(self._ask(self.head_a, type="close", account=account.pk), "already open")
+        self._act(self.email_admin, req, action="close_done", done_on=str(timezone.localdate()))
+        req.refresh_from_db()
+        account.refresh_from_db()
+        self.assertEqual((req.status, account.status), ("done", "closed"))
