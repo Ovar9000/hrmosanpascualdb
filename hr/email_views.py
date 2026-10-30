@@ -68,7 +68,7 @@ def email_list(request):
         "counts": {k: EmailAccount.objects.filter(status=k).count() for k in EmailAccount.Status.values},
         "due": due, "upcoming": official_email.upcoming(), "manage": manage,
         "missing": official_email.offices_without_account() if manage else [],
-        "domain": official_email.domain(),
+        "domain": official_email.domain(), "at_domain": f"@{official_email.domain()}" if official_email.domain() else "",
     })
 
 

@@ -620,7 +620,7 @@ class EmailRegisterTestCase(LguBase):
         self.assertEqual((row["account"], row["action"], row["left_on"]), (account, "reset", date(2026, 10, 15)))
         item = next(i for c in desk.cards(self.hrmo_user) for i in c["items"] if i["name"] == "email_list")
         self.assertEqual(item["count"], 1)
-        self.assertContains(self.get(self.hrmo_user, "/email-accounts/"), "Reset the password")
+        self.assertContains(self.get(self.hrmo_user, "/email-accounts/"), "Reset now")
         self._post(account, action="handover", to_holder=self.jo_person.pk, done_on=str(timezone.localdate()))
         account.refresh_from_db()
         self.assertEqual((account.holder, account.password_reset_on), (self.jo_person, timezone.localdate()))

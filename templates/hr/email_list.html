@@ -3,9 +3,9 @@
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-  <div>
-    <h1 class="h3 mb-0">Official email register</h1>
-    <div class="text-muted small">Every {% if domain %}{{ domain }} {% endif %}account: who holds it, who approved it and when its password was last reset. The mailboxes are on GovMail; create, reset and close them in its admin console, then record it here.</div>
+  <div class="me-3" style="max-width: 46rem">
+    <h1 class="h3 mb-1">Official email register</h1>
+    <div class="text-muted small">Every account at <b>{{ domain|default:"the LGU's domain" }}</b>: who holds it, who approved it, and when its password was last reset. The mailboxes are on GovMail: create, reset and close them in its admin console, then record it here.</div>
   </div>
   <div class="d-flex gap-2">
     <a href="?show={{ show }}&amp;kind={{ kind }}&amp;format=xlsx" class="btn btn-sm btn-outline-secondary">Excel</a>
@@ -13,82 +13,120 @@
   </div>
 </div>
 
-{% if due %}
-<div class="card border-0 shadow-sm mb-3 border-start border-danger border-4">
-  <div class="card-header bg-white fw-bold py-2">To do now: the holder has left ({{ due|length }})</div>
+<div class="row row-cols-2 row-cols-md-4 g-2 mb-3 small">
+  <div class="col"><a href="?show=active" class="card border-0 shadow-sm h-100 text-decoration-none text-body"><div class="card-body py-2">
+    <div class="fs-4 fw-semibold">{{ counts.active }}</div><div class="text-muted">Active accounts</div></div></a></div>
+  <div class="col"><a href="#due" class="card border-0 shadow-sm h-100 text-decoration-none text-body{% if due %} border-start border-danger border-4{% endif %}"><div class="card-body py-2">
+    <div class="fs-4 fw-semibold{% if due %} text-danger{% endif %}">{{ due|length }}</div><div class="text-muted">To reset or close now</div></div></a></div>
+  <div class="col"><a href="#upcoming" class="card border-0 shadow-sm h-100 text-decoration-none text-body{% if upcoming %} border-start border-warning border-4{% endif %}"><div class="card-body py-2">
+    <div class="fs-4 fw-semibold">{{ upcoming|length }}</div><div class="text-muted">Coming up (separation)</div></div></a></div>
+  {% if manage %}
+  <div class="col"><a href="#missing" class="card border-0 shadow-sm h-100 text-decoration-none text-body" id="missing-tile"><div class="card-body py-2">
+    <div class="fs-4 fw-semibold">{{ missing|length }}</div><div class="text-muted">Offices with no account</div></div></a></div>
+  {% else %}
+  <div class="col"><div class="card border-0 shadow-sm h-100"><div class="card-body py-2">
+    <div class="fs-4 fw-semibold">{{ counts.closed }}</div><div class="text-muted">Closed accounts</div></div></div></div>
+  {% endif %}
+</div>
+
+{% if due or upcoming %}
+<div class="card border-0 shadow-sm mb-3">
   <ul class="list-group list-group-flush small">
     {% for r in due %}
-      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
-        <span><a href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a> · {{ r.account.holder.full_name }}{% if r.account.office %} · {{ r.account.office.name }}{% endif %}
-          <span class="text-muted">· {% if r.left_on %}left {{ r.left_on|date:"M d, Y" }}{% else %}no active appointment{% endif %}</span></span>
-        <span class="badge text-bg-danger">{% if r.action == 'close' %}Close the account{% else %}Reset the password{% endif %}</span>
+      <li class="list-group-item d-flex flex-wrap align-items-center gap-2"{% if forloop.first %} id="due"{% endif %}>
+        <span class="badge text-bg-danger">{% if r.action == 'close' %}Close now{% else %}Reset now{% endif %}</span>
+        <a class="fw-semibold" href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a>
+        <span class="text-muted">{{ r.account.holder.full_name }} {% if r.left_on %}left on {{ r.left_on|date:"M d, Y" }}{% else %}has no active appointment{% endif %}{% if r.account.office and r.account.kind != 'personal' %} ({{ r.account.office.acronym|default:r.account.office.name }}){% endif %}</span>
       </li>
     {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-{% if upcoming %}
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-header bg-white fw-bold py-2">Coming up: separation in progress ({{ upcoming|length }})</div>
-  <ul class="list-group list-group-flush small">
     {% for r in upcoming %}
-      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
-        <span><a href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a> · {{ r.account.holder.full_name }}
-          <span class="text-muted">· <a href="{% url 'separation_detail' r.sep.pk %}">last day {{ r.sep.last_day|date:"M d, Y" }}</a></span></span>
-        <span class="text-muted">{% if r.action == 'close' %}Close{% else %}Reset{% endif %} on the last day</span>
+      <li class="list-group-item d-flex flex-wrap align-items-center gap-2"{% if forloop.first %} id="upcoming"{% endif %}>
+        <span class="badge text-bg-warning">{% if r.action == 'close' %}Close{% else %}Reset{% endif %} {{ r.sep.last_day|date:"M d" }}</span>
+        <a class="fw-semibold" href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a>
+        <span class="text-muted">{{ r.account.holder.full_name }}'s last day is <a href="{% url 'separation_detail' r.sep.pk %}">{{ r.sep.last_day|date:"M d, Y" }}</a></span>
       </li>
     {% endfor %}
   </ul>
 </div>
 {% endif %}
 
-<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+<div class="d-flex flex-wrap gap-2 align-items-center mb-2">
   <ul class="nav nav-pills small mb-0">
     <li class="nav-item"><a class="nav-link{% if show == 'active' %} active{% endif %}" href="?show=active&amp;kind={{ kind }}">Active ({{ counts.active }})</a></li>
     <li class="nav-item"><a class="nav-link{% if show == 'closed' %} active{% endif %}" href="?show=closed&amp;kind={{ kind }}">Closed ({{ counts.closed }})</a></li>
     <li class="nav-item"><a class="nav-link{% if show == 'all' %} active{% endif %}" href="?show=all&amp;kind={{ kind }}">All</a></li>
   </ul>
-  <form method="get" class="ms-auto">
-    <input type="hidden" name="show" value="{{ show }}">
-    <select name="kind" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Kind of account">
-      <option value="">Every kind</option>
-      {% for v, l in kinds %}<option value="{{ v }}"{% if kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}
-    </select>
-  </form>
+  <div class="ms-auto d-flex flex-wrap gap-2">
+    <input type="search" id="find" class="form-control form-control-sm w-auto flex-grow-1" placeholder="Find address, office or holder" aria-label="Find in the register" style="min-width: 15rem">
+    <form method="get" class="flex-shrink-0">
+      <input type="hidden" name="show" value="{{ show }}">
+      <select name="kind" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Kind of account" style="min-width: 9.5rem">
+        <option value="">Every kind</option>
+        {% for v, l in kinds %}<option value="{{ v }}"{% if kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
 </div>
 <div class="card border-0 shadow-sm mb-3">
   <div class="table-responsive">
-    <table class="table table-sm small align-middle mb-0">
-      <thead class="table-light"><tr><th>Address</th><th>Kind</th><th>Office</th><th>Holder</th><th>Issued</th><th>Approved by</th><th>Password reset</th><th>Status</th></tr></thead>
+    <table class="table table-sm table-hover small align-middle mb-0" id="register">
+      <thead class="table-light"><tr><th>Account</th><th>Office</th><th>Holder</th><th>Approval</th><th class="text-nowrap">Issued</th><th class="text-nowrap">Password reset</th>{% if show != 'active' %}<th>Status</th>{% endif %}</tr></thead>
       <tbody>
         {% for a, need in rows %}
-          <tr>
-            <td><a class="text-decoration-none" href="{% url 'email_detail' a.pk %}">{{ a.address }}</a></td>
-            <td>{{ a.get_kind_display }}</td>
-            <td>{{ a.office.name|default:"—" }}</td>
+          <tr data-find="{{ a.address }} {{ a.office.name }} {{ a.office.acronym }} {{ a.holder.full_name }}">
+            <td class="text-nowrap">
+              <a class="text-decoration-none" href="{% url 'email_detail' a.pk %}"><span class="fw-semibold">{% if at_domain %}{{ a.address|cut:at_domain }}</span><span class="text-muted">{{ at_domain }}</span>{% else %}{{ a.address }}</span>{% endif %}</a>
+              {% if a.kind != 'office' %}<span class="badge text-bg-light border ms-1">{% if a.kind == 'personal' %}Personal{% else %}List{% endif %}</span>{% endif %}
+              {% if need %}<span class="badge text-bg-danger ms-1">{% if need == 'close' %}close now{% else %}reset now{% endif %}</span>{% endif %}
+            </td>
+            <td>{% if a.office %}<span title="{{ a.office.name }}">{{ a.office.acronym|default:a.office.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
             <td>{% if a.holder %}<a class="text-decoration-none" href="{% url 'person_detail' a.holder.pk %}">{{ a.holder.full_name }}</a>{% else %}<span class="text-muted">No one</span>{% endif %}</td>
+            <td>{{ a.approval_ref|default:"—" }}<div class="text-muted">{{ a.approved_by }}</div></td>
             <td class="text-nowrap">{{ a.issued_on|date:"M d, Y" }}</td>
-            <td>{{ a.approved_by }}{% if a.approval_ref %}<div class="text-muted">{{ a.approval_ref }}</div>{% endif %}</td>
-            <td class="text-nowrap">{{ a.password_reset_on|date:"M d, Y"|default:"—" }}</td>
-            <td>{% if need %}<span class="badge text-bg-danger">{% if need == 'close' %}close{% else %}reset{% endif %}</span>{% else %}{{ a.get_status_display }}{% if a.closed_on %} {{ a.closed_on|date:"M d, Y" }}{% endif %}{% endif %}</td>
+            <td class="text-nowrap">{% if a.password_reset_on %}{{ a.password_reset_on|date:"M d, Y" }}{% else %}<span class="text-muted">never</span>{% endif %}</td>
+            {% if show != 'active' %}<td class="text-nowrap">{{ a.get_status_display }}{% if a.closed_on %} {{ a.closed_on|date:"M d, Y" }}{% endif %}</td>{% endif %}
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="text-center text-muted py-3">None.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-3">None.</td></tr>
         {% endfor %}
+        {% if rows %}<tr id="no-match" hidden><td colspan="7" class="text-center text-muted py-3">Nothing matches.</td></tr>{% endif %}
       </tbody>
     </table>
   </div>
 </div>
 
 {% if missing %}
-<details class="card border-0 shadow-sm">
+<details class="card border-0 shadow-sm" id="missing">
   <summary class="card-header bg-white fw-bold py-2">Offices with no office account yet ({{ missing|length }})</summary>
-  <ul class="list-group list-group-flush small">
-    {% for office, address in missing %}
-      <li class="list-group-item d-flex justify-content-between gap-2"><span>{{ office.name }}{% if address %} <span class="text-muted">· {{ address }}</span>{% endif %}</span><a href="{% url 'email_new' %}?office={{ office.pk }}">Add</a></li>
-    {% endfor %}
-  </ul>
+  <div class="card-body">
+    <p class="small text-muted mb-2">Suggested addresses use the office's acronym. Add the account here once it exists in GovMail.</p>
+    <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-2 small">
+      {% for office, address in missing %}
+        <div class="col"><div class="border rounded px-2 py-1 h-100 d-flex align-items-center gap-2">
+          <div class="text-truncate me-auto" title="{{ office.name }}">{{ office.name }}{% if address %}<div class="text-muted text-truncate">{{ address }}</div>{% endif %}</div>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'email_new' %}?office={{ office.pk }}">Add</a>
+        </div></div>
+      {% endfor %}
+    </div>
+  </div>
 </details>
 {% endif %}
+
+<script>
+(function () {
+  var find = document.getElementById("find"), rows = document.querySelectorAll("#register tbody tr[data-find]");
+  var none = document.getElementById("no-match");
+  find.addEventListener("input", function () {
+    var words = find.value.toLowerCase().split(/\s+/).filter(Boolean), shown = 0;
+    rows.forEach(function (tr) {
+      var text = tr.dataset.find.toLowerCase(), hit = words.every(function (w) { return text.indexOf(w) >= 0; });
+      tr.hidden = !hit;
+      shown += hit ? 1 : 0;
+    });
+    if (none) none.hidden = shown > 0;
+  });
+  var tile = document.getElementById("missing-tile"), missing = document.getElementById("missing");
+  if (tile && missing) tile.addEventListener("click", function () { missing.open = true; });
+})();
+</script>
 {% endblock %}
