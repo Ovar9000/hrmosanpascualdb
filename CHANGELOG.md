@@ -15,6 +15,13 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+Fixed:
+- **Reporting lines**: HRMO staff can no longer change who they themselves report to on an office's
+  reporting-lines page. Their own row shows their supervisor as text, and another HRMO staff member sets it,
+  as with every other part of one's own record (R10).
+- **Image library updated** (Pillow 13): the version in use had known security flaws. Uploads and the org
+  chart picture work as before.
+
 ## 1.4.0 (October 28, 2026)
 
 Added:
