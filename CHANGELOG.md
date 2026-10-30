@@ -15,6 +15,8 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+## 1.4.1 (October 30, 2026)
+
 Fixed:
 - **Reporting lines**: HRMO staff can no longer change who they themselves report to on an office's
   reporting-lines page. Their own row shows their supervisor as text, and another HRMO staff member sets it,
