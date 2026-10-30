@@ -23,6 +23,8 @@ from .models import (
     ClearanceItem,
     DevelopmentItem,
     DevelopmentPlan,
+    EmailAccount,
+    EmailHandover,
     PassSlip,
     PassSlipStep,
     PlantillaItem,
@@ -111,6 +113,8 @@ AUDITED_MODELS = (
     Award,
     DevelopmentPlan,
     DevelopmentItem,
+    EmailAccount,
+    EmailHandover,
     User,
     Group,
 )

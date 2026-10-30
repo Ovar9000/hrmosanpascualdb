@@ -204,9 +204,13 @@ COC_RESTDAY_RATE = os.environ.get("COC_RESTDAY_RATE", "1.5")
 COC_MONTHLY_CAP = int(os.environ.get("COC_MONTHLY_CAP", "40"))
 COC_BALANCE_CAP = int(os.environ.get("COC_BALANCE_CAP", "120"))
 COC_VALID_MONTHS = int(os.environ.get("COC_VALID_MONTHS", "12"))
-# Optional modules switched on (DECISIONS MD1): any of pass_slips, development_plans, awards, workforce.
+# Optional modules switched on (DECISIONS MD1): any of pass_slips, development_plans, awards, workforce,
+# official_email.
 # Off by default: they were built before HRMO asked for them.
 HR_MODULES = _types("HR_MODULES", "")
+# Official email register (DECISIONS EM1): the LGU's gov.ph domain. Addresses in the register must be at it;
+# blank accepts any address.
+OFFICIAL_EMAIL_DOMAIN = os.environ.get("OFFICIAL_EMAIL_DOMAIN", "sanpascualmasbate.gov.ph")
 # Appointment papers (DECISIONS AP1): the date the CSC accredited the LGU, as YYYY-MM-DD. Blank means the CSC
 # regulates its appointments (San Pascual, confirmed 2026-10-28). Appointments signed before the date keep
 # the regulated forms (CS Form No. 33-A, 34-A); those signed on or after it get the accredited ones (33-B, 34-B).

@@ -15,6 +15,14 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+Added:
+- **Official email register** (optional module `official_email`, HR Desk → Leaving the LGU): every gov.ph
+  account on GovMail with its office, who holds it, who approved it and when its password was last reset. When a
+  holder leaves the office, by separation, end of contract or transfer, the account shows as a password reset to
+  do (a personal account: to close), counted on the HR Desk. Recording the reset hands it over to someone in that
+  office and keeps the history. A separation in progress lists the accounts to hand over on the last day; offices
+  without an account are listed with a suggested address; Excel export (EM1-EM5).
+
 ## 1.4.1 (October 30, 2026)
 
 Fixed:

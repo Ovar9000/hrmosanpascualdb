@@ -9,11 +9,13 @@ from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from . import papers, separations
+from . import modules, official_email, papers, separations
 from .audit import log_audit_event
 from .forms import SeparationForm
 from .models import AuditLog, ClearanceItem, Person, Separation
-from .permissions import can_manage_record_of, can_manage_separations, can_view_separations
+from .permissions import (
+    can_manage_record_of, can_manage_separations, can_view_email_register, can_view_separations,
+)
 
 
 def _require_view(request):
@@ -111,6 +113,8 @@ def separation_detail(request, pk):
         "outstanding": [i for i in items if i.status not in separations.DONE_STATUSES],
         "statuses": ClearanceItem.Status.choices, "terminal": separations.terminal_leave(sep),
         "today": timezone.localdate(),
+        "email_accounts": official_email.to_hand_over(sep)
+        if modules.enabled("official_email") and can_view_email_register(request.user) else [],
     })
 
 

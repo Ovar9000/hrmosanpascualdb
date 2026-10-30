@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{% if account %}Edit {{ account.address }}{% else %}Add an email account{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3"><a href="{% if account %}{% url 'email_detail' account.pk %}{% else %}{% url 'email_list' %}{% endif %}" class="btn btn-sm btn-outline-secondary">← {% if account %}{{ account.address }}{% else %}Email register{% endif %}</a></div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white py-3"><h1 class="h4 mb-0">{% if account %}Edit {{ account.address }}{% else %}Add an email account{% endif %}</h1></div>
+  <div class="card-body p-4">
+    {% if not account %}<p class="small text-muted">Add it here once it exists in GovMail. Use an office account (hrmo@, mto@) unless the account is for an elected official or a department head: an office account is handed over by resetting one password, and the office keeps its mail.</p>{% endif %}
+    <form method="post" novalidate class="sp-form">{% csrf_token %}
+      {% if account %}<input type="hidden" name="version" value="{{ account.version }}">{% endif %}
+      <fieldset class="form-section">
+        <legend class="form-section-title">The account</legend>
+        {% include "hr/_form_fields.html" %}
+      </fieldset>
+      {% if account %}<p class="small text-muted">To change who holds it, record a password reset or handover on the account's page, so it stays on the history.</p>{% endif %}
+      <div class="form-actions">
+        <a class="btn btn-link me-auto" href="{% if account %}{% url 'email_detail' account.pk %}{% else %}{% url 'email_list' %}{% endif %}">Cancel</a>
+        <button class="btn btn-primary">{% if account %}Save{% else %}Add to register{% endif %}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

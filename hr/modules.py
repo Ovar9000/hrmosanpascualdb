@@ -15,6 +15,7 @@ OPTIONAL = {
     "development_plans": "Individual Development Plans",
     "awards": "Awards and recognition",
     "workforce": "Workforce profile",
+    "official_email": "Official email register",
 }
 
 

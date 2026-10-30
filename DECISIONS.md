@@ -338,6 +338,16 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 | ID2 | **Who sees a plan:** the person, HRMO, Auditor and the head of their office. Trainings attended that year (PDS section VII) show under the plan. | Maybe |
 | ID3 | **Tracker** (`/tracker/development-plans/`): SPMS-rated employees (SP1) by office, with no plan, draft, sent or reviewed. | No |
 
+## Official email register
+
+| # | Decision | Survey? |
+|---|---|---|
+| EM1 | **A register, not a mail server.** The LGU's gov.ph mailboxes are on DICT's GovMail (ICT Memorandum Circular 2015-002); the GovMail administrator creates accounts, resets passwords and closes accounts in its admin console. The app keeps the register (`EmailAccount`): address (at `OFFICIAL_EMAIL_DOMAIN`, so no Gmail or Yahoo addresses), office account, personal account or mailing list, office, who holds it now, date issued, who approved it (the Agency CIO) and the request number, and when its password was last reset. The app sends no email and never talks to GovMail. | **Likely** (DICT may route gov.ph mail through the GWHS cPanel instead) |
+| EM2 | **Leaving the office means a reset that day.** An office account or an office's mailing list needs a password reset once its holder has no active appointment in that office (separated, contract ended, or transferred elsewhere); a personal account needs closing once its owner has no active appointment anywhere. Worked out from the appointments on every visit, nothing stored. A separation in progress lists the accounts to reset or close on the last day. | Maybe |
+| EM3 | **Every reset is on the history** (`EmailHandover`): handed over (from, to), reset with the same holder, or closed, with the date it was done in GovMail and who recorded it. The holder of an office account can be changed only this way, and only to someone with an active appointment in that office; a personal account stays with its owner. Dates cannot be in the future or before the account was issued. | No |
+| EM4 | **Who:** HRMO records (never on an account they hold themselves, R10); Auditor reads. The person's record and their separation show the accounts they hold. Excel export of the register. | **Likely** (the GovMail administrator may be IT, not HRMO) |
+| EM5 | **Starting the register:** offices with no office account are listed with a suggested address (acronym at the domain). Office accounts are preferred over personal ones: a handover is one password reset, and the office keeps its mail. Optional module `official_email` (MD1). Demo data: one office account per office, and one held by someone who left. *Proven by* `EmailRegisterTestCase`. | No |
+
 ## Workforce profile
 
 | # | Decision | Survey? |
@@ -349,7 +359,7 @@ Responses from Municipal HRMO Head and Administrative Aide, plus follow-up inter
 
 | # | Decision | Survey? |
 |---|---|---|
-| MD1 | **Features built before HRMO asked for them are switched off** until HRMO asks: `HR_MODULES` lists the ones that are on, from `pass_slips`, `development_plans`, `awards` and `workforce` (default: none). Decided 2026-10-28, to keep the review copy to what the survey asked for. | **Likely** (HRMO's answer per module) |
+| MD1 | **Features built before HRMO asked for them are switched off** until HRMO asks: `HR_MODULES` lists the ones that are on, from `pass_slips`, `development_plans`, `awards`, `workforce` and `official_email` (default: none). Decided 2026-10-28, to keep the review copy to what the survey asked for. | **Likely** (HRMO's answer per module) |
 | MD2 | **Off means absent:** no menu, desk or person-page link, and the module's pages answer 404 (`hr.modules.requires` in `urls.py`). Its code, tables, data and tests stay, so switching it on is a settings change and a restart. | No |
 | MD3 | **Adding a module:** put its name in `hr.modules.OPTIONAL`, wrap its routes with `requires`, and check `modules.<name>` in templates. *Proven by* `ModulesAndDeskTestCase`. | No |
 | DK1 | **The HR Desk** (`/desk/`) holds every HRMO tool as cards grouped by what HRMO is doing (hiring and appointments, requests from employees, leave and time, pay and benefits, performance and development, compliance, leaving the LGU, records) instead of by kind of page. A new tool is one entry in `hr.desk.CARDS`, with who sees it. | Maybe (HRMO may group them differently) |

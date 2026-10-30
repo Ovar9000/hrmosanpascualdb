@@ -9,14 +9,14 @@ from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
 
-from . import meetings, modules, pass_slips
+from . import meetings, modules, official_email, pass_slips
 from .models import (
     CertificateRequest, Engagement, PasswordResetRequest, PdsSubmission, Person, SalaryAction, Separation,
 )
 from .permissions import (
     can_handle_password_resets, can_manage_hr_records, can_print_papers, can_view_awards, can_view_certificate_requests,
     can_view_leave_register, can_view_pass_slip_log, can_view_plantilla_report, can_view_salary_actions,
-    can_view_separations, can_view_trackers, can_view_workforce_report,
+    can_view_email_register, can_view_separations, can_view_trackers, can_view_workforce_report,
 )
 from .reminders import COMPULSORY_AGE, GSIS_TYPES
 from .salary_actions import add_years
@@ -85,6 +85,8 @@ CARDS = [
         ("Retirement", "tracker_retirement", can_view_trackers, lambda u, t: _past_retirement(t), "past 65"),
         ("Separations & clearance", "separation_list", can_view_separations,
          lambda u, t: Separation.objects.filter(status=Separation.Status.CLEARING).count(), "in progress"),
+        ("Official email accounts", "email_list", ("official_email", can_view_email_register),
+         lambda u, t: official_email.attention_count(), "to reset or close"),
     ]),
     ("Records", "Reports about the whole workforce, and the audit trail.", [
         ("Workforce profile (GAD)", "workforce_report", ("workforce", can_view_workforce_report), None, ""),

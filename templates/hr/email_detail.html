@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ account.address }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex flex-wrap gap-2">
+  <a href="{% url 'email_list' %}" class="btn btn-sm btn-outline-secondary">← Email register</a>
+  {% if manage %}<a href="{% url 'email_edit' account.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>{% endif %}
+</div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ account.address }}</h1>
+    <div>{{ account.get_kind_display }}{% if account.office %} · {{ account.office.name }}{% endif %}</div>
+    <div class="small text-muted">Issued {{ account.issued_on|date:"F d, Y" }} · approved by {{ account.approved_by }}{% if account.approval_ref %} ({{ account.approval_ref }}){% endif %}</div>
+  </div>
+  <span class="badge fs-6 {% if account.status == 'active' %}text-bg-success{% else %}bg-secondary{% endif %}">{{ account.get_status_display }}{% if account.closed_on %} {{ account.closed_on|date:"M d, Y" }}{% endif %}</span>
+</div>
+
+{% if due %}
+  <div class="alert alert-danger small">
+    <b>{{ account.holder.full_name }}</b> {% if due.left_on %}left on {{ due.left_on|date:"F d, Y" }}{% else %}has no active appointment{% endif %}{% if account.office and account.kind != 'personal' %} in {{ account.office.name }}{% endif %}.
+    {% if due.action == 'close' %}Close the account in GovMail, then record it below.{% else %}Reset the password in GovMail today, then record who holds it now.{% endif %}
+  </div>
+{% elif upcoming %}
+  <div class="alert alert-warning small">
+    {{ account.holder.full_name }}'s <a href="{% url 'separation_detail' upcoming.sep.pk %}">separation</a> is in progress, last day {{ upcoming.sep.last_day|date:"F d, Y" }}.
+    {% if upcoming.action == 'close' %}Close the account{% else %}Reset the password{% endif %} on that day.
+  </div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-5">Holder now</dt><dd class="col-7">{% if account.holder %}<a href="{% url 'person_detail' account.holder.pk %}">{{ account.holder.full_name }}</a>{% else %}<span class="text-muted">No one</span>{% endif %}</dd>
+          <dt class="col-5">Password last reset</dt><dd class="col-7">{{ account.password_reset_on|date:"F d, Y"|default:"—" }}</dd>
+          {% if account.notes %}<dt class="col-5">Notes</dt><dd class="col-7">{{ account.notes|linebreaksbr }}</dd>{% endif %}
+        </dl>
+      </div>
+    </div>
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold py-2">History</div>
+      <ul class="list-group list-group-flush small">
+        {% for h in history %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between gap-2"><b>{{ h.get_action_display }}</b><span class="text-muted">{{ h.done_on|date:"M d, Y" }}</span></div>
+            <div class="text-muted">
+              {% if h.action == 'handover' %}{{ h.from_holder.full_name|default:"No one" }} → {{ h.to_holder.full_name|default:"no one" }}{% elif h.from_holder %}{{ h.from_holder.full_name }}{% endif %}{% if h.note %} · {{ h.note }}{% endif %}
+              {% if h.recorded_by %} · recorded by {{ h.recorded_by.get_username }}{% endif %}
+            </div>
+          </li>
+        {% empty %}
+          <li class="list-group-item text-muted">Added {{ account.created_at|date:"M d, Y" }}{% if account.created_by %} by {{ account.created_by.get_username }}{% endif %}. No resets recorded yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% if manage %}
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Record what you did in GovMail</div>
+      <div class="card-body small">
+        {% if not personal %}
+        <form method="post" class="mb-3">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ account.version }}"><input type="hidden" name="action" value="handover">
+          <label class="form-label fw-semibold" for="to_holder">Password reset and handed over to</label>
+          <select class="form-select form-select-sm mb-2" name="to_holder" id="to_holder" required>
+            <option value="" disabled selected>Choose who holds it now</option>
+            <option value="none">No one yet (password reset, account unused)</option>
+            {% for p in people %}<option value="{{ p.pk }}">{{ p.full_name }}</option>{% endfor %}
+          </select>
+          <div class="row g-2">
+            <div class="col-5"><input class="form-control form-control-sm" type="date" name="done_on" value="{{ today|date:'Y-m-d' }}" aria-label="Done on"></div>
+            <div class="col-7"><input class="form-control form-control-sm" name="note" placeholder="Note (optional)" aria-label="Note"></div>
+          </div>
+          <button class="btn btn-sm btn-primary mt-2">Record handover</button>
+          {% if account.office %}<div class="form-text">Only people with an active appointment in {{ account.office.name }} are listed.</div>{% endif %}
+        </form>
+        {% endif %}
+        <form method="post" class="mb-3">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ account.version }}"><input type="hidden" name="action" value="reset">
+          <div class="fw-semibold mb-1">Password reset, same holder</div>
+          <div class="row g-2">
+            <div class="col-5"><input class="form-control form-control-sm" type="date" name="done_on" value="{{ today|date:'Y-m-d' }}" aria-label="Done on"></div>
+            <div class="col-7"><input class="form-control form-control-sm" name="note" placeholder="e.g. forgot password" aria-label="Note"></div>
+          </div>
+          <button class="btn btn-sm btn-outline-primary mt-2">Record reset</button>
+        </form>
+        <form method="post" onsubmit="return confirm('Record {{ account.address }} as closed?');">{% csrf_token %}
+          <input type="hidden" name="version" value="{{ account.version }}"><input type="hidden" name="action" value="close">
+          <div class="fw-semibold mb-1">Account closed</div>
+          <div class="row g-2">
+            <div class="col-5"><input class="form-control form-control-sm" type="date" name="done_on" value="{{ today|date:'Y-m-d' }}" aria-label="Done on"></div>
+            <div class="col-7"><input class="form-control form-control-sm" name="note" placeholder="Note (optional)" aria-label="Note"></div>
+          </div>
+          <button class="btn btn-sm btn-outline-danger mt-2">Record closing</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

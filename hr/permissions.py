@@ -613,6 +613,17 @@ def can_review_development_plan(user, person):
     return is_office_head(user) or can_manage_hr_records(user)
 
 
+def can_view_email_register(user):
+    """The official email register: HRMO and Auditor (EM4)."""
+    return can_view_pass_slip_log(user)
+
+
+def can_manage_email_register(user):
+    """Add accounts and record resets, handovers and closings: HRMO (EM4). An account the user holds is
+    recorded by another HRMO staff member (R10)."""
+    return can_view_email_register(user) and can_manage_hr_records(user)
+
+
 def can_view_workforce_report(user):
     """Counts by sex, age, disability and tenure: HRMO and Auditor, since small groups can identify
     people and disability comes from the PDS (WF2)."""

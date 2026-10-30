@@ -303,6 +303,14 @@
   </ul>
 </div>
 {% endif %}
+{% if email_accounts and modules.official_email %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-white fw-bold py-2">Official email</div>
+  <ul class="list-group list-group-flush small">
+    {% for a in email_accounts %}<li class="list-group-item d-flex justify-content-between"><a href="{% url 'email_detail' a.pk %}">{{ a.address }}</a><span class="text-muted">{{ a.get_kind_display }}{% if a.office %} · {{ a.office.name }}{% endif %}{% if a.status == 'closed' %} · closed {{ a.closed_on|date:"M d, Y" }}{% endif %}</span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
 {% if awards and modules.awards %}
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-white fw-bold py-2">Awards and recognition</div>

@@ -1,5 +1,5 @@
 """Appointment papers and the ROAI, JO/COS papers, salary schedules with NOSA and NOSI, pass slips,
-separation and clearance, awards, development plans and the workforce profile."""
+separation and clearance, awards, development plans, the workforce profile and the official email register."""
 
 from datetime import date, time, timedelta
 from decimal import Decimal
@@ -8,14 +8,14 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from hr import papers, pass_slips, separations
+from hr import desk, official_email, papers, pass_slips, separations
 from hr.models import (
-    Award, ClearanceItem, DevelopmentPlan, Engagement, LeaveCredit, LeaveType, PassSlip, Person, SalaryAction,
-    SalaryRate, SalarySchedule, Separation, Vacancy,
+    Award, ClearanceItem, DevelopmentPlan, EmailAccount, EmailHandover, Engagement, LeaveCredit, LeaveType, PassSlip,
+    Person, SalaryAction, SalaryRate, SalarySchedule, Separation, UserProfile, Vacancy,
 )
 from hr.tests import Step4CSecurityAndRolesTestCase
 
-ALL_MODULES = ["pass_slips", "development_plans", "awards", "workforce"]
+ALL_MODULES = ["pass_slips", "development_plans", "awards", "workforce", "official_email"]
 
 
 def _table(base=10000, grades=3):
@@ -454,8 +454,9 @@ class ModulesAndDeskTestCase(LguBase):
     """MD1-MD3, DK1-DK3: optional modules stay hidden until switched on; the HR Desk holds every tool."""
 
     MODULE_URLS = ["/pass-slips/", "/pass-slips/log/", "/awards/", "/development-plan/", "/tracker/development-plans/",
-                   "/reports/workforce/"]
+                   "/reports/workforce/", "/email-accounts/"]
 
+    @override_settings(HR_MODULES=[])  # whatever the local .env switches on
     def test_modules_off_by_default_answer_not_found_and_leave_no_links(self):
         for url in self.MODULE_URLS:
             with self.subTest(url=url):
@@ -592,3 +593,114 @@ class FormVersionsAndPlantillaItemsTestCase(LguBase):
         for user in (self.head_a, self.emp_a_user, self.mayor):
             with self.subTest(user=user.username):
                 self.assertEqual(self.get(user, "/plantilla-items/").status_code, 403)
+
+
+@override_settings(HR_MODULES=["official_email"], OFFICIAL_EMAIL_DOMAIN="sanpascual.test")
+class EmailRegisterTestCase(LguBase):
+    """EM1-EM5: the register of gov.ph accounts, and the resets and closings it asks for when a holder leaves."""
+
+    def _account(self, address="mo@sanpascual.test", kind=EmailAccount.Kind.OFFICE, office=None, holder=None):
+        return EmailAccount.objects.create(address=address, kind=kind, office=office or self.office_a,
+                                           holder=holder or self.person_a, issued_on=date(2026, 1, 5),
+                                           approved_by="Agency CIO")
+
+    def _leave(self, eng, on=date(2026, 10, 15)):
+        eng.status, eng.end_date = Engagement.Status.RESIGNED, on
+        eng.save()
+
+    def _post(self, account, **data):
+        account.refresh_from_db()
+        return self.post(self.hrmo_user, f"/email-accounts/{account.pk}/", {"version": account.version, **data})
+
+    def test_office_account_asks_for_a_reset_when_its_holder_leaves_and_a_handover_clears_it(self):
+        account = self._account()
+        self.assertEqual(official_email.due(), [])
+        self._leave(self.eng_a)
+        [row] = official_email.due()
+        self.assertEqual((row["account"], row["action"], row["left_on"]), (account, "reset", date(2026, 10, 15)))
+        item = next(i for c in desk.cards(self.hrmo_user) for i in c["items"] if i["name"] == "email_list")
+        self.assertEqual(item["count"], 1)
+        self.assertContains(self.get(self.hrmo_user, "/email-accounts/"), "Reset the password")
+        self._post(account, action="handover", to_holder=self.jo_person.pk, done_on=str(timezone.localdate()))
+        account.refresh_from_db()
+        self.assertEqual((account.holder, account.password_reset_on), (self.jo_person, timezone.localdate()))
+        handover = EmailHandover.objects.get()
+        self.assertEqual((handover.action, handover.from_holder, handover.to_holder),
+                         ("handover", self.person_a, self.jo_person))
+        self.assertEqual(official_email.due(), [])
+
+    def test_transfer_to_another_office_counts_as_leaving_but_keeps_a_personal_account(self):
+        office_account = self._account()
+        personal = self._account("jose.rizal@sanpascual.test", kind=EmailAccount.Kind.PERSONAL)
+        self._leave(self.eng_a)
+        Engagement.objects.create(person=self.person_a, office=self.office_b, type=Engagement.Type.CASUAL,
+                                  position_title="Clerk", start_date=date(2026, 10, 16), nature="transfer")
+        self.assertEqual([r["account"] for r in official_email.due()], [office_account])
+        self.assertNotIn(personal, [r["account"] for r in official_email.due()])
+
+    def test_personal_account_is_closed_not_handed_over(self):
+        personal = self._account("jose.rizal@sanpascual.test", kind=EmailAccount.Kind.PERSONAL)
+        self._leave(self.eng_a)
+        self.assertEqual(official_email.due()[0]["action"], "close")
+        self._post(personal, action="handover", to_holder=self.jo_person.pk, done_on=str(timezone.localdate()))
+        personal.refresh_from_db()
+        self.assertEqual(personal.holder, self.person_a)  # refused
+        self._post(personal, action="close", done_on=str(timezone.localdate()))
+        personal.refresh_from_db()
+        self.assertEqual((personal.status, personal.closed_on), ("closed", timezone.localdate()))
+        self.assertEqual(official_email.due(), [])
+
+    def test_handover_only_to_someone_in_the_office_and_not_in_the_future(self):
+        account = self._account()
+        self._post(account, action="handover", to_holder=self.person_b.pk, done_on=str(timezone.localdate()))
+        self._post(account, action="reset", done_on=str(timezone.localdate() + timedelta(days=1)))
+        self._post(account, action="handover", to_holder="", done_on=str(timezone.localdate()))  # nothing chosen
+        self.assertFalse(EmailHandover.objects.exists())
+        self._post(account, action="handover", to_holder="none", done_on=str(timezone.localdate()))
+        account.refresh_from_db()
+        self.assertIsNone(account.holder)
+
+    def test_separation_in_progress_lists_the_accounts_to_hand_over(self):
+        account = self._account()
+        sep = separations.start(Separation(engagement=self.eng_a, kind="resignation", last_day=date(2026, 11, 30)),
+                                self.hrmo_user)
+        [row] = official_email.upcoming()
+        self.assertEqual((row["account"], row["sep"]), (account, sep))
+        self.assertContains(self.get(self.hrmo_user, f"/separations/{sep.pk}/"), "Official email to hand over")
+        self.assertContains(self.get(self.hrmo_user, f"/people/{self.person_a.pk}/"), "mo@sanpascual.test")
+
+    def test_adding_an_account_checks_the_domain_and_the_holder(self):
+        data = {"address": "mayor.office@gmail.com", "kind": "office", "office": self.office_a.pk,
+                "holder": self.person_a.pk, "issued_on": "2026-10-01", "approved_by": "Agency CIO"}
+        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "Official addresses are at")
+        data.update(address="MO@sanpascual.test", holder=self.person_b.pk)
+        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "no active appointment")
+        data.update(holder=self.person_a.pk)
+        self.post(self.hrmo_user, "/email-accounts/new/", data)
+        self.assertEqual(EmailAccount.objects.get().address, "mo@sanpascual.test")
+        self.assertContains(self.post(self.hrmo_user, "/email-accounts/new/", data), "already in the register")
+
+    def test_offices_without_an_account_get_a_suggested_address(self):
+        self._account()
+        missing = dict(official_email.offices_without_account())
+        self.assertNotIn(self.office_a, missing)
+        self.assertTrue(missing[self.office_b].endswith("@sanpascual.test"))
+        page = self.get(self.hrmo_user, "/email-accounts/new/", office=self.office_b.pk)
+        self.assertEqual(page.context["form"].initial["address"], missing[self.office_b])
+
+    def test_excel_export(self):
+        self._account()
+        resp = self.get(self.hrmo_user, "/email-accounts/", format="xlsx")
+        self.assertEqual(resp["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    def test_who_can_do_what(self):
+        account = self._account(holder=self.jo_person)
+        self.assertEqual(self.get(self.auditor_user, f"/email-accounts/{account.pk}/").status_code, 200)
+        self.assertEqual(self.post(self.auditor_user, f"/email-accounts/{account.pk}/",
+                                   {"action": "close"}).status_code, 403)
+        for user in (self.head_a, self.emp_a_user, self.mayor):
+            with self.subTest(user=user.username):
+                self.assertEqual(self.get(user, "/email-accounts/").status_code, 403)
+        UserProfile.objects.create(user=self.hrmo_user, person=self.jo_person)  # HRMO holds it: another records (R10)
+        self.assertEqual(self._post(account, action="reset", done_on=str(timezone.localdate())).status_code, 403)
+        self.assertFalse(self.get(self.hrmo_user, f"/email-accounts/{account.pk}/").context["manage"])

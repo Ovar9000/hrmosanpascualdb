@@ -68,6 +68,7 @@ from .permissions import (
     can_print_papers,
     can_view_awards,
     can_view_development_plan,
+    can_view_email_register,
     can_view_separations,
     can_view_contacts,
     can_view_document_content,
@@ -630,6 +631,8 @@ def person_detail(request, pk):
             } if can_view_separations(request.user) else None,
             "awards": person.awards.all() if can_view_awards(request.user) else None,
             "idp": can_view_development_plan(request.user, person),
+            "email_accounts": person.email_accounts.select_related("office").order_by("status", "address")
+            if can_view_email_register(request.user) else None,
         },
     )
 

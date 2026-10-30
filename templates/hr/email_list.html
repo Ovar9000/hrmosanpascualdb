@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Official email register{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-0">Official email register</h1>
+    <div class="text-muted small">Every {% if domain %}{{ domain }} {% endif %}account: who holds it, who approved it and when its password was last reset. The mailboxes are on GovMail; create, reset and close them in its admin console, then record it here.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="?show={{ show }}&amp;kind={{ kind }}&amp;format=xlsx" class="btn btn-sm btn-outline-secondary">Excel</a>
+    {% if manage %}<a href="{% url 'email_new' %}" class="btn btn-sm btn-primary">Add account</a>{% endif %}
+  </div>
+</div>
+
+{% if due %}
+<div class="card border-0 shadow-sm mb-3 border-start border-danger border-4">
+  <div class="card-header bg-white fw-bold py-2">To do now: the holder has left ({{ due|length }})</div>
+  <ul class="list-group list-group-flush small">
+    {% for r in due %}
+      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+        <span><a href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a> · {{ r.account.holder.full_name }}{% if r.account.office %} · {{ r.account.office.name }}{% endif %}
+          <span class="text-muted">· {% if r.left_on %}left {{ r.left_on|date:"M d, Y" }}{% else %}no active appointment{% endif %}</span></span>
+        <span class="badge text-bg-danger">{% if r.action == 'close' %}Close the account{% else %}Reset the password{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if upcoming %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-white fw-bold py-2">Coming up: separation in progress ({{ upcoming|length }})</div>
+  <ul class="list-group list-group-flush small">
+    {% for r in upcoming %}
+      <li class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+        <span><a href="{% url 'email_detail' r.account.pk %}">{{ r.account.address }}</a> · {{ r.account.holder.full_name }}
+          <span class="text-muted">· <a href="{% url 'separation_detail' r.sep.pk %}">last day {{ r.sep.last_day|date:"M d, Y" }}</a></span></span>
+        <span class="text-muted">{% if r.action == 'close' %}Close{% else %}Reset{% endif %} on the last day</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <ul class="nav nav-pills small mb-0">
+    <li class="nav-item"><a class="nav-link{% if show == 'active' %} active{% endif %}" href="?show=active&amp;kind={{ kind }}">Active ({{ counts.active }})</a></li>
+    <li class="nav-item"><a class="nav-link{% if show == 'closed' %} active{% endif %}" href="?show=closed&amp;kind={{ kind }}">Closed ({{ counts.closed }})</a></li>
+    <li class="nav-item"><a class="nav-link{% if show == 'all' %} active{% endif %}" href="?show=all&amp;kind={{ kind }}">All</a></li>
+  </ul>
+  <form method="get" class="ms-auto">
+    <input type="hidden" name="show" value="{{ show }}">
+    <select name="kind" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Kind of account">
+      <option value="">Every kind</option>
+      {% for v, l in kinds %}<option value="{{ v }}"{% if kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+<div class="card border-0 shadow-sm mb-3">
+  <div class="table-responsive">
+    <table class="table table-sm small align-middle mb-0">
+      <thead class="table-light"><tr><th>Address</th><th>Kind</th><th>Office</th><th>Holder</th><th>Issued</th><th>Approved by</th><th>Password reset</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for a, need in rows %}
+          <tr>
+            <td><a class="text-decoration-none" href="{% url 'email_detail' a.pk %}">{{ a.address }}</a></td>
+            <td>{{ a.get_kind_display }}</td>
+            <td>{{ a.office.name|default:"—" }}</td>
+            <td>{% if a.holder %}<a class="text-decoration-none" href="{% url 'person_detail' a.holder.pk %}">{{ a.holder.full_name }}</a>{% else %}<span class="text-muted">No one</span>{% endif %}</td>
+            <td class="text-nowrap">{{ a.issued_on|date:"M d, Y" }}</td>
+            <td>{{ a.approved_by }}{% if a.approval_ref %}<div class="text-muted">{{ a.approval_ref }}</div>{% endif %}</td>
+            <td class="text-nowrap">{{ a.password_reset_on|date:"M d, Y"|default:"—" }}</td>
+            <td>{% if need %}<span class="badge text-bg-danger">{% if need == 'close' %}close{% else %}reset{% endif %}</span>{% else %}{{ a.get_status_display }}{% if a.closed_on %} {{ a.closed_on|date:"M d, Y" }}{% endif %}{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="text-center text-muted py-3">None.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if missing %}
+<details class="card border-0 shadow-sm">
+  <summary class="card-header bg-white fw-bold py-2">Offices with no office account yet ({{ missing|length }})</summary>
+  <ul class="list-group list-group-flush small">
+    {% for office, address in missing %}
+      <li class="list-group-item d-flex justify-content-between gap-2"><span>{{ office.name }}{% if address %} <span class="text-muted">· {{ address }}</span>{% endif %}</span><a href="{% url 'email_new' %}?office={{ office.pk }}">Add</a></li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}
+{% endblock %}

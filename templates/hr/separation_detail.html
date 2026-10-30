@@ -70,6 +70,15 @@
       </div>
     </div>
     {% endif %}
+    {% if email_accounts %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-bold py-2">Official email to hand over</div>
+      <ul class="list-group list-group-flush small">
+        {% for a in email_accounts %}<li class="list-group-item"><a href="{% url 'email_detail' a.pk %}">{{ a.address }}</a> <span class="text-muted">· {{ a.get_kind_display }}</span>
+          <div class="text-muted">{% if a.kind == 'personal' %}Close it in GovMail{% else %}Reset the password in GovMail{% endif %} on the last day, then record it on the account.</div></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
     <div class="card border-0 shadow-sm small">
       <div class="card-body">
         Started {{ sep.created_at|date:"M d, Y" }}{% if sep.created_by %} by {{ sep.created_by.get_username }}{% endif %}.

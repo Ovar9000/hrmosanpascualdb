@@ -8,7 +8,9 @@ Adds, once:
   appointments, so the ROAI has rows;
 - today's pass slips at each stage (waiting for HRMO, waiting for the Mayor, out now, back);
 - a separation with half of its clearance signed;
-- a few awards, and a draft development plan for the demo employee.
+- a few awards, and a draft development plan for the demo employee;
+- office email accounts in the official email register, a personal one for the person with the sample
+  separation, and one held by someone who has left, if anyone has (EM5).
 Runs with auditing off, like the other seeders.
 """
 
@@ -21,10 +23,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from hr import pass_slips, separations
+from hr import official_email, pass_slips, separations
 from hr.audit import disable_audit
 from hr.models import (
-    Award, DevelopmentItem, DevelopmentPlan, Engagement, PassSlip, PassSlipStep, SalaryRate, SalarySchedule,
+    Award, DevelopmentItem, DevelopmentPlan, EmailAccount, Engagement, PassSlip, PassSlipStep, SalaryRate, SalarySchedule,
     Separation, UserProfile,
 )
 
@@ -38,7 +40,7 @@ def sample_amount(grade, step, year):
 
 
 class Command(BaseCommand):
-    help = "Adds sample salary schedules, papers, pass slips, a separation, awards and a plan (DEV ONLY)."
+    help = "Adds sample salary schedules, papers, pass slips, a separation, awards, a plan and email accounts (DEV ONLY)."
 
     def handle(self, *args, **options):
         if not settings.DEBUG:
@@ -67,6 +69,8 @@ class Command(BaseCommand):
                 added.append(f"{self._awards(today)} awards")
             if self._plan(today, users):
                 added.append("1 development plan")
+            if not EmailAccount.objects.filter(notes__startswith="[demo]").exists():
+                added.append(f"{self._email(today)} email accounts")
         self.stdout.write("Papers demo data: " + (", ".join(added) if added else "already added."))
 
     def _papers(self, today):
@@ -163,3 +167,37 @@ class Command(BaseCommand):
         DevelopmentItem.objects.create(plan=plan, competency="Spreadsheets", activity="Coaching by the office head",
                                        support="Two hours a week")
         return True
+
+    def _email(self, today):
+        """An office account for each office with someone in it, held by its longest-serving person; a personal
+        one for the person with the sample separation (to close on the last day); and one held by someone whose
+        appointment ended, so the register shows a reset to do."""
+        issued, count = date(today.year, 1, 6), 0
+        heads = {}
+        for eng in Engagement.objects.filter(status=Engagement.Status.ACTIVE).order_by("start_date").select_related("office"):
+            heads.setdefault(eng.office_id, eng)
+        for eng in list(heads.values())[:8]:
+            address = official_email.suggested_address(eng.office)
+            if address and not EmailAccount.objects.filter(address=address).exists():
+                EmailAccount.objects.create(address=address, kind=EmailAccount.Kind.OFFICE, office=eng.office,
+                                            holder=eng.person, issued_on=issued, approved_by="Agency CIO (sample)",
+                                            approval_ref=f"GM-{today.year}-{count + 1:03d}", password_reset_on=issued,
+                                            notes="[demo] Sample account.")
+                count += 1
+        sep = Separation.objects.filter(reason__startswith="[demo]", status=Separation.Status.CLEARING).first()
+        if sep and official_email.domain():
+            EmailAccount.objects.create(address=f"{sep.person.employee_no.lower()}@{official_email.domain()}",
+                                        kind=EmailAccount.Kind.PERSONAL, office=sep.engagement.office,
+                                        holder=sep.person, issued_on=issued, approved_by="Agency CIO (sample)",
+                                        notes="[demo] Separation in progress.")
+            count += 1
+        gone = (Engagement.objects.exclude(status=Engagement.Status.ACTIVE).exclude(
+            person__engagements__status=Engagement.Status.ACTIVE).select_related("person", "office").first())
+        if gone and official_email.domain():
+            name = f"{gone.person.first_name.split()[0]}.{gone.person.last_name}".lower()
+            local = "".join(c for c in name if c.isascii() and (c.isalnum() or c == "."))
+            EmailAccount.objects.create(address=f"{local}@{official_email.domain()}", kind=EmailAccount.Kind.OFFICE,
+                                        office=gone.office, holder=gone.person, issued_on=issued,
+                                        approved_by="Agency CIO (sample)", notes="[demo] Holder has left.")
+            count += 1
+        return count

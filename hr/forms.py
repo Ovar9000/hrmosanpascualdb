@@ -8,7 +8,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from .models import (
-    FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, Engagement, LeaveCredit, LeaveRequest,
+    FAKE_ID_FIELDS, Applicant, Award, CalendarEvent, CertificateRequest, Document, EmailAccount, Engagement, LeaveCredit,
+    LeaveRequest,
     LeaveType, PassSlip, PlantillaItem, SalarySchedule, Separation,
     MeetingSeries, Memo, PdsChild, PdsEducation, PdsEligibility, PdsProfile, PdsReference, PdsTraining,
     PdsVoluntaryWork, PdsWorkExperience, Person, Project, ServiceInterruption, Vacancy,
@@ -1397,6 +1398,62 @@ class AwardForm(forms.Form):
     basis = forms.CharField(label="Basis", max_length=200, required=False, widget=forms.TextInput(attrs={
         **_TEXT, "placeholder": "Resolution, office order or citation no."}))
     notes = forms.CharField(label="Citation / notes", required=False, widget=forms.Textarea(attrs={**_TEXT, "rows": 3}))
+
+
+
+class EmailAccountForm(forms.ModelForm):
+    """An account in the official email register (EM1). The holder and the password reset date are set here
+    only for a new account; later changes go through the account's page, so each is on its history (EM3)."""
+
+    class Meta:
+        model = EmailAccount
+        fields = ["address", "kind", "office", "holder", "issued_on", "approved_by", "approval_ref",
+                  "password_reset_on", "notes"]
+        widgets = {
+            "address": forms.EmailInput(attrs=_TEXT),
+            "kind": forms.Select(attrs=_SELECT),
+            "office": forms.Select(attrs=_SELECT),
+            "holder": forms.Select(attrs=_SELECT),
+            "issued_on": forms.DateInput(attrs=_DATE),
+            "approved_by": forms.TextInput(attrs=_TEXT),
+            "approval_ref": forms.TextInput(attrs=_TEXT),
+            "password_reset_on": forms.DateInput(attrs=_DATE),
+            "notes": forms.Textarea(attrs={**_TEXT, "rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["office"].empty_label = "None"
+        if self.instance.pk:
+            del self.fields["holder"], self.fields["password_reset_on"]
+        else:
+            self.fields["holder"].queryset = Person.objects.filter(
+                engagements__status=Engagement.Status.ACTIVE).distinct()
+            self.fields["holder"].empty_label = "No one yet"
+        from .official_email import domain
+
+        if domain():
+            self.fields["address"].help_text = f"An address at {domain()}, e.g. hrmo@{domain()}."
+
+    def clean_address(self):
+        from .official_email import domain
+
+        address = self.cleaned_data["address"].strip().lower()
+        if domain() and not address.endswith("@" + domain()):
+            raise ValidationError(f"Official addresses are at {domain()}. Personal Gmail or Yahoo addresses "
+                                  "do not go in this register.")
+        return address
+
+    def clean(self):
+        cleaned = super().clean()
+        kind, office, holder = cleaned.get("kind"), cleaned.get("office"), cleaned.get("holder")
+        if kind != EmailAccount.Kind.PERSONAL and office and holder and not holder.engagements.filter(
+                office=office, status=Engagement.Status.ACTIVE).exists():
+            self.add_error("holder", f"{holder.full_name} has no active appointment in {office.name}.")
+        issued, reset = cleaned.get("issued_on"), cleaned.get("password_reset_on")
+        if issued and reset and reset < issued:
+            self.add_error("password_reset_on", "Cannot be before the account was issued.")
+        return cleaned
 
 
 class DevelopmentPlanForm(forms.Form):

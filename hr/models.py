@@ -2371,3 +2371,98 @@ class DevelopmentItem(models.Model):
 
     def __str__(self):
         return f"{self.plan} · {self.competency}"
+
+
+# --- Official email accounts (DECISIONS EM1-EM5) ---------------------------------------------------
+
+
+class EmailAccount(models.Model):
+    """One gov.ph mailbox in the register the GovMail administrator keeps (EM1). The mail itself is on
+    GovMail; this records who holds each account, who approved it, and when its password was last reset."""
+
+    class Kind(models.TextChoices):
+        OFFICE = "office", "Office account"
+        PERSONAL = "personal", "Personal account"
+        LIST = "list", "Mailing list"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        CLOSED = "closed", "Closed"
+
+    address = models.EmailField(max_length=150)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.OFFICE)
+    office = models.ForeignKey(Office, null=True, blank=True, on_delete=models.PROTECT, related_name="email_accounts",
+                               help_text="The office that owns an office account or mailing list.")
+    holder = models.ForeignKey(
+        Person, null=True, blank=True, on_delete=models.PROTECT, related_name="email_accounts",
+        help_text="Who has the password now: the owner of a personal account, or who runs an office account.",
+    )
+    issued_on = models.DateField("Date issued")
+    approved_by = models.CharField("Approved by", max_length=150,
+                                   help_text="The Agency CIO, or whoever the Mayor designated to approve accounts.")
+    approval_ref = models.CharField("Approval reference", max_length=100, blank=True,
+                                    help_text="Request form, memo or letter number.")
+    password_reset_on = models.DateField("Password last reset", null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    closed_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["address"]
+        constraints = [
+            models.UniqueConstraint(Lower("address"), name="email_account_unique_address",
+                                    violation_error_message="This address is already in the register."),
+            models.CheckConstraint(condition=~Q(kind="office") | Q(office__isnull=False), name="email_office_needs_office",
+                                   violation_error_message="An office account belongs to an office."),
+            models.CheckConstraint(condition=~Q(kind="personal") | Q(holder__isnull=False),
+                                   name="email_personal_needs_holder",
+                                   violation_error_message="A personal account belongs to a person."),
+            models.CheckConstraint(condition=Q(status="active", closed_on__isnull=True)
+                                   | Q(status="closed", closed_on__isnull=False),
+                                   name="email_closed_with_date",
+                                   violation_error_message="A closed account has a closing date; an active one has none."),
+        ]
+
+    def __str__(self):
+        return self.address
+
+    def save(self, *args, **kwargs):
+        self.address = self.address.strip().lower()
+        super().save(*args, **kwargs)
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
+
+
+class EmailHandover(models.Model):
+    """A password reset on an email account, with the holder before and after (EM3): the paper trail for
+    "who had this account when"."""
+
+    class Action(models.TextChoices):
+        HANDOVER = "handover", "Password reset and handed over"
+        RESET = "reset", "Password reset (same holder)"
+        CLOSED = "closed", "Account closed"
+
+    account = models.ForeignKey(EmailAccount, on_delete=models.CASCADE, related_name="handovers")
+    action = models.CharField(max_length=20, choices=Action.choices)
+    from_holder = models.ForeignKey(Person, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    to_holder = models.ForeignKey(Person, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    done_on = models.DateField("Done on")
+    note = models.CharField(max_length=255, blank=True)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-done_on", "-pk"]
+
+    def __str__(self):
+        return f"{self.account} · {self.get_action_display()} ({self.done_on})"

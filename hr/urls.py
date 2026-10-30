@@ -1,6 +1,6 @@
 from django.urls import path
 from . import (
-    board_views, certificate_views, paper_views, pds_views, separation_views, slip_views, talent_views, tracker_views,
+    board_views, certificate_views, email_views, paper_views, pds_views, separation_views, slip_views, talent_views, tracker_views,
     views,
 )
 from .desk import desk_page
@@ -31,6 +31,10 @@ urlpatterns = [
     path("separations/<int:pk>/", separation_views.separation_detail, name="separation_detail"),
     path("separations/<int:pk>/print/", separation_views.separation_print, name="separation_print"),
     path("people/<int:person_pk>/separation/new/", separation_views.separation_new, name="separation_new"),
+    path("email-accounts/", requires("official_email", email_views.email_list), name="email_list"),
+    path("email-accounts/new/", requires("official_email", email_views.email_new), name="email_new"),
+    path("email-accounts/<int:pk>/", requires("official_email", email_views.email_detail), name="email_detail"),
+    path("email-accounts/<int:pk>/edit/", requires("official_email", email_views.email_edit), name="email_edit"),
     path("awards/", requires("awards", talent_views.award_list), name="award_list"),
     path("awards/new/", requires("awards", talent_views.award_record), name="award_record"),
     path("awards/<int:pk>/print/", requires("awards", talent_views.award_print), name="award_print"),
