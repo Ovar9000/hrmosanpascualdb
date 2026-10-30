@@ -6109,6 +6109,26 @@ class HrmoOwnRecordTestCase(TestCase):
         sub.refresh_from_db()
         self.assertEqual((sub.status, sub.reviewed_by), ("verified", self.hrmo2))
 
+    def test_no_setting_own_supervisor(self):
+        url = f"/offices/{self.office_a.pk}/chart/edit/"
+        self.assertNotContains(self.client.get(url), f'name="reports_to_{self.eng_h.pk}"')
+        self.client.post(url, {
+            f"reports_to_{self.eng_h.pk}": str(self.eng_a.pk), f"version_{self.eng_h.pk}": str(self.eng_h.version),
+            f"reports_to_{self.eng_a.pk}": str(self.eng_h.pk), f"version_{self.eng_a.pk}": str(self.eng_a.version),
+        })
+        self.eng_h.refresh_from_db()
+        self.eng_a.refresh_from_db()
+        self.assertIsNone(self.eng_h.reports_to)
+        self.assertEqual(self.eng_a.reports_to, self.eng_h)  # other rows on the same sheet still save
+        self.client.force_login(self.hrmo2)
+        self.assertContains(self.client.get(url), f'name="reports_to_{self.eng_h.pk}"')
+        self.client.post(url, {
+            f"reports_to_{self.eng_h.pk}": str(self.eng_a.pk), f"version_{self.eng_h.pk}": str(self.eng_h.version),
+            f"reports_to_{self.eng_a.pk}": "", f"version_{self.eng_a.pk}": str(self.eng_a.version),
+        })
+        self.eng_h.refresh_from_db()
+        self.assertEqual(self.eng_h.reports_to, self.eng_a)
+
 
 class AuditGroupedViewTestCase(TestCase):
     """/audit/?view=grouped groups the filtered records by who acted; the flat list stays the default."""

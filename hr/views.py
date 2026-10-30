@@ -418,8 +418,8 @@ def office_chart_edit(request, pk):
     if request.method == "POST":
         for eng in active:
             key = f"reports_to_{eng.pk}"
-            if key not in request.POST:
-                continue
+            if key not in request.POST or is_self(request.user, eng.person):
+                continue  # another HRMO staff member sets one's own supervisor (R10)
             raw = request.POST[key].strip()
             if raw == "":
                 proposed[eng.pk] = None
@@ -466,6 +466,7 @@ def office_chart_edit(request, pk):
             "error": errors.get(eng.pk, ""),
             "options": [s for s in supervisors if s.pk != eng.pk],
             "broken": bool(eng.reports_to_id and eng.reports_to_id not in by_pk),
+            "own": is_self(request.user, eng.person),
         }
 
     return render(

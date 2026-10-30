@@ -14,6 +14,10 @@
             </td>
             <td>{{ row.eng.position_title }}</td>
             <td>
+              {% if row.own %}
+              <div>{% if row.eng.reports_to %}{{ row.eng.reports_to.person.full_name }} — {{ row.eng.reports_to.position_title }}{% else %}— Top of the chart —{% endif %}</div>
+              <div class="text-muted mt-1">Your own appointment. Another HRMO staff member sets who you report to.</div>
+              {% else %}
               <input type="hidden" name="version_{{ row.eng.pk }}" value="{{ row.eng.version }}">
               <label class="visually-hidden" for="reports_to_{{ row.eng.pk }}">Reports to, for {{ row.eng.person.full_name }}</label>
               <select class="form-select form-select-sm" name="reports_to_{{ row.eng.pk }}" id="reports_to_{{ row.eng.pk }}">
@@ -24,6 +28,7 @@
               </select>
               {% if row.broken %}<div class="text-warning-emphasis mt-1">Was reporting to {{ row.eng.reports_to.person.full_name }}, whose appointment is no longer active.</div>{% endif %}
               {% if row.error %}<div class="text-danger mt-1">{{ row.error }}</div>{% endif %}
+              {% endif %}
             </td>
           </tr>
         {% empty %}
