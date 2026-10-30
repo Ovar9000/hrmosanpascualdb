@@ -15,6 +15,8 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+## 1.5.0 (October 31, 2026)
+
 Added:
 - **Official email register** (optional module `official_email`, HR Desk → Leaving the LGU): every gov.ph
   account on GovMail with its office, who holds it, who approved it and when its password was last reset. When a
