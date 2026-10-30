@@ -15,6 +15,8 @@ under "Unreleased" as you make it. Hover over the version in the footer to see t
 
 ## Unreleased
 
+## 1.6.0 (October 31, 2026)
+
 Added:
 - **Email account requests** (Tools → HR Desk, or People → Email account requests for office heads): an office
   head asks for an office account, personal account or mailing list, or for one to be closed. The Mayor or
